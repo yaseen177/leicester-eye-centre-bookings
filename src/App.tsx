@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react'; // Removed 'React' to fix the warning
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import BookingPage from './pages/BookingPage';
 import AdminLogin from './pages/AdminLogin';
