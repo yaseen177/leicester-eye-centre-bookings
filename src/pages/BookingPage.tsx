@@ -73,7 +73,6 @@ export default function BookingPage() {
 
   const getAvailableSlots = () => {
     const slots: string[] = [];
-    // Buffer removed as requested
     const duration = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
     
     const toMins = (t: string) => { 
@@ -85,30 +84,36 @@ export default function BookingPage() {
       const mm = m % 60; 
       return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
     };
-  
+
+    const now = new Date();
+    const isToday = booking.date === now.toISOString().split('T')[0];
+    const currentMins = (now.getHours() * 60) + now.getMinutes();
+
     const clinicStart = toMins(settings.start);
     const clinicEnd = toMins(settings.end);
     const lunchStart = toMins("13:00");
     const lunchEnd = toMins("14:00");
-  
+
     const dayBookings = existingBookings
       .filter(b => b.appointmentDate === booking.date)
       .map(b => ({
         start: toMins(b.appointmentTime),
         end: toMins(b.appointmentTime) + (b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck)
       }));
-  
-    // Step through the day in 5-minute increments
+
     for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
       const potentialEnd = current + duration;
       
-      // Check if this window hits lunch
-      const hitsLunch = (current < lunchEnd && potentialEnd > lunchStart);
+      // 1. If it's today, skip slots that have already started or are about to start
+      if (isToday && current <= currentMins) continue;
+
+      // 2. Skip lunch
+      if (current < lunchEnd && potentialEnd > lunchStart) continue;
       
-      // Check if this window overlaps any existing booking
+      // 3. Skip overlaps
       const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-  
-      if (!hitsLunch && !isOverlap) {
+
+      if (!isOverlap) {
         slots.push(fromMins(current));
       }
     }
