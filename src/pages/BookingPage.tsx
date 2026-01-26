@@ -72,42 +72,65 @@ export default function BookingPage() {
   };
 
   const getAvailableSlots = () => {
-    const slots = [];
+    const slots: string[] = [];
     const duration = (booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens) + settings.buffer;
-    const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    
+    const toMins = (t: string) => { 
+      const [h, m] = t.split(':').map(Number); 
+      return h * 60 + m; 
+    };
     const fromMins = (m: number) => { 
-      const h = Math.floor(m / 60); const mm = m % 60; 
+      const h = Math.floor(m / 60); 
+      const mm = m % 60; 
       return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
     };
-
+  
     const clinicStart = toMins(settings.start);
     const clinicEnd = toMins(settings.end);
     const lunchStart = toMins("13:00");
     const lunchEnd = toMins("14:00");
-
+  
     const dayBookings = existingBookings
       .filter(b => b.appointmentDate === booking.date)
       .map(b => {
         const d = b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck;
-        return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d + settings.buffer };
-      });
-
-      for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
-        const potentialEnd = current + duration;
+        return { 
+          start: toMins(b.appointmentTime), 
+          end: toMins(b.appointmentTime) + d + settings.buffer 
+        };
+      })
+      .sort((a, b) => a.start - b.start);
+  
+    // 1. Check the very first slot of the day
+    if (dayBookings.length === 0) {
+      // If day is empty, offer the start of the clinic and the start of afternoon
+      slots.push(fromMins(clinicStart));
+      if (lunchEnd + duration <= clinicEnd) slots.push(fromMins(lunchEnd));
+    } else {
+      // 2. Offer the slot immediately after every existing booking
+      dayBookings.forEach(b => {
+        const nextPotential = b.end;
+        const potentialEnd = nextPotential + duration;
         
-        // LUNCH BREAK LOGIC (13:00 - 14:00)
-        if (current < lunchEnd && potentialEnd > lunchStart) continue;
-      
-        const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-        
-        if (!isOverlap) {
-          slots.push(fromMins(current));
-          // OPTIONAL: Once a slot is found, skip forward by the duration 
-          // to prevent "overlapping" options like 09:35, 09:40, 09:45
-          // current += duration - 5; 
+        // Ensure it doesn't overlap another booking and isn't in lunch/after hours
+        const noOverlap = !dayBookings.some(other => (nextPotential < other.end && potentialEnd > other.start));
+        const notInLunch = !(nextPotential < lunchEnd && potentialEnd > lunchStart);
+        const withinClinic = potentialEnd <= clinicEnd;
+  
+        if (noOverlap && notInLunch && withinClinic) {
+          slots.push(fromMins(nextPotential));
         }
+      });
+  
+      // 3. Offer the slot immediately before the first booking of the morning/afternoon
+      const firstBooking = dayBookings[0];
+      if (firstBooking.start - duration >= clinicStart) {
+         slots.push(fromMins(firstBooking.start - duration));
       }
-    return slots;
+    }
+  
+    // Remove duplicates and sort
+    return Array.from(new Set(slots)).sort();
   };
 
   const handleFinalSubmit = async () => {

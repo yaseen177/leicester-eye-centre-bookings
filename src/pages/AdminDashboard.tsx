@@ -1,23 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
   Trash2, 
+  Settings, 
+  LayoutDashboard, 
   LogOut, 
   Activity 
-} from 'lucide-react'; // Removed Settings, List, LayoutDashboard, Users
+} from 'lucide-react';
 import { db } from '../lib/firebase';
-import { 
-  collection, 
-  onSnapshot, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  deleteDoc 
-} from 'firebase/firestore'; // Removed 'query' as onSnapshot is used directly on the collection
+import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'list' | 'settings'>('diary');
+  const [view, setView] = useState<'diary' | 'settings'>('diary');
   const [appointments, setAppointments] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [config, setConfig] = useState({ 
@@ -29,75 +24,130 @@ export default function AdminDashboard() {
     const unsub = onSnapshot(collection(db, "appointments"), (snap) => {
       setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    getDoc(doc(db, "settings", "clinicConfig")).then(d => { if (d.exists()) setConfig(d.data() as any); });
+    getDoc(doc(db, "settings", "clinicConfig")).then(d => { 
+      if (d.exists()) setConfig(d.data() as any); 
+    });
     return () => unsub();
   }, []);
 
-  const saveConfig = async () => {
-    await setDoc(doc(db, "settings", "clinicConfig"), config);
-    alert("Clinic configuration updated.");
+  const toMins = (t: string) => {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  };
+
+  const fromMins = (m: number) => {
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`;
   };
 
   const deleteApp = async (id: string) => {
     if (confirm("Cancel this appointment?")) await deleteDoc(doc(db, "appointments", id));
   };
 
+  const saveConfig = async () => {
+    await setDoc(doc(db, "settings", "clinicConfig"), config);
+    alert("Clinic configuration updated.");
+  };
+
+  const renderTimeline = () => {
+    const timeline: ReactNode[] = []; // Explicitly typed to avoid "Implicit Any"
+    let currentTime = toMins(config.hours.start);
+
+    const sortedDay = appointments
+      .filter((a: any) => a.appointmentDate === selectedDate)
+      .sort((a: any, b: any) => toMins(a.appointmentTime) - toMins(b.appointmentTime));
+
+    sortedDay.forEach((app: any) => {
+      const appStart = toMins(app.appointmentTime);
+      const appDuration = app.appointmentType.includes('Contact') 
+        ? config.times.contactLens 
+        : config.times.eyeCheck;
+
+      if (appStart > currentTime) {
+        const gapDuration = appStart - currentTime;
+        timeline.push(
+          <div key={`gap-${currentTime}`} style={{ height: `${gapDuration * 2}px` }} className="flex items-center justify-center border-l-4 border-dashed border-slate-200 bg-slate-50/50 my-1 rounded-r-xl">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{gapDuration}m Gap</span>
+          </div>
+        );
+      }
+
+      timeline.push(
+        <div key={app.id} style={{ height: `${appDuration * 2}px` }} className="relative group border-l-4 border-[#3F9185] bg-white shadow-sm ring-1 ring-slate-200 my-1 rounded-r-xl p-3 flex flex-col justify-center hover:shadow-md transition-all">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-black text-[#3F9185] uppercase leading-none mb-1">{app.appointmentTime} — {fromMins(appStart + appDuration)}</p>
+              <h3 className="font-bold text-slate-800 text-sm truncate">{app.patientName}</h3>
+              <p className="text-[9px] font-bold text-slate-400 uppercase">{app.appointmentType}</p>
+            </div>
+            <button onClick={() => deleteApp(app.id)} className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={14} /></button>
+          </div>
+        </div>
+      );
+      currentTime = appStart + appDuration + config.times.buffer;
+    });
+
+    return timeline;
+  };
+
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+      <div className="max-w-5xl mx-auto space-y-6">
+        
+        <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex gap-2">
-            {(['diary', 'list', 'settings'] as const).map(v => (
-              <button key={v} onClick={() => setView(v)} className={`px-5 py-2 rounded-xl font-bold capitalize transition-all ${view === v ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-                {v}
-              </button>
-            ))}
+            <button onClick={() => setView('diary')} className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <LayoutDashboard size={18} /> Diary
+            </button>
+            <button onClick={() => setView('settings')} className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'settings' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <Settings size={18} /> Settings
+            </button>
           </div>
-          <button onClick={() => window.location.href='/admin-login'} className="p-2 text-slate-400 hover:text-red-500"><LogOut size={20}/></button>
+          <button onClick={() => window.location.href='/admin-login'} className="p-2 text-slate-400 hover:text-red-500 transition-colors"><LogOut size={20}/></button>
         </div>
 
         {view === 'diary' && (
-          <div className="glass-card rounded-[2.5rem] p-8">
+          <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
             <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-black flex items-center gap-3"><CalendarIcon className="text-[#3F9185]" /> Diary View</h2>
-              <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-2 border rounded-xl font-bold text-[#3F9185] outline-none" />
+              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3"><CalendarIcon className="text-[#3F9185]" /> Daily Diary</h2>
+              <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-3 bg-slate-100 border-none rounded-xl font-bold text-[#3F9185] outline-none" />
             </div>
-            <div className="space-y-2">
-            {appointments
-              .filter((a: any) => a.appointmentDate === selectedDate)
-              .sort((a: any, b: any) => a.appointmentTime.localeCompare(b.appointmentTime))
-              .map((app: any) => (
-                <div key={app.id} className="p-5 rounded-2xl border-2 border-[#3F9185]/10 bg-white flex justify-between items-center shadow-sm">
-                  <div className="flex items-center gap-6">
-                    <span className="font-black text-slate-400 w-16">{app.appointmentTime}</span>
-                    <div>
-                      <p className="font-bold text-slate-800 text-lg">{app.patientName}</p>
-                      <p className="text-xs font-bold text-[#3F9185] uppercase tracking-wider">{app.appointmentType}</p>
-                    </div>
-                  </div>
-                  <button onClick={() => deleteApp(app.id)} className="p-2 text-slate-300 hover:text-red-500"><Trash2 size={20}/></button>
-                </div>
-              ))}
+
+            <div className="relative border-t border-slate-100 pt-4">
+              <div className="ml-4 space-y-1">
+                {renderTimeline()}
+              </div>
             </div>
           </div>
         )}
 
         {view === 'settings' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-8">
-            <h2 className="text-2xl font-black">Clinical Configuration</h2>
+            <h2 className="text-2xl font-black text-slate-800">Clinic Settings</h2>
             <div className="grid md:grid-cols-2 gap-10">
               <div className="space-y-4">
-                <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Clock size={18}/> Testing Times (mins)</h3>
-                <input type="number" value={config.times.eyeCheck} onChange={e => setConfig({...config, times: {...config.times, eyeCheck: +e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50" placeholder="Eye Check" />
-                <input type="number" value={config.times.contactLens} onChange={e => setConfig({...config, times: {...config.times, contactLens: +e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50" placeholder="Contact Lens" />
+                <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Clock size={18}/> Durations (mins)</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Eye Examination</label>
+                    <input type="number" value={config.times.eyeCheck} onChange={e => setConfig({...config, times: {...config.times, eyeCheck: +e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Contact Lens Check</label>
+                    <input type="number" value={config.times.contactLens} onChange={e => setConfig({...config, times: {...config.times, contactLens: +e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                  </div>
+                </div>
               </div>
               <div className="space-y-4">
                 <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Activity size={18}/> Clinic Hours</h3>
-                <input type="time" value={config.hours.start} onChange={e => setConfig({...config, hours: {...config.hours, start: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50" />
-                <input type="time" value={config.hours.end} onChange={e => setConfig({...config, hours: {...config.hours, end: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50" />
+                <div className="grid grid-cols-2 gap-4">
+                  <input type="time" value={config.hours.start} onChange={e => setConfig({...config, hours: {...config.hours, start: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                  <input type="time" value={config.hours.end} onChange={e => setConfig({...config, hours: {...config.hours, end: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                </div>
               </div>
             </div>
-            <button onClick={saveConfig} className="px-10 py-4 bg-[#3F9185] text-white font-black rounded-2xl shadow-lg">Save Settings</button>
+            <button onClick={saveConfig} className="px-10 py-4 bg-[#3F9185] text-white font-black rounded-2xl shadow-lg hover:opacity-90 transition-all">Save Changes</button>
           </div>
         )}
       </div>
