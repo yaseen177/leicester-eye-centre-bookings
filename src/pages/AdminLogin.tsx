@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Mail } from 'lucide-react';
+import { Lock, Mail, Loader2 } from 'lucide-react';
+import { auth } from '../lib/firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 
-// This interface solves the "type declarations" part of your error
 interface AdminLoginProps {
   setAuth: (auth: boolean) => void;
 }
@@ -10,45 +11,55 @@ interface AdminLoginProps {
 export default function AdminLogin({ setAuth }: AdminLoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Default credentials for your testing
-    if (email === 'admin@leicestereye.co.uk' && password === 'vision2025') {
+    setLoading(true);
+
+    try {
+      // Authenticate against Firebase users
+      await signInWithEmailAndPassword(auth, email, password);
       setAuth(true);
       navigate('/admin-panel-secret');
-    } else {
-      alert('Invalid credentials');
+    } catch (error: any) {
+      console.error("Login error:", error.code);
+      alert("Access Denied: Invalid staff credentials.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-      <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-10 border border-slate-100">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Staff Portal</h2>
-          <p className="text-slate-500 mt-2">Sign in to manage the practice diary</p>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-slate-50">
+      <div className="max-w-md w-full glass-card rounded-[2.5rem] p-10 border-none ring-1 ring-slate-200 shadow-2xl">
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-200">
+            <Lock className="text-white" size={28} />
+          </div>
+          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Staff Portal</h2>
+          <p className="text-slate-500 mt-2 font-medium">Secure access for Leicester Eye Centre</p>
         </div>
         
         <form onSubmit={handleLogin} className="space-y-5">
-          <div className="relative">
-            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+          <div className="relative group">
+            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={20} />
             <input 
               type="email" 
-              placeholder="Email address"
-              className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-400"
+              placeholder="Staff Email"
+              className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-medium"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
             />
           </div>
-          <div className="relative">
-            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+          <div className="relative group">
+            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={20} />
             <input 
               type="password" 
-              placeholder="Password"
-              className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-400"
+              placeholder="Secret Password"
+              className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-medium"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -56,11 +67,16 @@ export default function AdminLogin({ setAuth }: AdminLoginProps) {
           </div>
           <button 
             type="submit"
-            className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-[0.98]"
+            disabled={loading}
+            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-lg hover:bg-indigo-600 shadow-xl shadow-slate-200 transition-all active:scale-[0.98] flex justify-center items-center gap-2 disabled:opacity-70"
           >
-            Sign In
+            {loading ? <><Loader2 className="animate-spin" /> Authenticating...</> : 'Enter Dashboard'}
           </button>
         </form>
+        
+        <p className="text-center mt-8 text-xs font-bold text-slate-400 uppercase tracking-widest leading-loose">
+          Authorized Personnel Only
+        </p>
       </div>
     </div>
   );
