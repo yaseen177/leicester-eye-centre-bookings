@@ -92,12 +92,21 @@ export default function BookingPage() {
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d + settings.buffer };
       });
 
-    for (let current = clinicStart; current + duration <= clinicEnd; current += 15) {
-      const potentialEnd = current + duration;
-      if (current < lunchEnd && potentialEnd > lunchStart) continue;
-      const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-      if (!isOverlap) slots.push(fromMins(current));
-    }
+      for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
+        const potentialEnd = current + duration;
+        
+        // LUNCH BREAK LOGIC (13:00 - 14:00)
+        if (current < lunchEnd && potentialEnd > lunchStart) continue;
+      
+        const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
+        
+        if (!isOverlap) {
+          slots.push(fromMins(current));
+          // OPTIONAL: Once a slot is found, skip forward by the duration 
+          // to prevent "overlapping" options like 09:35, 09:40, 09:45
+          // current += duration - 5; 
+        }
+      }
     return slots;
   };
 
