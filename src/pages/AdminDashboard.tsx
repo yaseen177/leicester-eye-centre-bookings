@@ -1,7 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, List, LayoutDashboard, LogOut, Users, Activity } from 'lucide-react';
+import { 
+  Calendar as CalendarIcon, 
+  Clock, 
+  Trash2, 
+  LogOut, 
+  Activity 
+} from 'lucide-react'; // Removed Settings, List, LayoutDashboard, Users
 import { db } from '../lib/firebase';
-import { collection, query, onSnapshot, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { 
+  collection, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  deleteDoc 
+} from 'firebase/firestore'; // Removed 'query' as onSnapshot is used directly on the collection
 
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'list' | 'settings'>('diary');
@@ -50,7 +63,10 @@ export default function AdminDashboard() {
               <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-2 border rounded-xl font-bold text-[#3F9185] outline-none" />
             </div>
             <div className="space-y-2">
-              {appointments.filter(a => a.appointmentDate === selectedDate).sort((a,b) => a.appointmentTime.localeCompare(b.appointmentTime)).map(app => (
+            {appointments
+              .filter((a: any) => a.appointmentDate === selectedDate)
+              .sort((a: any, b: any) => a.appointmentTime.localeCompare(b.appointmentTime))
+              .map((app: any) => (
                 <div key={app.id} className="p-5 rounded-2xl border-2 border-[#3F9185]/10 bg-white flex justify-between items-center shadow-sm">
                   <div className="flex items-center gap-6">
                     <span className="font-black text-slate-400 w-16">{app.appointmentTime}</span>

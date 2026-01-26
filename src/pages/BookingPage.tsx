@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle2, Loader2, ChevronRight, ArrowLeft, Clock, Calendar as CalendarIcon } from 'lucide-react';
+import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react'; // Cleaned imports
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, onSnapshot, doc, getDoc } from 'firebase/firestore';
 
@@ -34,7 +34,10 @@ export default function BookingPage() {
     });
     
     getDoc(doc(db, "settings", "clinicConfig")).then(d => {
-      if (d.exists()) setSettings(prev => ({ ...prev, ...d.data().times, ...d.data().hours }));
+      if (d.exists()) {
+        const data = d.data();
+        setSettings(prev => ({ ...prev, ...data.times, ...data.hours }));
+      }
     });
     return () => unsub();
   }, []);
@@ -62,6 +65,9 @@ export default function BookingPage() {
 
     const clinicStart = toMins(settings.start);
     const clinicEnd = toMins(settings.end);
+    const lunchStart = toMins("13:00");
+    const lunchEnd = toMins("14:00");
+
     const dayBookings = existingBookings
       .filter(b => b.appointmentDate === booking.date)
       .map(b => {
@@ -71,6 +77,10 @@ export default function BookingPage() {
 
     for (let current = clinicStart; current + duration <= clinicEnd; current += 15) {
       const potentialEnd = current + duration;
+      
+      // LUNCH BREAK LOGIC
+      if (current < lunchEnd && potentialEnd > lunchStart) continue;
+
       const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
       if (!isOverlap) slots.push(fromMins(current));
     }
@@ -97,16 +107,16 @@ export default function BookingPage() {
     <div className="max-w-xl mx-auto px-6 py-12">
       <header className="text-center mb-10">
         <h1 className="text-4xl font-black" style={{ color: '#3F9185' }}>Leicester Eye Centre</h1>
-        <p className="text-slate-500 mt-2 font-medium italic">Clinical Excellence in Vision</p>
+        <p className="text-slate-500 mt-2 font-medium italic text-sm">Clinical Optical Services</p>
       </header>
 
       <div className="glass-card rounded-[2.5rem] p-8">
         {step === 1 && (
           <div className="space-y-4">
-            <h2 className="text-xl font-bold text-slate-800 mb-4">Select Service</h2>
+            <h2 className="text-xl font-bold text-slate-800 mb-4">How can we help?</h2>
             {['Eye Check', 'Contact Lens Check'].map(s => (
-              <button key={s} onClick={() => { setBooking({...booking, service: s}); setStep(2); }} className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] bg-white flex justify-between items-center group">
-                <span className="font-bold text-lg">{s}</span>
+              <button key={s} onClick={() => { setBooking({...booking, service: s}); setStep(2); }} className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] bg-white flex justify-between items-center group shadow-sm transition-all">
+                <span className="font-bold text-lg text-slate-700">{s}</span>
                 <ChevronRight className="text-slate-300 group-hover:text-[#3F9185]" />
               </button>
             ))}
@@ -114,55 +124,63 @@ export default function BookingPage() {
         )}
 
         {step === 2 && (
-          <div className="space-y-6">
+          <div className="space-y-6 animate-in fade-in">
              <div className="flex items-center gap-2">
-                <button onClick={() => setStep(1)}><ArrowLeft size={20} className="text-slate-600" /></button>
-                <h2 className="text-xl font-bold">Available Appointments</h2>
+                <button onClick={() => setStep(1)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><ArrowLeft size={20} className="text-slate-600" /></button>
+                <h2 className="text-xl font-bold text-slate-800">Available Slots</h2>
              </div>
-             <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 rounded-xl bg-slate-50 font-bold text-[#3F9185] outline-none" onChange={e => setBooking({...booking, date: e.target.value})} />
+             <div>
+               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Select Date</label>
+               <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none" onChange={e => setBooking({...booking, date: e.target.value})} />
+             </div>
              <div className="grid grid-cols-3 gap-2">
                 {getAvailableSlots().map(t => (
-                  <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white' : 'bg-white text-slate-400 border-slate-50'}`}>{t}</button>
+                  <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'}`}>{t}</button>
                 ))}
              </div>
-             <button disabled={!booking.time} onClick={() => setStep(3)} className="w-full py-4 rounded-2xl text-white font-black" style={{ backgroundColor: '#3F9185' }}>Continue</button>
+             <button disabled={!booking.time} onClick={() => setStep(3)} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30" style={{ backgroundColor: '#3F9185' }}>Continue</button>
           </div>
         )}
 
         {step === 3 && (
           <div className="space-y-5 animate-in fade-in">
-            <h2 className="text-xl font-bold">Patient Details</h2>
+            <h2 className="text-xl font-bold text-slate-800">Patient Details</h2>
             <div className="grid grid-cols-2 gap-3">
-              <input placeholder="First Name" className="p-4 rounded-xl bg-slate-50 outline-none" onChange={e => setBooking({...booking, firstName: e.target.value})} />
-              <input placeholder="Last Name" className="p-4 rounded-xl bg-slate-50 outline-none" onChange={e => setBooking({...booking, lastName: e.target.value})} />
+              <input placeholder="First Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setBooking({...booking, firstName: e.target.value})} />
+              <input placeholder="Last Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setBooking({...booking, lastName: e.target.value})} />
             </div>
-            <input type="date" className="w-full p-4 rounded-xl bg-slate-50 outline-none" onChange={e => setBooking({...booking, dob: e.target.value})} />
+            <div>
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
+              <input type="date" className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setBooking({...booking, dob: e.target.value})} />
+            </div>
             
             {booking.service === 'Eye Check' && (
-              <div className="space-y-3">
-                <label className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer">
-                  <input type="checkbox" onChange={e => setBooking({...booking, onBenefits: e.target.checked})} />
-                  <span className="text-sm">Income-related benefits?</span>
+              <div className="space-y-3 pt-2">
+                <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                  <input type="checkbox" className="accent-[#3F9185]" onChange={e => setBooking({...booking, onBenefits: e.target.checked})} />
+                  <span className="text-sm font-medium text-slate-600">Income-related benefits?</span>
                 </label>
-                <label className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer">
-                  <input type="checkbox" onChange={e => setBooking({...booking, isDiabetic: e.target.checked})} />
-                  <span className="text-sm">Diabetic?</span>
+                <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                  <input type="checkbox" className="accent-[#3F9185]" onChange={e => setBooking({...booking, isDiabetic: e.target.checked})} />
+                  <span className="text-sm font-medium text-slate-600">Diabetic?</span>
                 </label>
               </div>
             )}
 
-            <button onClick={handleFinalSubmit} disabled={loading || !booking.firstName || !booking.dob} className="w-full py-4 rounded-2xl font-black text-white" style={{ backgroundColor: '#3F9185' }}>
-              {loading ? <Loader2 className="animate-spin mx-auto" /> : 'Confirm Booking'}
+            <button onClick={handleFinalSubmit} disabled={loading || !booking.firstName || !booking.dob} className="w-full py-4 rounded-2xl font-black text-white shadow-lg flex justify-center items-center" style={{ backgroundColor: '#3F9185' }}>
+              {loading ? <Loader2 className="animate-spin" /> : 'Confirm Appointment'}
             </button>
           </div>
         )}
 
         {step === 4 && (
           <div className="text-center py-10 space-y-4 animate-in zoom-in-95">
-            <CheckCircle2 size={60} className="mx-auto text-emerald-500" />
-            <h2 className="text-3xl font-black text-slate-900">Success!</h2>
-            <p className="text-slate-500">Confirmed for {booking.time} on {booking.date}.</p>
-            <button onClick={() => window.location.reload()} className="text-[#3F9185] font-bold">Finish</button>
+            <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto">
+              <CheckCircle2 size={40} style={{ color: '#3F9185' }} />
+            </div>
+            <h2 className="text-3xl font-black text-slate-900">All Set!</h2>
+            <p className="text-slate-500 font-medium italic">Confirmed for {booking.time} on {new Date(booking.date).toLocaleDateString('en-GB')}</p>
+            <button onClick={() => window.location.reload()} className="text-[#3F9185] font-black hover:underline underline-offset-4">New Booking</button>
           </div>
         )}
       </div>
