@@ -1,143 +1,173 @@
 import { useState } from 'react';
-import { CheckCircle2, Loader2 } from 'lucide-react';
-import { db } from '../lib/firebase'; // Ensure this path matches your firebase file
+import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
+import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
-interface AppointmentType {
-  id: string;
-  label: string;
-  price: string;
-}
-
-interface BookingData {
-  type: string;
-  date: string;
-  time: string;
-  name: string;
-}
-
-const APPOINTMENT_TYPES: AppointmentType[] = [
-  { id: 'private', label: 'Eye Check Private', price: '£40' },
-  { id: 'over60', label: 'Eye Check Over 60', price: 'Free (NHS)' },
-  { id: 'child', label: 'Eye Check Child', price: 'Free (NHS)' },
-  { id: 'nhs', label: 'Eye Check NHS', price: 'Free' },
-];
-
 export default function BookingPage() {
-  const [step, setStep] = useState<number>(1);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [booking, setBooking] = useState<BookingData>({ 
-    type: '', 
-    date: '', 
-    time: '', 
-    name: '' 
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  
+  const [booking, setBooking] = useState({
+    service: '', // "Eye Check" or "Contact Lens Check"
+    date: '',
+    time: '',
+    firstName: '',
+    lastName: '',
+    dob: '',
+    inFullTimeEducation: false,
+    onBenefits: false,
+    isDiabetic: false,
+    familyGlaucoma: false
   });
 
-  const handleConfirmBooking = async () => {
-    setIsSubmitting(true);
+  // Calculation Logic for Appointment Category
+  const getCategory = () => {
+    if (booking.service === 'Contact Lens Check') return 'Contact Lens Check';
+    
+    const birthDate = new Date(booking.dob);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+
+    if (age >= 60) return 'Eye Check Over 60';
+    if (age < 16) return 'Eye Check Child';
+    if (age >= 16 && age <= 18 && booking.inFullTimeEducation) return 'Eye Check NHS';
+    
+    if (age >= 19 && age <= 59) {
+      if (booking.onBenefits || booking.isDiabetic) return 'Eye Check NHS';
+      if (age >= 40 && booking.familyGlaucoma) return 'Eye Check NHS';
+      return 'Eye Check Private';
+    }
+    
+    return 'Eye Check Private';
+  };
+
+  const handleFinalSubmit = async () => {
+    setLoading(true);
     try {
-      // Save to Firebase Firestore
       await addDoc(collection(db, "appointments"), {
-        patientName: booking.name,
-        appointmentType: booking.type,
+        patientName: `${booking.firstName} ${booking.lastName}`,
+        dob: booking.dob,
+        appointmentType: getCategory(),
         appointmentDate: booking.date,
         appointmentTime: booking.time,
         createdAt: serverTimestamp(),
-        status: 'pending' // You can use this for the admin to 'approve' if needed
       });
-      
-      setStep(3);
-    } catch (error) {
-      console.error("Error adding document: ", error);
-      alert("Something went wrong. Please check your connection and try again.");
+      setStep(4);
+    } catch (e) {
+      alert("Error booking. Please try again.");
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-12">
-      <header className="text-center mb-12">
-        <h1 className="text-4xl font-black tracking-tight text-slate-900">Leicester Eye Centre</h1>
-        <p className="text-slate-500 mt-2 font-medium">Expert eye care, scheduled at your convenience.</p>
+    <div className="max-w-xl mx-auto px-6 py-12">
+      <header className="text-center mb-10">
+        <h1 className="text-4xl font-black text-slate-900" style={{ color: '#3F9185' }}>Leicester Eye Centre</h1>
+        <p className="text-slate-500 mt-2 font-medium">Professional optical care</p>
       </header>
 
-      <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl shadow-slate-200/60 p-8 border border-white">
+      <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
+        
+        {/* Step 1: Service Selection */}
         {step === 1 && (
-          <section className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-            <h2 className="text-xl font-bold text-slate-800">Select Appointment Type</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {APPOINTMENT_TYPES.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => { setBooking({...booking, type: t.label}); setStep(2); }}
-                  className="p-6 border-2 border-slate-50 rounded-2xl text-left hover:border-blue-500 hover:bg-blue-50 transition-all group bg-white shadow-sm"
-                >
-                  <span className="block font-bold text-lg text-slate-800 group-hover:text-blue-700">{t.label}</span>
-                  <span className="text-slate-400 text-sm font-medium">{t.price}</span>
-                </button>
-              ))}
-            </div>
-          </section>
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+            <h2 className="text-xl font-bold text-slate-800 mb-4">How can we help today?</h2>
+            {['Eye Check', 'Contact Lens Check'].map(service => (
+              <button 
+                key={service}
+                onClick={() => { setBooking({...booking, service}); setStep(2); }}
+                className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] hover:bg-teal-50/30 transition-all flex justify-between items-center group bg-white shadow-sm"
+              >
+                <span className="font-bold text-lg text-slate-700">{service}</span>
+                <ChevronRight className="text-slate-300 group-hover:text-[#3F9185]" />
+              </button>
+            ))}
+          </div>
         )}
 
+        {/* Step 2: Time Selection */}
         {step === 2 && (
-          <section className="space-y-6 animate-in fade-in zoom-in-95">
-            <h2 className="text-xl font-bold text-slate-800">Details & Time</h2>
-            <div className="grid gap-4">
-              <input 
-                type="text" 
-                placeholder="Full Name" 
-                className="w-full p-4 rounded-xl border border-slate-100 bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none font-medium" 
-                onChange={(e) => setBooking({...booking, name: e.target.value})} 
-              />
-              <input 
-                type="date" 
-                className="w-full p-4 rounded-xl border border-slate-100 bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none font-medium text-slate-600" 
-                onChange={(e) => setBooking({...booking, date: e.target.value})} 
-              />
-              <div className="flex flex-wrap gap-2">
+          <div className="space-y-6 animate-in fade-in">
+             <h2 className="text-xl font-bold text-slate-800">Select a convenient time</h2>
+             <input type="date" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none font-medium text-slate-600 focus:ring-2 focus:ring-[#3F9185]" onChange={e => setBooking({...booking, date: e.target.value})} />
+             <div className="grid grid-cols-3 gap-2">
                 {['09:00', '10:30', '14:00', '16:00'].map(t => (
-                  <button 
-                    key={t} 
-                    onClick={() => setBooking({...booking, time: t})} 
-                    className={`px-6 py-3 rounded-xl border-2 font-bold transition-all ${booking.time === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-50 hover:bg-slate-50'}`}
-                  >
-                    {t}
-                  </button>
+                  <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50'}`}>{t}</button>
                 ))}
-              </div>
-              <button 
-                onClick={handleConfirmBooking} 
-                disabled={!booking.name || !booking.time || !booking.date || isSubmitting}
-                className="w-full bg-slate-900 text-white py-4 rounded-xl font-black text-lg hover:bg-slate-800 transition-all shadow-lg shadow-slate-200 disabled:opacity-50 flex justify-center items-center gap-2"
-              >
-                {isSubmitting ? <><Loader2 className="animate-spin" /> Processing...</> : 'Confirm Booking'}
-              </button>
-              <button onClick={() => setStep(1)} className="w-full text-slate-400 text-sm font-bold hover:text-slate-600 transition-colors">Back</button>
-            </div>
-          </section>
+             </div>
+             <button disabled={!booking.date || !booking.time} onClick={() => setStep(3)} className="w-full py-4 rounded-2xl font-black text-white shadow-lg shadow-teal-900/10 disabled:opacity-50" style={{ backgroundColor: '#3F9185' }}>Continue</button>
+             <button onClick={() => setStep(1)} className="w-full text-slate-400 text-sm font-bold">Back</button>
+          </div>
         )}
 
+        {/* Step 3: Triage Questions */}
         {step === 3 && (
-          <div className="text-center py-10 space-y-4 animate-in zoom-in-90">
-            <div className="flex justify-center">
-              <div className="bg-green-100 p-4 rounded-full">
-                <CheckCircle2 className="w-12 h-12 text-green-500" />
-              </div>
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-4">
+            <h2 className="text-xl font-bold text-slate-800">Patient Details</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <input placeholder="First Name" className="p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setBooking({...booking, firstName: e.target.value})} />
+              <input placeholder="Last Name" className="p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setBooking({...booking, lastName: e.target.value})} />
             </div>
-            <h2 className="text-3xl font-black text-slate-900">Booking Confirmed!</h2>
-            <p className="text-slate-500 max-w-xs mx-auto font-medium">
-              Thank you, <span className="font-bold text-slate-800">{booking.name}</span>. We've scheduled your <span className="font-bold text-slate-800">{booking.type}</span>.
-            </p>
-            <div className="pt-6">
-              <button 
-                onClick={() => { setBooking({type: '', date: '', time: '', name: ''}); setStep(1); }} 
-                className="text-blue-600 font-bold hover:text-blue-700 transition-colors"
-              >
-                Make another booking
-              </button>
+            
+            <div>
+              <label className="text-xs font-bold text-slate-400 uppercase ml-1">Date of Birth</label>
+              <input type="date" className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setBooking({...booking, dob: e.target.value})} />
             </div>
+
+            {/* Conditional Logic UI */}
+            <div className="space-y-3 pt-2">
+              {/* Logic for 16-18 */}
+              {(() => {
+                const age = booking.dob ? Math.floor((new Date().getTime() - new Date(booking.dob).getTime()) / 31557600000) : 0;
+                
+                if (booking.service === 'Eye Check') {
+                  if (age >= 16 && age <= 18) return (
+                    <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                      <input type="checkbox" checked={booking.inFullTimeEducation} onChange={e => setBooking({...booking, inFullTimeEducation: e.target.checked})} />
+                      <span className="text-sm font-medium text-slate-600">Are you in full-time education?</span>
+                    </label>
+                  );
+                  if (age >= 19 && age <= 59) return (
+                    <div className="space-y-3">
+                      <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                        <input type="checkbox" onChange={e => setBooking({...booking, onBenefits: e.target.checked})} />
+                        <span className="text-sm font-medium text-slate-600">Are you in receipt of income-related benefits?</span>
+                      </label>
+                      <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                        <input type="checkbox" onChange={e => setBooking({...booking, isDiabetic: e.target.checked})} />
+                        <span className="text-sm font-medium text-slate-600">Are you diabetic?</span>
+                      </label>
+                      {age >= 40 && (
+                        <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                          <input type="checkbox" onChange={e => setBooking({...booking, familyGlaucoma: e.target.checked})} />
+                          <span className="text-sm font-medium text-slate-600">Do you have a parent/sibling with glaucoma?</span>
+                        </label>
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+            </div>
+
+            <button onClick={handleFinalSubmit} disabled={loading || !booking.firstName || !booking.dob} className="w-full py-4 rounded-2xl font-black text-white flex justify-center items-center gap-2" style={{ backgroundColor: '#3F9185' }}>
+              {loading ? <Loader2 className="animate-spin" /> : 'Confirm Booking'}
+            </button>
+          </div>
+        )}
+
+        {/* Step 4: Success */}
+        {step === 4 && (
+          <div className="text-center py-10 space-y-4 animate-in zoom-in-95">
+            <div className="bg-teal-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto">
+               <CheckCircle2 size={40} style={{ color: '#3F9185' }} />
+            </div>
+            <h2 className="text-3xl font-black text-slate-900">All set!</h2>
+            <p className="text-slate-500 font-medium">Your <span className="font-bold text-slate-800">{getCategory()}</span> is confirmed for {booking.time}.</p>
+            <button onClick={() => window.location.reload()} className="text-[#3F9185] font-bold">Close</button>
           </div>
         )}
       </div>
