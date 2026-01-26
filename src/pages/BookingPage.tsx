@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, Loader2, ChevronRight } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
