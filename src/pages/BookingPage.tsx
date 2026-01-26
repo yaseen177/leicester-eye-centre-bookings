@@ -73,7 +73,8 @@ export default function BookingPage() {
 
   const getAvailableSlots = () => {
     const slots: string[] = [];
-    const duration = (booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens) + settings.buffer;
+    // Buffer removed as requested
+    const duration = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
     
     const toMins = (t: string) => { 
       const [h, m] = t.split(':').map(Number); 
@@ -92,44 +93,26 @@ export default function BookingPage() {
   
     const dayBookings = existingBookings
       .filter(b => b.appointmentDate === booking.date)
-      .map(b => {
-        const d = b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck;
-        return { 
-          start: toMins(b.appointmentTime), 
-          end: toMins(b.appointmentTime) + d + settings.buffer 
-        };
-      })
-      .sort((a, b) => a.start - b.start);
+      .map(b => ({
+        start: toMins(b.appointmentTime),
+        end: toMins(b.appointmentTime) + (b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck)
+      }));
   
-    // 1. Check the very first slot of the day
-    if (dayBookings.length === 0) {
-      // If day is empty, offer the start of the clinic and the start of afternoon
-      slots.push(fromMins(clinicStart));
-      if (lunchEnd + duration <= clinicEnd) slots.push(fromMins(lunchEnd));
-    } else {
-      // 2. Offer the slot immediately after every existing booking
-      dayBookings.forEach(b => {
-        const nextPotential = b.end;
-        const potentialEnd = nextPotential + duration;
-        
-        // Ensure it doesn't overlap another booking and isn't in lunch/after hours
-        const noOverlap = !dayBookings.some(other => (nextPotential < other.end && potentialEnd > other.start));
-        const notInLunch = !(nextPotential < lunchEnd && potentialEnd > lunchStart);
-        const withinClinic = potentialEnd <= clinicEnd;
+    // Step through the day in 5-minute increments
+    for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
+      const potentialEnd = current + duration;
+      
+      // Check if this window hits lunch
+      const hitsLunch = (current < lunchEnd && potentialEnd > lunchStart);
+      
+      // Check if this window overlaps any existing booking
+      const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
   
-        if (noOverlap && notInLunch && withinClinic) {
-          slots.push(fromMins(nextPotential));
-        }
-      });
-  
-      // 3. Offer the slot immediately before the first booking of the morning/afternoon
-      const firstBooking = dayBookings[0];
-      if (firstBooking.start - duration >= clinicStart) {
-         slots.push(fromMins(firstBooking.start - duration));
+      if (!hitsLunch && !isOverlap) {
+        slots.push(fromMins(current));
       }
     }
-  
-    // Remove duplicates and sort
+    
     return Array.from(new Set(slots)).sort();
   };
 

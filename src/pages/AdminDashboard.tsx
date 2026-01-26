@@ -50,45 +50,49 @@ export default function AdminDashboard() {
     alert("Clinic configuration updated.");
   };
 
-  const renderTimeline = () => {
-    const timeline: ReactNode[] = []; // Explicitly typed to avoid "Implicit Any"
-    let currentTime = toMins(config.hours.start);
-
-    const sortedDay = appointments
-      .filter((a: any) => a.appointmentDate === selectedDate)
-      .sort((a: any, b: any) => toMins(a.appointmentTime) - toMins(b.appointmentTime));
-
-    sortedDay.forEach((app: any) => {
-      const appStart = toMins(app.appointmentTime);
-      const appDuration = app.appointmentType.includes('Contact') 
-        ? config.times.contactLens 
-        : config.times.eyeCheck;
-
-      if (appStart > currentTime) {
-        const gapDuration = appStart - currentTime;
-        timeline.push(
-          <div key={`gap-${currentTime}`} style={{ height: `${gapDuration * 2}px` }} className="flex items-center justify-center border-l-4 border-dashed border-slate-200 bg-slate-50/50 my-1 rounded-r-xl">
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{gapDuration}m Gap</span>
+  const renderGrid = () => {
+    const grid: ReactNode[] = [];
+    const startMins = toMins(config.hours.start);
+    const endMins = toMins(config.hours.end);
+    
+    // We'll show markers every 15 minutes for a clean grid
+    for (let time = startMins; time < endMins; time += 15) {
+      const timeStr = fromMins(time);
+      const booking = appointments.find((a: any) => 
+        a.appointmentDate === selectedDate && a.appointmentTime === timeStr
+      );
+  
+      grid.push(
+        <div key={timeStr} className="group relative flex items-center border-b border-slate-50 py-3 hover:bg-slate-50/50 transition-colors">
+          {/* Time Sidebar */}
+          <div className="w-20 text-xs font-black text-slate-300 tabular-nums">
+            {timeStr}
           </div>
-        );
-      }
-
-      timeline.push(
-        <div key={app.id} style={{ height: `${appDuration * 2}px` }} className="relative group border-l-4 border-[#3F9185] bg-white shadow-sm ring-1 ring-slate-200 my-1 rounded-r-xl p-3 flex flex-col justify-center hover:shadow-md transition-all">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-[10px] font-black text-[#3F9185] uppercase leading-none mb-1">{app.appointmentTime} — {fromMins(appStart + appDuration)}</p>
-              <h3 className="font-bold text-slate-800 text-sm truncate">{app.patientName}</h3>
-              <p className="text-[9px] font-bold text-slate-400 uppercase">{app.appointmentType}</p>
-            </div>
-            <button onClick={() => deleteApp(app.id)} className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={14} /></button>
+  
+          {/* Slot Content */}
+          <div className="flex-1 px-4">
+            {booking ? (
+              <div className="bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185] p-3 rounded-xl shadow-sm flex justify-between items-center animate-in fade-in zoom-in-95">
+                <div>
+                  <p className="font-bold text-slate-800 text-sm">{booking.patientName}</p>
+                  <p className="text-[10px] font-black text-[#3F9185] uppercase tracking-tighter">
+                    {booking.appointmentType}
+                  </p>
+                </div>
+                <button onClick={() => deleteApp(booking.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors">
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ) : (
+              <div className="h-10 flex items-center border-2 border-dashed border-slate-100 rounded-xl px-4">
+                <span className="text-[10px] font-bold text-slate-200 uppercase">Available Slot</span>
+              </div>
+            )}
           </div>
         </div>
       );
-      currentTime = appStart + appDuration + config.times.buffer;
-    });
-
-    return timeline;
+    }
+    return grid;
   };
 
   return (
@@ -108,19 +112,19 @@ export default function AdminDashboard() {
         </div>
 
         {view === 'diary' && (
-          <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3"><CalendarIcon className="text-[#3F9185]" /> Daily Diary</h2>
-              <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-3 bg-slate-100 border-none rounded-xl font-bold text-[#3F9185] outline-none" />
-            </div>
+  <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
+    <div className="flex justify-between items-center mb-8">
+      <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+        <CalendarIcon className="text-[#3F9185]" /> Clinical Grid
+      </h2>
+      <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-3 bg-slate-100 border-none rounded-xl font-bold text-[#3F9185] outline-none" />
+    </div>
 
-            <div className="relative border-t border-slate-100 pt-4">
-              <div className="ml-4 space-y-1">
-                {renderTimeline()}
-              </div>
-            </div>
-          </div>
-        )}
+    <div className="max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+      {renderGrid()}
+    </div>
+  </div>
+)}
 
         {view === 'settings' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-8">
