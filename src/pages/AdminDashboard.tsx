@@ -72,17 +72,27 @@ export default function AdminDashboard() {
         a.appointmentDate === selectedDate && a.appointmentTime === timeStr
       );
 
-      // We show the row if there is a booking OR every 15 mins to keep the grid clean
       if (booking || time % 15 === 0) {
+        // Calculate the "Time To" based on the appointment type
+        const duration = booking 
+          ? (booking.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck)
+          : 0;
+        const endTimeStr = booking ? fromMins(time + duration) : '';
+
         grid.push(
           <div key={timeStr} className="flex items-center border-b border-slate-50 py-3 hover:bg-slate-50/50 transition-colors">
             <div className="w-20 text-xs font-black text-slate-300 tabular-nums">{timeStr}</div>
             <div className="flex-1 px-4">
               {booking ? (
                 <div className="bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185] p-3 rounded-xl flex justify-between items-center shadow-sm">
-                  <div>
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-xs font-black text-[#3F9185] bg-teal-50 px-2 py-1 rounded-md tabular-nums whitespace-nowrap">
+                      {timeStr} — {endTimeStr}
+                    </span>
                     <p className="font-bold text-slate-800 text-sm">{booking.patientName}</p>
-                    <p className="text-[10px] font-black text-[#3F9185] uppercase tracking-tighter">{booking.appointmentType}</p>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter hidden sm:inline">
+                      ({booking.appointmentType})
+                    </span>
                   </div>
                   <button onClick={() => deleteApp(booking.id)} className="text-slate-300 hover:text-red-500 transition-colors p-2">
                     <Trash2 size={16} />
