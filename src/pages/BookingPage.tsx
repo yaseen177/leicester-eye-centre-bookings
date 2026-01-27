@@ -12,7 +12,7 @@ export default function BookingPage() {
     end: "17:00", 
     eyeCheck: 30, 
     contactLens: 20,
-    buffer: 5 
+    buffer: 0 
   });
   
   const [booking, setBooking] = useState({
@@ -28,65 +28,58 @@ export default function BookingPage() {
     familyGlaucoma: false
   });
 
+  // 1. Setup Live Sync and Initial Settings
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "appointments"), (snap) => {
+    const unsubBookings = onSnapshot(collection(db, "appointments"), (snap) => {
       setExistingBookings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     
-    getDoc(doc(db, "settings", "clinicConfig")).then(d => {
+    const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {
         const data = d.data();
-        setSettings(prev => ({ ...prev, ...data.times, ...data.hours }));
+        setSettings({
+          start: data.hours?.start || "09:00",
+          end: data.hours?.end || "17:00",
+          eyeCheck: Number(data.times?.eyeCheck) || 30,
+          contactLens: Number(data.times?.contactLens) || 20,
+          buffer: 0
+        });
       }
     });
-    return () => unsub();
+
+    return () => {
+      unsubBookings();
+      unsubSettings();
+    };
   }, []);
 
-  // --- TRIAGE LOGIC ENGINE ---
-  const getCategory = () => {
-    if (booking.service === 'Contact Lens Check') return 'Contact Lens Check';
-    
-    const birthDate = new Date(booking.dob);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const m = today.getMonth() - birthDate.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
-
-    if (age >= 60) return 'Eye Check Over 60';
-    if (age < 16) return 'Eye Check Child';
-    
-    // 16, 17, or 18
-    if (age >= 16 && age <= 18) {
-      return booking.inFullTimeEducation ? 'Eye Check NHS' : 'Eye Check Private';
+  // 2. Logic: Find the first date that actually has slots
+  useEffect(() => {
+    if (existingBookings.length >= 0 && booking.service) {
+      const firstAvailable = findFirstAvailableDate();
+      if (firstAvailable !== booking.date) {
+        setBooking(prev => ({ ...prev, date: firstAvailable }));
+      }
     }
+  }, [existingBookings, booking.service]);
 
-    // 19 to 59
-    if (age >= 19 && age <= 59) {
-      if (booking.onBenefits || booking.isDiabetic) return 'Eye Check NHS';
-      // Glaucoma check for 40-59
-      if (age >= 40 && booking.familyGlaucoma) return 'Eye Check NHS';
-      return 'Eye Check Private';
-    }
-    
-    return 'Eye Check Private';
+  // --- SLOT CALCULATION ENGINE ---
+  const toMins = (t: string) => { 
+    const [h, m] = t.split(':').map(Number); 
+    return h * 60 + m; 
+  };
+  const fromMins = (m: number) => { 
+    const h = Math.floor(m / 60); 
+    const mm = m % 60; 
+    return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
   };
 
-  const getAvailableSlots = () => {
+  const calculateSlotsForDate = (targetDate: string) => {
     const slots: string[] = [];
     const duration = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
     
-    const toMins = (t: string) => { 
-      const [h, m] = t.split(':').map(Number); 
-      return h * 60 + m; 
-    };
-    const fromMins = (m: number) => { 
-      const h = Math.floor(m / 60); 
-      const mm = m % 60; 
-      return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
-    };
-
     const now = new Date();
-    const isToday = booking.date === now.toISOString().split('T')[0];
+    const isToday = targetDate === now.toISOString().split('T')[0];
     const currentMins = (now.getHours() * 60) + now.getMinutes();
 
     const clinicStart = toMins(settings.start);
@@ -95,30 +88,57 @@ export default function BookingPage() {
     const lunchEnd = toMins("14:00");
 
     const dayBookings = existingBookings
-      .filter(b => b.appointmentDate === booking.date)
-      .map(b => ({
-        start: toMins(b.appointmentTime),
-        end: toMins(b.appointmentTime) + (b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck)
-      }));
+      .filter(b => b.appointmentDate === targetDate)
+      .map(b => {
+        const d = b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck;
+        return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
+      });
 
     for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
       const potentialEnd = current + duration;
       
-      // 1. If it's today, skip slots that have already started or are about to start
       if (isToday && current <= currentMins) continue;
-
-      // 2. Skip lunch
       if (current < lunchEnd && potentialEnd > lunchStart) continue;
       
-      // 3. Skip overlaps
       const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-
-      if (!isOverlap) {
-        slots.push(fromMins(current));
-      }
+      if (!isOverlap) slots.push(fromMins(current));
     }
-    
     return Array.from(new Set(slots)).sort();
+  };
+
+  const findFirstAvailableDate = () => {
+    let checkDate = new Date();
+    for (let i = 0; i < 30; i++) {
+      const dateStr = checkDate.toISOString().split('T')[0];
+      if (calculateSlotsForDate(dateStr).length > 0) return dateStr;
+      checkDate.setDate(checkDate.getDate() + 1);
+    }
+    return new Date().toISOString().split('T')[0];
+  };
+
+  // --- TRIAGE LOGIC ---
+  const getCategory = () => {
+    if (booking.service === 'Contact Lens Check') return 'Contact Lens Check';
+    const age = calculateAge(booking.dob);
+
+    if (age >= 60) return 'Eye Check Over 60';
+    if (age < 16) return 'Eye Check Child';
+    if (age >= 16 && age <= 18) return booking.inFullTimeEducation ? 'Eye Check NHS' : 'Eye Check Private';
+    if (age >= 19 && age <= 59) {
+      if (booking.onBenefits || booking.isDiabetic) return 'Eye Check NHS';
+      if (age >= 40 && booking.familyGlaucoma) return 'Eye Check NHS';
+    }
+    return 'Eye Check Private';
+  };
+
+  const calculateAge = (dobString: string) => {
+    if (!dobString) return 0;
+    const birthDate = new Date(dobString);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+    return age;
   };
 
   const handleFinalSubmit = async () => {
@@ -133,18 +153,8 @@ export default function BookingPage() {
         createdAt: serverTimestamp(),
       });
       setStep(4);
-    } catch (e) { alert("Error booking. Please try again."); }
+    } catch (e) { alert("Booking failed. Please check your connection."); }
     setLoading(false);
-  };
-
-  const calculateAge = (dobString: string) => {
-    if (!dobString) return 0;
-    const birthDate = new Date(dobString);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const m = today.getMonth() - birthDate.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
-    return age;
   };
 
   return (
@@ -154,12 +164,13 @@ export default function BookingPage() {
         <p className="text-slate-500 mt-2 font-medium italic text-sm tracking-wide">Optical Excellence</p>
       </header>
 
-      <div className="glass-card rounded-[2.5rem] p-8">
+      <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5 border border-white/50 bg-white/80 backdrop-blur-xl">
+        
         {step === 1 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
-            <h2 className="text-xl font-bold text-slate-800 mb-4">Start Booking</h2>
+            <h2 className="text-xl font-bold text-slate-800 mb-4">How can we help?</h2>
             {['Eye Check', 'Contact Lens Check'].map(s => (
-              <button key={s} onClick={() => { setBooking({...booking, service: s}); setStep(2); }} className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] bg-white flex justify-between items-center group shadow-sm transition-all">
+              <button key={s} onClick={() => { setBooking({...booking, service: s}); setStep(2); }} className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] bg-white flex justify-between items-center group shadow-sm transition-all hover:shadow-md">
                 <span className="font-bold text-lg text-slate-700">{s}</span>
                 <ChevronRight className="text-slate-300 group-hover:text-[#3F9185]" />
               </button>
@@ -171,24 +182,24 @@ export default function BookingPage() {
           <div className="space-y-6 animate-in fade-in">
              <div className="flex items-center gap-2">
                 <button onClick={() => setStep(1)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><ArrowLeft size={20} className="text-slate-600" /></button>
-                <h2 className="text-xl font-bold text-slate-800">Select Date & Time</h2>
+                <h2 className="text-xl font-bold text-slate-800">Available Slots</h2>
              </div>
              <div>
                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
-               <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none" onChange={e => setBooking({...booking, date: e.target.value})} />
+               <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value})} />
              </div>
-             <div className="grid grid-cols-3 gap-2">
-                {getAvailableSlots().map(t => (
+             <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+                {calculateSlotsForDate(booking.date).map(t => (
                   <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'}`}>{t}</button>
                 ))}
              </div>
-             <button disabled={!booking.time} onClick={() => setStep(3)} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30" style={{ backgroundColor: '#3F9185' }}>Continue</button>
+             <button disabled={!booking.time} onClick={() => setStep(3)} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 transition-all active:scale-95" style={{ backgroundColor: '#3F9185' }}>Continue</button>
           </div>
         )}
 
         {step === 3 && (
           <div className="space-y-5 animate-in fade-in">
-            <h2 className="text-xl font-bold text-slate-800">Final Details</h2>
+            <h2 className="text-xl font-bold text-slate-800">Patient Details</h2>
             <div className="grid grid-cols-2 gap-3">
               <input placeholder="First Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, firstName: e.target.value})} />
               <input placeholder="Last Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, lastName: e.target.value})} />
@@ -198,27 +209,26 @@ export default function BookingPage() {
               <input type="date" className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" onChange={e => setBooking({...booking, dob: e.target.value})} />
             </div>
             
-            {/* --- CONDITIONAL TRIAGE QUESTIONS --- */}
             {booking.service === 'Eye Check' && booking.dob && (
               <div className="space-y-3 pt-2">
                 {calculateAge(booking.dob) >= 16 && calculateAge(booking.dob) <= 18 && (
-                  <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                  <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
                     <input type="checkbox" className="accent-[#3F9185] w-5 h-5" onChange={e => setBooking({...booking, inFullTimeEducation: e.target.checked})} />
                     <span className="text-sm font-medium text-slate-600">Are you in full-time education?</span>
                   </label>
                 )}
                 {calculateAge(booking.dob) >= 19 && calculateAge(booking.dob) <= 59 && (
                   <>
-                    <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                    <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
                       <input type="checkbox" className="accent-[#3F9185] w-5 h-5" onChange={e => setBooking({...booking, onBenefits: e.target.checked})} />
                       <span className="text-sm font-medium text-slate-600">Receiving income-related benefits?</span>
                     </label>
-                    <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                    <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
                       <input type="checkbox" className="accent-[#3F9185] w-5 h-5" onChange={e => setBooking({...booking, isDiabetic: e.target.checked})} />
                       <span className="text-sm font-medium text-slate-600">Are you diabetic?</span>
                     </label>
                     {calculateAge(booking.dob) >= 40 && (
-                      <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                      <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
                         <input type="checkbox" className="accent-[#3F9185] w-5 h-5" onChange={e => setBooking({...booking, familyGlaucoma: e.target.checked})} />
                         <span className="text-sm font-medium text-slate-600">Glaucoma in parent or sibling?</span>
                       </label>
@@ -228,7 +238,7 @@ export default function BookingPage() {
               </div>
             )}
 
-            <button onClick={handleFinalSubmit} disabled={loading || !booking.firstName || !booking.dob} className="w-full py-4 rounded-2xl font-black text-white shadow-lg flex justify-center items-center" style={{ backgroundColor: '#3F9185' }}>
+            <button onClick={handleFinalSubmit} disabled={loading || !booking.firstName || !booking.dob} className="w-full py-4 rounded-2xl font-black text-white shadow-lg flex justify-center items-center transition-all hover:brightness-110" style={{ backgroundColor: '#3F9185' }}>
               {loading ? <Loader2 className="animate-spin" /> : 'Confirm Appointment'}
             </button>
           </div>
@@ -240,7 +250,7 @@ export default function BookingPage() {
               <CheckCircle2 size={40} style={{ color: '#3F9185' }} />
             </div>
             <h2 className="text-3xl font-black text-slate-900">Confirmed!</h2>
-            <p className="text-slate-500 font-medium italic">Confirmed for {booking.time} on {new Date(booking.date).toLocaleDateString('en-GB')}</p>
+            <p className="text-slate-500 font-medium italic">Your slot is {booking.time} on {new Date(booking.date).toLocaleDateString('en-GB')}</p>
             <p className="text-xs font-bold text-[#3F9185] uppercase tracking-tighter">Category: {getCategory()}</p>
             <button onClick={() => window.location.reload()} className="text-[#3F9185] font-black hover:underline underline-offset-4 pt-4">Start Again</button>
           </div>
