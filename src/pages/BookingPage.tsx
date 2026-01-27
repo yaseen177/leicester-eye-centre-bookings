@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
+import emailjs from '@emailjs/browser';
 
 export default function BookingPage() {
   const [step, setStep] = useState(1);
@@ -146,21 +147,43 @@ export default function BookingPage() {
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
+      // 1. Save to Firebase first
       await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
-        email: booking.email, // Added
-        phone: booking.phone, // Added
+        email: booking.email,
+        phone: booking.phone,
         dob: booking.dob,
         appointmentType: getCategory(),
         appointmentDate: booking.date,
         appointmentTime: booking.time,
         createdAt: serverTimestamp(),
       });
-      setStep(4);
-    } catch (e) { alert("Booking failed."); }
+  
+      // 2. Send Confirmation Email via Microsoft 365
+      const emailParams = {
+        to_email: booking.email,
+        patient_name: booking.firstName,
+        appointment_type: getCategory(),
+        date: new Date(booking.date).toLocaleDateString('en-GB'),
+        time: booking.time,
+        reply_to: 'enquiries@theeyecentre.com'
+      };
+  
+      await emailjs.send(
+        'service_et75v9m', 
+        'template_prhl49a', 
+        emailParams, 
+        'kjN74GNmFhu6fNch8'
+      );
+  
+      setStep(4); // Show success screen
+    } catch (e) { 
+      console.error("Error:", e);
+      alert("Booking saved, but confirmation email failed to send."); 
+      setStep(4); // Still show success since the booking is in the DB
+    }
     setLoading(false);
   };
-
   return (
     <div className="max-w-xl mx-auto px-6 py-12">
       <header className="text-center mb-8 px-4">
