@@ -74,19 +74,24 @@ const [closedDates, setClosedDates] = useState<string[]>([]);
 
 // Add this function to toggle days
 const toggleDayStatus = async (date: string) => {
-  const newClosedDates = closedDates.includes(date)
+  const isClosed = closedDates.includes(date);
+  const newClosedDates = isClosed
     ? closedDates.filter(d => d !== date)
     : [...closedDates, date];
   
   setClosedDates(newClosedDates);
   
-  // Save the whole config back to Firebase including the new array
-  await setDoc(doc(db, "settings", "clinicConfig"), { 
-    ...config, 
-    closedDates: newClosedDates 
-  });
+  // Save to Firebase so the Booking Page knows immediately
+  try {
+    const docRef = doc(db, "settings", "clinicConfig");
+    await setDoc(docRef, { 
+      ...config, 
+      closedDates: newClosedDates 
+    }, { merge: true });
+  } catch (err) {
+    alert("Failed to update clinic status.");
+  }
 };
-
 {/* Status Banner in Diary View */}
 <div className={`mb-6 p-4 rounded-2xl border transition-all flex items-center justify-between ${
   closedDates.includes(selectedDate) 
@@ -200,25 +205,54 @@ const toggleDayStatus = async (date: string) => {
           </button>
         </div>
 
-        {/* Diary View */}
         {view === 'diary' && (
-          <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5 animate-in fade-in">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
-                <CalendarIcon className="text-[#3F9185]" /> Daily Grid
-              </h2>
-              <input 
-                type="date" 
-                value={selectedDate} 
-                onChange={e => setSelectedDate(e.target.value)} 
-                className="p-3 bg-slate-100 border-none rounded-xl font-bold text-[#3F9185] outline-none cursor-pointer" 
-              />
-            </div>
-            <div className="max-h-[70vh] overflow-y-auto pr-2">
-              {renderGrid()}
-            </div>
-          </div>
-        )}
+  <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5 animate-in fade-in">
+    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+      <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+        <CalendarIcon className="text-[#3F9185]" /> Daily Grid
+      </h2>
+      <input 
+        type="date" 
+        value={selectedDate} 
+        onChange={e => setSelectedDate(e.target.value)} 
+        className="p-3 bg-slate-100 border-none rounded-xl font-bold text-[#3F9185] outline-none cursor-pointer" 
+      />
+    </div>
+
+    {/* --- NEW: Day Toggle Banner --- */}
+    <div className={`mb-8 p-5 rounded-2xl border flex items-center justify-between transition-all ${
+      closedDates.includes(selectedDate) 
+      ? 'bg-red-50 border-red-100' 
+      : 'bg-[#3F9185]/5 border-[#3F9185]/10'
+    }`}>
+      <div className="flex items-center gap-4">
+        <div className={`w-3 h-3 rounded-full animate-pulse ${closedDates.includes(selectedDate) ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
+        <div>
+          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Clinic Status</p>
+          <p className="font-bold text-slate-800">
+            {closedDates.includes(selectedDate) ? 'Closed to Patients' : 'Open for Bookings'}
+          </p>
+        </div>
+      </div>
+      
+      <button 
+        onClick={() => toggleDayStatus(selectedDate)}
+        className={`px-6 py-2 rounded-xl font-black text-xs uppercase tracking-tighter transition-all active:scale-95 shadow-sm ${
+          closedDates.includes(selectedDate) 
+          ? 'bg-white text-red-500 border border-red-200 hover:bg-red-50' 
+          : 'bg-[#3F9185] text-white hover:opacity-90'
+        }`}
+      >
+        {closedDates.includes(selectedDate) ? 'Open this Day' : 'Close this Day'}
+      </button>
+    </div>
+    {/* --- End of Banner --- */}
+
+    <div className="max-h-[70vh] overflow-y-auto pr-2">
+      {renderGrid()}
+    </div>
+  </div>
+)}
 
         {/* Settings View */}
         {view === 'settings' && (
