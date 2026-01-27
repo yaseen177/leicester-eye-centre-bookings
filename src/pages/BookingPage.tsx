@@ -13,8 +13,10 @@ export default function BookingPage() {
     end: "17:00", 
     eyeCheck: 30, 
     contactLens: 20,
-    buffer: 0 ,
-    closedDates: [] as string[]
+    buffer: 0,
+    closedDates: [] as string[],
+    openDates: [] as string[],
+    weeklyOff: [] as number[]
   });
   
   const [booking, setBooking] = useState({
@@ -23,8 +25,8 @@ export default function BookingPage() {
     time: '',
     firstName: '',
     lastName: '',
-    email: '',      // Added
-    phone: '',      // Added
+    email: '',
+    phone: '',
     dob: '',
     inFullTimeEducation: false,
     onBenefits: false,
@@ -41,14 +43,16 @@ export default function BookingPage() {
     const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {
         const data = d.data();
-        setSettings({
+        setSettings(prev => ({
+          ...prev,
           start: data.hours?.start || "09:00",
           end: data.hours?.end || "17:00",
           eyeCheck: Number(data.times?.eyeCheck) || 30,
           contactLens: Number(data.times?.contactLens) || 20,
-          buffer: 0,
-          closedDates: [] as string[]
-        });
+          closedDates: data.closedDates || [],
+          openDates: data.openDates || [],
+          weeklyOff: data.weeklyOff || []
+        }));
       }
     });
 
@@ -69,43 +73,55 @@ export default function BookingPage() {
   }, [existingBookings, booking.service]);
 
   // --- SLOT CALCULATION ENGINE ---
-  const toMins = (t: string) => { 
-    const [h, m] = t.split(':').map(Number); 
-    return h * 60 + m; 
-  };
-  const fromMins = (m: number) => { 
-    const h = Math.floor(m / 60); 
-    const mm = m % 60; 
-    return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
-  };
+  const calculateSlotsForDate = (targetDate: string) => {
+    const [year, month, day] = targetDate.split('-').map(Number);
+    const dateObj = new Date(year, month - 1, day);
+    const dayOfWeek = dateObj.getDay();
 
-  const calculateSlotsForDate = (targetDate: string) => {{if (settings.closedDates?.includes(targetDate)) return [];}
-    const slots: string[] = [];
-    const duration = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
+    const { closedDates, openDates, weeklyOff, start, end, eyeCheck, contactLens } = settings;
+
+    // HIERARCHY OF AVAILABILITY
+    if (closedDates.includes(targetDate)) return [];
     
+    const isStandardDayOff = weeklyOff.includes(dayOfWeek);
+    const isManuallyOverriddenToOpen = openDates.includes(targetDate);
+    if (isStandardDayOff && !isManuallyOverriddenToOpen) return [];
+
+    const slots: string[] = [];
+    const duration = booking.service === 'Eye Check' ? eyeCheck : contactLens;
+    
+    const toMins = (t: string) => { 
+      const [h, m] = t.split(':').map(Number); 
+      return h * 60 + m; 
+    };
+    const fromMins = (m: number) => { 
+      const h = Math.floor(m / 60); 
+      const mm = m % 60; 
+      return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
+    };
+
     const now = new Date();
     const isToday = targetDate === now.toISOString().split('T')[0];
     const currentMins = (now.getHours() * 60) + now.getMinutes();
 
-    const clinicStart = toMins(settings.start);
-    const clinicEnd = toMins(settings.end);
+    const clinicStart = toMins(start || "09:00");
+    const clinicEnd = toMins(end || "17:00");
     const lunchStart = toMins("13:00");
     const lunchEnd = toMins("14:00");
 
     const dayBookings = existingBookings
       .filter(b => b.appointmentDate === targetDate)
       .map(b => {
-        const d = b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck;
+        const d = b.appointmentType.includes('Contact') ? contactLens : eyeCheck;
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
 
     for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
       const potentialEnd = current + duration;
-      
       if (isToday && current <= currentMins) continue;
       if (current < lunchEnd && potentialEnd > lunchStart) continue;
-      
       const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
+
       if (!isOverlap) slots.push(fromMins(current));
     }
     return Array.from(new Set(slots)).sort();
@@ -121,11 +137,9 @@ export default function BookingPage() {
     return new Date().toISOString().split('T')[0];
   };
 
-  // --- TRIAGE LOGIC ---
   const getCategory = () => {
     if (booking.service === 'Contact Lens Check') return 'Contact Lens Check';
     const age = calculateAge(booking.dob);
-
     if (age >= 60) return 'Eye Check Over 60';
     if (age < 16) return 'Eye Check Child';
     if (age >= 16 && age <= 18) return booking.inFullTimeEducation ? 'Eye Check NHS' : 'Eye Check Private';
@@ -149,7 +163,6 @@ export default function BookingPage() {
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
-      // 1. Save to Firebase first
       await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
         email: booking.email,
@@ -160,8 +173,7 @@ export default function BookingPage() {
         appointmentTime: booking.time,
         createdAt: serverTimestamp(),
       });
-  
-      // 2. Send Confirmation Email via Microsoft 365
+
       const emailParams = {
         to_email: booking.email,
         patient_name: booking.firstName,
@@ -170,50 +182,33 @@ export default function BookingPage() {
         time: booking.time,
         reply_to: 'enquiries@theeyecentre.com'
       };
-  
-      await emailjs.send(
-        'service_et75v9m', 
-        'template_prhl49a', 
-        emailParams, 
-        'kjN74GNmFhu6fNch8'
-      );
-  
-      setStep(4); // Show success screen
-    } catch (e) { 
+
+      await emailjs.send('service_et75v9m', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+      setStep(4);
+    } catch (e) {
       console.error("Error:", e);
-      alert("Booking saved, but confirmation email failed to send."); 
-      setStep(4); // Still show success since the booking is in the DB
+      alert("Booking saved, but confirmation email failed to send.");
+      setStep(4);
     }
     setLoading(false);
   };
+
   return (
     <div className="max-w-xl mx-auto px-6 py-12">
       <header className="text-center mb-8 px-4">
-  {/* Logo - The primary brand identifier */}
-  <div className="mb-4">
-    <img 
-      src="/logo.png" 
-      alt="Leicester Eye Centre" 
-      className="h-14 sm:h-20 w-auto mx-auto drop-shadow-sm"
-    />
-  </div>
-
-  {/* Tagline and Live Indicator */}
-  <div className="flex flex-col items-center gap-1">
-    <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.2em]">
-      Optical Excellence
-    </p>
-    <div className="flex items-center gap-2 px-3 py-1 bg-teal-50 rounded-full mt-1">
-      <span className="w-1.5 h-1.5 bg-[#3F9185] rounded-full animate-pulse"></span>
-      <span className="text-[9px] font-black text-[#3F9185] uppercase tracking-tighter">
-        Live Availability
-      </span>
-    </div>
-  </div>
-</header>
+        <div className="mb-4">
+          <img src="/logo.png" alt="Leicester Eye Centre" className="h-14 sm:h-20 w-auto mx-auto drop-shadow-sm" />
+        </div>
+        <div className="flex flex-col items-center gap-1">
+          <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.2em]">Optical Excellence</p>
+          <div className="flex items-center gap-2 px-3 py-1 bg-teal-50 rounded-full mt-1">
+            <span className="w-1.5 h-1.5 bg-[#3F9185] rounded-full animate-pulse"></span>
+            <span className="text-[9px] font-black text-[#3F9185] uppercase tracking-tighter">Live Availability</span>
+          </div>
+        </div>
+      </header>
 
       <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5 border border-white/50 bg-white/80 backdrop-blur-xl">
-        
         {step === 1 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
             <h2 className="text-xl font-bold text-slate-800 mb-4">How can we help?</h2>
@@ -237,9 +232,13 @@ export default function BookingPage() {
                <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value})} />
              </div>
              <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
-                {calculateSlotsForDate(booking.date).map(t => (
-                  <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'}`}>{t}</button>
-                ))}
+                {calculateSlotsForDate(booking.date).length > 0 ? (
+                  calculateSlotsForDate(booking.date).map(t => (
+                    <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'}`}>{t}</button>
+                  ))
+                ) : (
+                  <div className="col-span-3 py-10 text-center text-slate-400 font-bold italic">No slots available for this date.</div>
+                )}
              </div>
              <button disabled={!booking.time} onClick={() => setStep(3)} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 transition-all active:scale-95" style={{ backgroundColor: '#3F9185' }}>Continue</button>
           </div>
@@ -253,21 +252,9 @@ export default function BookingPage() {
               <input placeholder="Last Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, lastName: e.target.value})} />
             </div>
             <div className="space-y-3">
-  <input 
-    type="email" 
-    placeholder="Email Address" 
-    className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" 
-    onChange={e => setBooking({...booking, email: e.target.value})} 
-    required 
-  />
-  <input 
-    type="tel" 
-    placeholder="Telephone Number" 
-    className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" 
-    onChange={e => setBooking({...booking, phone: e.target.value})} 
-    required 
-  />
-</div>
+              <input type="email" placeholder="Email Address" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, email: e.target.value})} required />
+              <input type="tel" placeholder="Telephone Number" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, phone: e.target.value})} required />
+            </div>
             <div>
               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
               <input type="date" className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" onChange={e => setBooking({...booking, dob: e.target.value})} />
@@ -301,7 +288,6 @@ export default function BookingPage() {
                 )}
               </div>
             )}
-
             <button onClick={handleFinalSubmit} disabled={loading || !booking.firstName || !booking.dob} className="w-full py-4 rounded-2xl font-black text-white shadow-lg flex justify-center items-center transition-all hover:brightness-110" style={{ backgroundColor: '#3F9185' }}>
               {loading ? <Loader2 className="animate-spin" /> : 'Confirm Appointment'}
             </button>

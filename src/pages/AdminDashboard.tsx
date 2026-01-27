@@ -10,8 +10,24 @@ export default function AdminDashboard() {
   
   const [config, setConfig] = useState({ 
     times: { eyeCheck: 30, contactLens: 20 }, 
-    hours: { start: "09:00", end: "17:00" } 
+    hours: { start: "09:00", end: "17:00" },
+    weeklyOff: [0],
+    openDates: [] as string[] // Defaulting Sunday to Off
   });
+  const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+  const toggleWeeklyDay = async (dayIndex: number) => {
+    let newWeeklyOff = [...(config.weeklyOff || [])];
+    if (newWeeklyOff.includes(dayIndex)) {
+      newWeeklyOff = newWeeklyOff.filter(d => d !== dayIndex);
+    } else {
+      newWeeklyOff.push(dayIndex);
+    }
+    
+    const newConfig = { ...config, weeklyOff: newWeeklyOff };
+    setConfig(newConfig);
+    await setDoc(doc(db, "settings", "clinicConfig"), newConfig, { merge: true });
+  };
 
   useEffect(() => {
     // 1. Listen for Appointments (Real-time)
@@ -20,24 +36,27 @@ export default function AdminDashboard() {
     });
 
     // 2. Fetch Clinic Settings (Persistent)
-    const loadSettings = async () => {
-      try {
-        const docRef = doc(db, "settings", "clinicConfig");
-        const d = await getDoc(docRef);
-        
-        if (d.exists()) {
-          const cloudData = d.data();
-          setConfig({
-            times: cloudData.times || { eyeCheck: 30, contactLens: 20 },
-            hours: cloudData.hours || { start: "09:00", end: "17:00" }
-          });
-          setClosedDates(cloudData.closedDates || []);
-        }
-      } catch (error) {
-        console.error("Error loading clinic settings:", error);
-      }
-    };
+    // Inside AdminDashboard.tsx useEffect
+const loadSettings = async () => {
+  try {
+    const docRef = doc(db, "settings", "clinicConfig");
+    const d = await getDoc(docRef);
     
+    if (d.exists()) {
+      const cloudData = d.data();
+      // Use the spread operator to keep existing state, then overwrite with cloud data
+      setConfig(prev => ({
+        ...prev,
+        times: cloudData.times || prev.times,
+        hours: cloudData.hours || prev.hours,
+        weeklyOff: cloudData.weeklyOff || prev.weeklyOff // Crucial fix
+      }));
+      setClosedDates(cloudData.closedDates || []);
+    }
+  } catch (error) {
+    console.error("Error loading clinic settings:", error);
+  }
+};
     // 3. Trigger the fetch immediately
     loadSettings();
 
@@ -74,22 +93,39 @@ const [closedDates, setClosedDates] = useState<string[]>([]);
 
 // Add this function to toggle days
 const toggleDayStatus = async (date: string) => {
-  const isClosed = closedDates.includes(date);
-  const newClosedDates = isClosed
-    ? closedDates.filter(d => d !== date)
-    : [...closedDates, date];
+  const dateObj = new Date(date);
+  const dayOfWeek = dateObj.getDay();
   
-  setClosedDates(newClosedDates);
+  // Check if this day is usually off (e.g., Sunday) based on our config
+  const isWeeklyOff = config.weeklyOff?.includes(dayOfWeek);
+
+  let newClosed = [...closedDates];
+  let newOpen = [...(config.openDates || [])];
+
+  if (isWeeklyOff) {
+    // If it's a Sunday/Day Off, we toggle it in 'openDates' (The Manual Override)
+    newOpen = newOpen.includes(date) 
+      ? newOpen.filter(d => d !== date) 
+      : [...newOpen, date];
+  } else {
+    // If it's a normal working day, we toggle it in 'closedDates'
+    newClosed = newClosed.includes(date) 
+      ? newClosed.filter(d => d !== date) 
+      : [...newClosed, date];
+  }
+
+  // Update Local State
+  setClosedDates(newClosed);
   
-  // Save to Firebase so the Booking Page knows immediately
+  // Update Firebase
   try {
-    const docRef = doc(db, "settings", "clinicConfig");
-    await setDoc(docRef, { 
+    await setDoc(doc(db, "settings", "clinicConfig"), { 
       ...config, 
-      closedDates: newClosedDates 
+      closedDates: newClosed,
+      openDates: newOpen 
     }, { merge: true });
   } catch (err) {
-    alert("Failed to update clinic status.");
+    alert("Failed to save schedule change.");
   }
 };
 {/* Status Banner in Diary View */}
@@ -106,6 +142,26 @@ const toggleDayStatus = async (date: string) => {
     </h3>
     <p className="text-xs text-slate-500 font-medium">For {new Date(selectedDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</p>
   </div>
+
+  <div className="space-y-4">
+  <h3 className="font-bold text-[#3F9185] flex items-center gap-2">Standard Weekly Closures</h3>
+  <p className="text-xs text-slate-400 font-medium italic">Select days the clinic is usually closed. You can still manually open specific dates in the Diary view.</p>
+  <div className="flex flex-wrap gap-2">
+    {daysOfWeek.map((day, index) => (
+      <button
+        key={day}
+        onClick={() => toggleWeeklyDay(index)}
+        className={`px-4 py-2 rounded-xl font-bold text-xs transition-all ${
+          config.weeklyOff?.includes(index)
+            ? 'bg-red-100 text-red-600 border border-red-200'
+            : 'bg-slate-100 text-slate-600 border border-slate-200 hover:border-[#3F9185]'
+        }`}
+      >
+        {day}
+      </button>
+    ))}
+  </div>
+</div>
   
   <button 
     onClick={() => toggleDayStatus(selectedDate)}
