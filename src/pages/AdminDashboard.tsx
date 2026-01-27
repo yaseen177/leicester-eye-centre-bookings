@@ -14,19 +14,33 @@ export default function AdminDashboard() {
   });
 
   useEffect(() => {
+    // 1. Listen for Appointments (Real-time)
     const unsub = onSnapshot(collection(db, "appointments"), (snap) => {
       setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    const fetchSettings = async () => {
-      const docRef = doc(db, "settings", "clinicConfig");
-      const d = await getDoc(docRef);
-      if (d.exists()) {
-        setConfig(d.data() as any);
+    // 2. Fetch Clinic Settings (Persistent)
+    const loadSettings = async () => {
+      try {
+        const docRef = doc(db, "settings", "clinicConfig");
+        const d = await getDoc(docRef);
+        
+        if (d.exists()) {
+          const cloudData = d.data();
+          setConfig({
+            times: cloudData.times || { eyeCheck: 30, contactLens: 20 },
+            hours: cloudData.hours || { start: "09:00", end: "17:00" }
+          });
+          setClosedDates(cloudData.closedDates || []);
+        }
+      } catch (error) {
+        console.error("Error loading clinic settings:", error);
       }
     };
     
-    fetchSettings();
+    // 3. Trigger the fetch immediately
+    loadSettings();
+
     return () => unsub();
   }, []);
 
@@ -51,6 +65,54 @@ export default function AdminDashboard() {
       }
     }
   };
+
+  // Add this state to AdminDashboard.tsx
+const [closedDates, setClosedDates] = useState<string[]>([]);
+
+
+
+
+// Add this function to toggle days
+const toggleDayStatus = async (date: string) => {
+  const newClosedDates = closedDates.includes(date)
+    ? closedDates.filter(d => d !== date)
+    : [...closedDates, date];
+  
+  setClosedDates(newClosedDates);
+  
+  // Save the whole config back to Firebase including the new array
+  await setDoc(doc(db, "settings", "clinicConfig"), { 
+    ...config, 
+    closedDates: newClosedDates 
+  });
+};
+
+{/* Status Banner in Diary View */}
+<div className={`mb-6 p-4 rounded-2xl border transition-all flex items-center justify-between ${
+  closedDates.includes(selectedDate) 
+  ? 'bg-red-50 border-red-100' 
+  : 'bg-teal-50 border-teal-100'
+}`}>
+  <div>
+    <h3 className={`text-sm font-black uppercase tracking-widest ${
+      closedDates.includes(selectedDate) ? 'text-red-600' : 'text-[#3F9185]'
+    }`}>
+      {closedDates.includes(selectedDate) ? 'Clinic Closed' : 'Clinic Open'}
+    </h3>
+    <p className="text-xs text-slate-500 font-medium">For {new Date(selectedDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</p>
+  </div>
+  
+  <button 
+    onClick={() => toggleDayStatus(selectedDate)}
+    className={`px-6 py-2 rounded-xl font-black text-[10px] uppercase tracking-tighter transition-all active:scale-95 ${
+      closedDates.includes(selectedDate) 
+      ? 'bg-white text-red-500 border border-red-200 shadow-sm' 
+      : 'bg-[#3F9185] text-white shadow-md'
+    }`}
+  >
+    {closedDates.includes(selectedDate) ? 'Mark as Open' : 'Mark as Closed'}
+  </button>
+</div>
 
   const saveConfig = async () => {
     try {

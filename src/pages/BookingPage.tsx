@@ -13,7 +13,8 @@ export default function BookingPage() {
     end: "17:00", 
     eyeCheck: 30, 
     contactLens: 20,
-    buffer: 0 
+    buffer: 0 ,
+    closedDates: [] as string[]
   });
   
   const [booking, setBooking] = useState({
@@ -45,7 +46,8 @@ export default function BookingPage() {
           end: data.hours?.end || "17:00",
           eyeCheck: Number(data.times?.eyeCheck) || 30,
           contactLens: Number(data.times?.contactLens) || 20,
-          buffer: 0
+          buffer: 0,
+          closedDates: [] as string[]
         });
       }
     });
@@ -77,7 +79,7 @@ export default function BookingPage() {
     return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
   };
 
-  const calculateSlotsForDate = (targetDate: string) => {
+  const calculateSlotsForDate = (targetDate: string) => {{if (settings.closedDates?.includes(targetDate)) return [];}
     const slots: string[] = [];
     const duration = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
     
