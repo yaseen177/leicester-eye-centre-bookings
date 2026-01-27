@@ -82,7 +82,15 @@ export default function AdminDashboard() {
   // Add this state to AdminDashboard.tsx
 const [closedDates, setClosedDates] = useState<string[]>([]);
 
-
+const calculateAge = (dobString: string) => {
+  if (!dobString) return 0;
+  const birthDate = new Date(dobString);
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const m = today.getMonth() - birthDate.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+  return age;
+};
 
 
 // Add this function to toggle days
