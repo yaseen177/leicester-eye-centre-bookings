@@ -37,26 +37,20 @@ export default function AdminDashboard() {
 
     // 2. Fetch Clinic Settings (Persistent)
     // Inside AdminDashboard.tsx useEffect
-const loadSettings = async () => {
-  try {
-    const docRef = doc(db, "settings", "clinicConfig");
-    const d = await getDoc(docRef);
-    
-    if (d.exists()) {
-      const cloudData = d.data();
-      // Use the spread operator to keep existing state, then overwrite with cloud data
-      setConfig(prev => ({
-        ...prev,
-        times: cloudData.times || prev.times,
-        hours: cloudData.hours || prev.hours,
-        weeklyOff: cloudData.weeklyOff || prev.weeklyOff // Crucial fix
-      }));
-      setClosedDates(cloudData.closedDates || []);
-    }
-  } catch (error) {
-    console.error("Error loading clinic settings:", error);
-  }
-};
+    const loadSettings = async () => {
+      const docRef = doc(db, "settings", "clinicConfig");
+      const d = await getDoc(docRef);
+      if (d.exists()) {
+        const cloudData = d.data();
+        setConfig({
+          times: cloudData.times || { eyeCheck: 30, contactLens: 20 },
+          hours: cloudData.hours || { start: "09:00", end: "17:00" },
+          weeklyOff: cloudData.weeklyOff || [0],
+          openDates: cloudData.openDates || [] // ADD THIS LINE
+        });
+        setClosedDates(cloudData.closedDates || []);
+      }
+    };
     // 3. Trigger the fetch immediately
     loadSettings();
 
@@ -95,38 +89,32 @@ const [closedDates, setClosedDates] = useState<string[]>([]);
 const toggleDayStatus = async (date: string) => {
   const dateObj = new Date(date);
   const dayOfWeek = dateObj.getDay();
-  
-  // Check if this day is usually off (e.g., Sunday) based on our config
   const isWeeklyOff = config.weeklyOff?.includes(dayOfWeek);
 
   let newClosed = [...closedDates];
   let newOpen = [...(config.openDates || [])];
 
   if (isWeeklyOff) {
-    // If it's a Sunday/Day Off, we toggle it in 'openDates' (The Manual Override)
+    // If it's a Sunday, toggle it in the 'openDates' override list
     newOpen = newOpen.includes(date) 
       ? newOpen.filter(d => d !== date) 
       : [...newOpen, date];
   } else {
-    // If it's a normal working day, we toggle it in 'closedDates'
+    // If it's a weekday, toggle it in the 'closedDates' list
     newClosed = newClosed.includes(date) 
       ? newClosed.filter(d => d !== date) 
       : [...newClosed, date];
   }
 
-  // Update Local State
   setClosedDates(newClosed);
-  
-  // Update Firebase
-  try {
-    await setDoc(doc(db, "settings", "clinicConfig"), { 
-      ...config, 
-      closedDates: newClosed,
-      openDates: newOpen 
-    }, { merge: true });
-  } catch (err) {
-    alert("Failed to save schedule change.");
-  }
+  // We update config locally so the UI updates immediately
+  setConfig(prev => ({ ...prev, openDates: newOpen }));
+
+  await setDoc(doc(db, "settings", "clinicConfig"), { 
+    ...config, 
+    closedDates: newClosed,
+    openDates: newOpen 
+  }, { merge: true });
 };
 {/* Status Banner in Diary View */}
 <div className={`mb-6 p-4 rounded-2xl border transition-all flex items-center justify-between ${
