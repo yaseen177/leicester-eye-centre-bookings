@@ -41,3 +41,20 @@ body {
 ::-webkit-scrollbar-thumb {
   @apply bg-slate-200 rounded-full hover:bg-slate-300;
 }
+
+@layer base {
+  h1 {
+    /* Prevents awkward word breaks on very narrow screens */
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+}
+
+/* Ensure the glass card handles padding better on mobile */
+@media (max-width: 640px) {
+  .glass-card {
+    padding-left: 1.25rem !important;
+    padding-right: 1.25rem !important;
+    border-radius: 1.5rem !important;
+  }
+}
