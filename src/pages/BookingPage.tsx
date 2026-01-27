@@ -160,7 +160,7 @@ export default function BookingPage() {
   return (
     <div className="max-w-xl mx-auto px-6 py-12">
       <header className="text-center mb-10">
-        <h1 className="text-4xl font-black" style={{ color: '#3F9185' }}>Leicester Eye Centre</h1>
+        <h1 className="text-4xl font-black" style={{ color: '#3F9185' }}>the eye centre, Leicester</h1>
         <p className="text-slate-500 mt-2 font-medium italic text-sm tracking-wide">Optical Excellence</p>
       </header>
 
