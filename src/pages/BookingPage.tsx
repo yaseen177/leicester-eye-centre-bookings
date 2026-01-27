@@ -159,10 +159,29 @@ export default function BookingPage() {
 
   return (
     <div className="max-w-xl mx-auto px-6 py-12">
-      <header className="text-center mb-10">
-        <h1 className="text-4xl font-black" style={{ color: '#3F9185' }}>the eye centre, Leicester</h1>
-        <p className="text-slate-500 mt-2 font-medium italic text-sm tracking-wide">Optical Excellence</p>
-      </header>
+      <header className="text-center mb-8 px-2">
+  {/* Logo Container */}
+  <div className="mb-6 inline-block">
+    <img 
+      src="/logo.png" 
+      alt="Leicester Eye Centre Logo" 
+      className="h-16 md:h-24 w-auto mx-auto drop-shadow-sm"
+    />
+  </div>
+
+  {/* Responsive Title */}
+  <h1 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight leading-tight" style={{ color: '#3F9185' }}>
+    The Eye Centre, Leicester
+  </h1>
+  
+  <div className="flex items-center justify-center gap-2 mt-2">
+    <span className="h-px w-8 bg-slate-200"></span>
+    <p className="text-slate-500 font-medium italic text-xs sm:text-sm tracking-wide">
+      Optical Excellence
+    </p>
+    <span className="h-px w-8 bg-slate-200"></span>
+  </div>
+</header>
 
       <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5 border border-white/50 bg-white/80 backdrop-blur-xl">
         
