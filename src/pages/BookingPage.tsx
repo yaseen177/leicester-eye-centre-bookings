@@ -74,10 +74,20 @@ export default function BookingPage() {
 
   // --- SLOT CALCULATION ENGINE ---
   const calculateSlotsForDate = (targetDate: string) => {
+    // 1. Setup Date objects
     const [year, month, day] = targetDate.split('-').map(Number);
     const dateObj = new Date(year, month - 1, day);
     const dayOfWeek = dateObj.getDay();
-
+  
+    // --- NEW: iPhone Past-Date Guard ---
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set to start of today
+  
+    if (dateObj < today) {
+      return []; // Force zero slots if the date is in the past
+    }
+    // ----------------------------------
+  
     const { closedDates, openDates, weeklyOff, start, end, eyeCheck, contactLens } = settings;
 
     // HIERARCHY OF AVAILABILITY
