@@ -195,30 +195,43 @@ const toggleDayStatus = async (date: string) => {
             <div className="w-20 text-xs font-black text-slate-300 tabular-nums">{timeStr}</div>
             <div className="flex-1 px-4">
             {booking ? (
-  <div className="bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185] p-3 rounded-xl flex justify-between items-center shadow-sm">
-    <div className="flex flex-col gap-1">
-      <div className="flex items-baseline gap-3">
-        <span className="text-xs font-black text-[#3F9185] bg-teal-50 px-2 py-1 rounded-md tabular-nums">
-          {timeStr} — {endTimeStr}
-        </span>
-        <p className="font-bold text-slate-800 text-sm">{booking.patientName}</p>
-      </div>
-      
-      {/* Contact Details Row */}
-      <div className="flex gap-4 ml-1">
-        <span className="text-[10px] font-medium text-slate-500 flex items-center gap-1">
-          <span className="font-bold text-[#3F9185]">E:</span> {booking.email}
-        </span>
-        <span className="text-[10px] font-medium text-slate-500 flex items-center gap-1">
-          <span className="font-bold text-[#3F9185]">T:</span> {booking.phone}
+  <div className="bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185] p-3 rounded-xl flex justify-between items-center shadow-sm hover:shadow-md transition-shadow">
+  <div className="flex flex-col gap-1">
+    <div className="flex items-center gap-3">
+      <span className="text-xs font-black text-[#3F9185] bg-teal-50 px-2 py-1 rounded-md tabular-nums">
+        {timeStr} — {endTimeStr}
+      </span>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+        <p className="font-bold text-slate-800 text-sm leading-tight">{booking.patientName}</p>
+        
+        {/* --- NEW: Service Type Badge --- */}
+        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter border ${
+          booking.appointmentType?.includes('Contact') 
+            ? 'bg-blue-50 text-blue-600 border-blue-100' 
+            : booking.appointmentType?.includes('NHS') 
+            ? 'bg-orange-50 text-orange-600 border-orange-100' 
+            : 'bg-slate-50 text-slate-500 border-slate-100'
+        }`}>
+          {booking.appointmentType || 'Standard Eye Check'}
         </span>
       </div>
     </div>
     
-    <button onClick={() => deleteApp(booking.id)} className="text-slate-300 hover:text-red-500 transition-colors p-2">
-      <Trash2 size={16} />
-    </button>
+    {/* Contact Details Row */}
+    <div className="flex gap-4 ml-1 mt-1">
+      <span className="text-[10px] font-medium text-slate-500 flex items-center gap-1">
+        <span className="font-bold text-[#3F9185]">E:</span> {booking.email}
+      </span>
+      <span className="text-[10px] font-medium text-slate-500 flex items-center gap-1">
+        <span className="font-bold text-[#3F9185]">T:</span> {booking.phone}
+      </span>
+    </div>
   </div>
+  
+  <button onClick={() => deleteApp(booking.id)} className="text-slate-300 hover:text-red-500 transition-colors p-2">
+    <Trash2 size={16} />
+  </button>
+</div>
 ) : (
   <div className="h-4 w-full border-b border-slate-100/30" />
 )}
