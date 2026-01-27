@@ -329,6 +329,48 @@ const toggleDayStatus = async (date: string) => {
                   </div>
                 </div>
               </div>
+              {/* Standard Weekly Closures Section */}
+<div className="space-y-4 pt-6 border-t border-slate-100">
+  <h3 className="font-bold text-[#3F9185] flex items-center gap-2">
+    <CalendarIcon size={18}/> Standard Weekly Closures
+  </h3>
+  <p className="text-xs text-slate-400 font-medium italic">
+    Select the days your clinic is usually closed. Patients won't be able to book these days unless you manually "Open" a specific date in the Diary.
+  </p>
+  
+  <div className="flex flex-wrap gap-2">
+    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, index) => {
+      const isOff = config.weeklyOff?.includes(index);
+      return (
+        <button
+          key={day}
+          onClick={async () => {
+            const newWeeklyOff = isOff
+              ? config.weeklyOff.filter(d => d !== index)
+              : [...(config.weeklyOff || []), index];
+            
+            // Update local state
+            const newConfig = { ...config, weeklyOff: newWeeklyOff };
+            setConfig(newConfig);
+            
+            // Save immediately to Firebase
+            await setDoc(doc(db, "settings", "clinicConfig"), newConfig, { merge: true });
+          }}
+          className={`flex-1 min-w-[80px] py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border-2 ${
+            isOff 
+            ? 'bg-red-50 border-red-100 text-red-500' 
+            : 'bg-white border-slate-100 text-slate-400 hover:border-[#3F9185]/30'
+          }`}
+        >
+          {day}
+          <div className={`text-[8px] mt-1 ${isOff ? 'text-red-400' : 'text-slate-300'}`}>
+            {isOff ? 'CLOSED' : 'OPEN'}
+          </div>
+        </button>
+      );
+    })}
+  </div>
+</div>
             </div>
             <button onClick={saveConfig} className="px-10 py-4 bg-[#3F9185] text-white font-black rounded-2xl shadow-lg hover:opacity-90 transition-all">
               Save Changes to Database
