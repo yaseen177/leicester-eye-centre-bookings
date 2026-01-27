@@ -21,6 +21,8 @@ export default function BookingPage() {
     time: '',
     firstName: '',
     lastName: '',
+    email: '',      // Added
+    phone: '',      // Added
     dob: '',
     inFullTimeEducation: false,
     onBenefits: false,
@@ -146,6 +148,8 @@ export default function BookingPage() {
     try {
       await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
+        email: booking.email, // Added
+        phone: booking.phone, // Added
         dob: booking.dob,
         appointmentType: getCategory(),
         appointmentDate: booking.date,
@@ -153,7 +157,7 @@ export default function BookingPage() {
         createdAt: serverTimestamp(),
       });
       setStep(4);
-    } catch (e) { alert("Booking failed. Please check your connection."); }
+    } catch (e) { alert("Booking failed."); }
     setLoading(false);
   };
 
@@ -223,6 +227,22 @@ export default function BookingPage() {
               <input placeholder="First Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, firstName: e.target.value})} />
               <input placeholder="Last Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, lastName: e.target.value})} />
             </div>
+            <div className="space-y-3">
+  <input 
+    type="email" 
+    placeholder="Email Address" 
+    className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" 
+    onChange={e => setBooking({...booking, email: e.target.value})} 
+    required 
+  />
+  <input 
+    type="tel" 
+    placeholder="Telephone Number" 
+    className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" 
+    onChange={e => setBooking({...booking, phone: e.target.value})} 
+    required 
+  />
+</div>
             <div>
               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
               <input type="date" className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" onChange={e => setBooking({...booking, dob: e.target.value})} />
