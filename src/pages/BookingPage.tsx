@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
 
 export default function BookingPage() {
   const [step, setStep] = useState(1);
