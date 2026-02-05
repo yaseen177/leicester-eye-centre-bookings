@@ -4,6 +4,17 @@ import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
 import emailjs from '@emailjs/browser';
 
+const toMins = (t: string) => { 
+  const [h, m] = t.split(':').map(Number); 
+  return h * 60 + m; 
+};
+
+const fromMins = (m: number) => { 
+  const h = Math.floor(m / 60); 
+  const mm = m % 60; 
+  return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
+};
+
 export default function BookingPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -16,7 +27,9 @@ export default function BookingPage() {
     buffer: 0,
     closedDates: [] as string[],
     openDates: [] as string[],
-    weeklyOff: [] as number[]
+    weeklyOff: [] as number[],
+    lunch: { start: "13:00", end: "14:00" }, // Fix: Added property
+    dailyOverrides: {} as Record<string, { start: string; end: string }>
   });
   
   const [booking, setBooking] = useState({
@@ -74,65 +87,49 @@ export default function BookingPage() {
 
   // --- SLOT CALCULATION ENGINE ---
   const calculateSlotsForDate = (targetDate: string) => {
-    // 1. Setup Date objects
     const [year, month, day] = targetDate.split('-').map(Number);
     const dateObj = new Date(year, month - 1, day);
     const dayOfWeek = dateObj.getDay();
   
-    // --- NEW: iPhone Past-Date Guard ---
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set to start of today
+    today.setHours(0, 0, 0, 0);
+    if (dateObj < today) return [];
   
-    if (dateObj < today) {
-      return []; // Force zero slots if the date is in the past
-    }
-    // ----------------------------------
+    const { closedDates, openDates, weeklyOff, dailyOverrides, lunch } = settings;
   
-    const { closedDates, openDates, weeklyOff, start, end, eyeCheck, contactLens } = settings;
-
-    // HIERARCHY OF AVAILABILITY
     if (closedDates.includes(targetDate)) return [];
-    
     const isStandardDayOff = weeklyOff.includes(dayOfWeek);
     const isManuallyOverriddenToOpen = openDates.includes(targetDate);
     if (isStandardDayOff && !isManuallyOverriddenToOpen) return [];
-
-    const slots: string[] = [];
-    const duration = booking.service === 'Eye Check' ? eyeCheck : contactLens;
+  
+    // Use Daily Override Hours if they exist, else use standard hours
+    const dayHours = dailyOverrides?.[targetDate] || settings;
+    const clinicStart = toMins(dayHours.start || "09:00");
+    const clinicEnd = toMins(dayHours.end || "17:00");
     
-    const toMins = (t: string) => { 
-      const [h, m] = t.split(':').map(Number); 
-      return h * 60 + m; 
-    };
-    const fromMins = (m: number) => { 
-      const h = Math.floor(m / 60); 
-      const mm = m % 60; 
-      return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
-    };
-
-    const now = new Date();
-    const isToday = targetDate === now.toISOString().split('T')[0];
-    const currentMins = (now.getHours() * 60) + now.getMinutes();
-
-    const clinicStart = toMins(start || "09:00");
-    const clinicEnd = toMins(end || "17:00");
-    const lunchStart = toMins("13:00");
-    const lunchEnd = toMins("14:00");
-
+    const lunchStart = toMins(lunch?.start || "13:00");
+    const lunchEnd = toMins(lunch?.end || "14:00");
+  
+    const slots: string[] = [];
+    const duration = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
+  
     const dayBookings = existingBookings
       .filter(b => b.appointmentDate === targetDate)
       .map(b => {
-        const d = b.appointmentType.includes('Contact') ? contactLens : eyeCheck;
+        const d = b.appointmentType.includes('Contact') ? settings.contactLens : settings.eyeCheck;
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
-
+  
     for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
       const potentialEnd = current + duration;
-      if (isToday && current <= currentMins) continue;
+      
+      // Check Lunch Break
       if (current < lunchEnd && potentialEnd > lunchStart) continue;
+  
       const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-
-      if (!isOverlap) slots.push(fromMins(current));
+      if (!isOverlap) {
+        slots.push(fromMins(current));
+      }
     }
     return Array.from(new Set(slots)).sort();
   };
