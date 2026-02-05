@@ -117,6 +117,18 @@ const updateAppointment = async () => {
   }
 };
 
+const handleDrop = async (e: React.DragEvent, newTime: string) => {
+  e.preventDefault();
+  const appointmentId = e.dataTransfer.getData("appointmentId");
+  if (!appointmentId) return;
+
+  try {
+    const appRef = doc(db, "appointments", appointmentId);
+    await setDoc(appRef, { appointmentTime: newTime }, { merge: true });
+  } catch (err) {
+    alert("Failed to move appointment.");
+  }
+};
 
 // Add this function to toggle days
 const toggleDayStatus = async (date: string) => {
@@ -234,11 +246,20 @@ const updateDailyHours = async (start: string, end: string) => {
         const endTimeStr = booking ? fromMins(time + duration) : '';
   
         grid.push(
-          <div key={timeStr} className="flex items-center border-b border-slate-50 py-3 hover:bg-slate-50/50 transition-colors">
+          <div 
+            key={timeStr} 
+            className="flex items-center border-b border-slate-50 py-3 hover:bg-slate-50/50 transition-colors"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => handleDrop(e, timeStr)}
+          >
             <div className="w-20 text-xs font-black text-slate-300 tabular-nums">{timeStr}</div>
             <div className="flex-1 px-4">
               {booking ? (
-                <div className="bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185] p-4 rounded-xl flex justify-between items-center shadow-sm">
+                <div 
+                  draggable 
+                  onDragStart={(e) => e.dataTransfer.setData("appointmentId", booking.id)}
+                  className="bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185] p-4 rounded-xl flex justify-between items-center shadow-sm cursor-move hover:shadow-md transition-shadow"
+                >
                   <div className="flex flex-col gap-2 w-full">
                     <div className="flex items-center justify-between">
                       <div className="flex items-baseline gap-3">
@@ -269,7 +290,6 @@ const updateDailyHours = async (start: string, end: string) => {
                   </div>
                   
                   <div className="flex items-center gap-2 ml-4">
-                    {/* Edit Button */}
                     <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] transition-colors p-2 hover:bg-teal-50 rounded-full">
                       <Settings size={18} />
                     </button>
@@ -279,7 +299,7 @@ const updateDailyHours = async (start: string, end: string) => {
                   </div>
                 </div>
               ) : (
-                <div className="h-4 w-full border-b border-slate-100/30" />
+                <div className="h-8 w-full border-b border-dashed border-slate-100/50 hover:bg-teal-50/30 transition-colors" />
               )}
             </div>
           </div>

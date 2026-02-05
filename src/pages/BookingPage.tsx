@@ -109,6 +109,9 @@ export default function BookingPage() {
     
     const lunchStart = toMins(lunch?.start || "13:00");
     const lunchEnd = toMins(lunch?.end || "14:00");
+    const now = new Date();
+    const isToday = targetDate === now.toISOString().split('T')[0];
+    const currentMins = (now.getHours() * 60) + now.getMinutes();
   
     const slots: string[] = [];
     const duration = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
@@ -120,20 +123,24 @@ export default function BookingPage() {
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
   
-    for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
-      const potentialEnd = current + duration;
-      
-      // Check Lunch Break
-      if (current < lunchEnd && potentialEnd > lunchStart) continue;
+      for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
+        const potentialEnd = current + duration;
+        
+        // Fix: Filter out times that have already passed today
+        if (isToday && current <= currentMins) continue;
   
-      const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-      if (!isOverlap) {
-        slots.push(fromMins(current));
+        // Fix: Check Lunch Break with precise minute matching
+        if (current < lunchEnd && potentialEnd > lunchStart) continue;
+        
+        const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
+  
+        if (!isOverlap) {
+          slots.push(fromMins(current));
+        }
       }
-    }
-    return Array.from(new Set(slots)).sort();
-  };
-
+      
+      return Array.from(new Set(slots)).sort();
+    };
   const findFirstAvailableDate = () => {
     let checkDate = new Date();
     for (let i = 0; i < 30; i++) {
