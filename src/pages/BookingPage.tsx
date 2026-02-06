@@ -177,12 +177,17 @@ export default function BookingPage() {
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
-      // 1. Save the initial appointment
-      // The variable 'docRef' is now used below to update this specific document
+      // 1. Format Phone Number to +44 (E.164)
+      const cleanPhone = booking.phone.trim();
+      const formattedPhone = cleanPhone.startsWith('0') 
+        ? `+44${cleanPhone.substring(1)}` 
+        : cleanPhone.startsWith('+') ? cleanPhone : `+44${cleanPhone}`;
+
+      // 2. Save the initial appointment
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
         email: booking.email,
-        phone: booking.phone,
+        phone: formattedPhone, // Save formatted version
         dob: booking.dob,
         appointmentType: getCategory(),
         appointmentDate: booking.date,
@@ -190,7 +195,7 @@ export default function BookingPage() {
         createdAt: serverTimestamp(),
       });
 
-      // 2. Send Confirmation Email
+      // 3. EmailJS Logic
       const emailParams = {
         to_email: booking.email,
         patient_name: booking.firstName,
@@ -201,7 +206,7 @@ export default function BookingPage() {
       };
       await emailjs.send('service_et75v9m', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
 
-      // 3. Send SMS via Cloudflare Worker
+      // 4. SMS Logic via Cloudflare Worker
       const appointmentDate = new Date(`${booking.date}T${booking.time}`);
       const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
 
@@ -209,28 +214,32 @@ export default function BookingPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: booking.phone,
-          body: `Hi ${booking.firstName}, your eye check is confirmed for ${booking.time}.`,
+          to: formattedPhone,
+          // Updated Template: Hi Name, Service is booked for Date + Time.
+          body: `Hi ${booking.firstName}, your ${booking.service} is booked for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}. See you soon. The Eye Centre, Leicester.`,
           reminderTime: reminderDate.toISOString() 
         })
       });
 
-      // --- FIX: Use docRef and setDoc here ---
+      // 5. Safety Check: Only call setDoc if reminderSid exists
       if (smsResponse.ok) {
         const smsData = await smsResponse.json();
-        // This line uses both 'docRef' and 'setDoc' to save the Twilio SID
-        await setDoc(docRef, { reminderSid: smsData.reminderSid }, { merge: true });
+        // Use sid OR reminderSid depending on what your worker returns
+        const sidToSave = smsData.sid || smsData.reminderSid;
+        
+        if (sidToSave) {
+          await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+        }
       }
 
       setStep(4);
     } catch (e) {
       console.error("Error:", e);
-      alert("Booking saved, but notifications may have failed.");
+      alert("Booking saved, but confirmation notifications may have failed.");
       setStep(4);
     }
     setLoading(false);
   };
-
   return (
     <div className="max-w-xl mx-auto px-6 py-12">
       <header className="text-center mb-8 px-4">
