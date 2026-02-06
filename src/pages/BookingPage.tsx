@@ -227,7 +227,7 @@ export default function BookingPage() {
         body: JSON.stringify({
           to: formattedPhone,
           // Updated Template: Hi Name, Service is booked for Date + Time.
-          body: `Hi ${booking.firstName}, your ${booking.service} is booked for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}. See you soon. The Eye Centre, Leicester.`,
+          body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}. Our expert team looks forward to providing you with exceptional care. For any enquiries or to explore our latest eyewear collections, please call 0116 253 2788. The Eye Centre, Leicester.`,
           reminderTime: reminderDate.toISOString() 
         })
       });
