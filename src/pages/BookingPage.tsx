@@ -102,17 +102,19 @@ export default function BookingPage() {
     const isManuallyOverriddenToOpen = openDates.includes(targetDate);
     if (isStandardDayOff && !isManuallyOverriddenToOpen) return [];
   
-    // 1. Properly extract start/end from dailyOverrides or general settings
     const dayHours = dailyOverrides?.[targetDate] || settings;
     const clinicStart = toMins(dayHours.start || "09:00");
     const clinicEnd = toMins(dayHours.end || "17:00");
 
-    // 2. Use the lunch settings from your database
-    const lunchStart = toMins(settings.lunch?.start || "13:00");
-    const lunchEnd = toMins(settings.lunch?.end || "14:00");
+    // 1. Get Lunch Settings with a "Switch" check
+    // If lunch.enabled is false, we set the times to 0 so they never overlap
+    const lunchConfig = settings.lunch as { start?: string; end?: string; enabled?: boolean } | undefined;
+    const isLunchEnabled = lunchConfig?.enabled ?? true; 
+
+    const lunchStart = isLunchEnabled ? toMins(lunchConfig?.start || "13:00") : -1;
+    const lunchEnd = isLunchEnabled ? toMins(lunchConfig?.end || "14:00") : -1;
 
     const now = new Date();
-    // Use local date string to match your targetDate format (YYYY-MM-DD)
     const isToday = targetDate === now.toLocaleDateString('en-CA'); 
     const currentMins = (now.getHours() * 60) + now.getMinutes();
   
@@ -129,13 +131,15 @@ export default function BookingPage() {
     for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
       const potentialEnd = current + duration;
       
-      // Filter out times that have already passed today
+      // Filter out past times for today
       if (isToday && current <= currentMins) continue;
 
-      // 3. IMPROVED LUNCH CHECK
-      // This blocks the slot if ANY part of the appointment overlaps with the lunch hour
-      const overlapsLunch = current < lunchEnd && potentialEnd > lunchStart;
-      if (overlapsLunch) continue;
+      // 2. The Clean Lunch Check
+      // This will only block time if lunch is enabled AND the slot overlaps
+      if (isLunchEnabled) {
+        const overlapsLunch = current < lunchEnd && potentialEnd > lunchStart;
+        if (overlapsLunch) continue;
+      }
       
       const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
 
