@@ -177,7 +177,8 @@ export default function BookingPage() {
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
-      // 1. Save to Firebase
+      // 1. Save the initial appointment
+      // The variable 'docRef' is now used below to update this specific document
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
         email: booking.email,
@@ -205,19 +206,21 @@ export default function BookingPage() {
       const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
 
       const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    to: booking.phone,
-    body: `Hi ${booking.firstName}, your appointment at Leicester Eye Centre is confirmed for ${booking.time} on ${new Date(booking.date).toLocaleDateString('en-GB')}.`,
-    reminderTime: reminderDate.toISOString() 
-  })
-});
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: booking.phone,
+          body: `Hi ${booking.firstName}, your eye check is confirmed for ${booking.time}.`,
+          reminderTime: reminderDate.toISOString() 
+        })
+      });
 
-if (!smsResponse.ok) {
-  const errorData = await smsResponse.json();
-  console.error("SMS Failure:", errorData.error);
-}
+      // --- FIX: Use docRef and setDoc here ---
+      if (smsResponse.ok) {
+        const smsData = await smsResponse.json();
+        // This line uses both 'docRef' and 'setDoc' to save the Twilio SID
+        await setDoc(docRef, { reminderSid: smsData.reminderSid }, { merge: true });
+      }
 
       setStep(4);
     } catch (e) {
