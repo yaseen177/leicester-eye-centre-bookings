@@ -209,11 +209,10 @@ export default function BookingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: booking.phone,
-          firstName: booking.firstName,
-          time: booking.time,
-          date: new Date(booking.date).toLocaleDateString('en-GB'),
-          type: 'confirmation',
-          reminderTime: reminderDate.toISOString() // For the 24h SMS
+          // Note: The worker expects 'body' directly. 
+          // You can construct the message here:
+          body: `Hi ${booking.firstName}, your appointment at Leicester Eye Centre is confirmed for ${booking.time} on ${new Date(booking.date).toLocaleDateString('en-GB')}.`,
+          sendAt: reminderDate.toISOString() 
         })
       });
 
