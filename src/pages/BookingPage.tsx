@@ -205,22 +205,19 @@ export default function BookingPage() {
       const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
 
       const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: booking.phone,
-          // Note: The worker expects 'body' directly. 
-          // You can construct the message here:
-          body: `Hi ${booking.firstName}, your appointment at Leicester Eye Centre is confirmed for ${booking.time} on ${new Date(booking.date).toLocaleDateString('en-GB')}.`,
-          sendAt: reminderDate.toISOString() 
-        })
-      });
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    to: booking.phone,
+    body: `Hi ${booking.firstName}, your appointment at Leicester Eye Centre is confirmed for ${booking.time} on ${new Date(booking.date).toLocaleDateString('en-GB')}.`,
+    reminderTime: reminderDate.toISOString() 
+  })
+});
 
-      // Store the SMS SID if you want to cancel/track it later
-      if (smsResponse.ok) {
-        const smsData = await smsResponse.json();
-        await setDoc(docRef, { reminderSid: smsData.reminderSid }, { merge: true });
-      }
+if (!smsResponse.ok) {
+  const errorData = await smsResponse.json();
+  console.error("SMS Failure:", errorData.error);
+}
 
       setStep(4);
     } catch (e) {

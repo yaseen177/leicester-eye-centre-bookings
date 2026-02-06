@@ -21,7 +21,7 @@ export default {
           });
         }
   
-        // 2. Logic to bypass 15-minute delay
+        // 2. Logic to bypass 15-minute scheduling delay for testing
         const now = new Date();
         const schedTime = new Date(reminderTime);
         const diffInMinutes = (schedTime - now) / (1000 * 60);
@@ -29,30 +29,37 @@ export default {
         const params = new URLSearchParams({
           To: to,
           Body: body,
-          MessagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID,
-          From: "EYE CENTRE" 
+          // Using your Twilio Phone Number instead of Alphanumeric ID
+          From: env.TWILIO_PHONE_NUMBER 
         });
   
-        // Only schedule if it's between 15 mins and 35 days in the future
+        // Twilio Scheduling requires a Messaging Service. 
+        // If you are using a Service, uncomment the line below:
+        // params.append("MessagingServiceSid", env.TWILIO_MESSAGING_SERVICE_SID);
+  
+        // Only attempt to schedule if the time is > 15 minutes away
         if (diffInMinutes >= 15 && diffInMinutes <= 50400) {
           params.append("ScheduleType", "fixed");
           params.append("SendAt", schedTime.toISOString());
         } 
-        // Otherwise, the worker sends it immediately by NOT adding ScheduleType
   
         const twilioRes = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
           method: "POST",
-          headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
+          headers: { 
+            "Authorization": `Basic ${auth}`, 
+            "Content-Type": "application/x-www-form-urlencoded" 
+          },
           body: params
         });
   
         const twilioData = await twilioRes.json();
+        
         return new Response(JSON.stringify({ 
-          success: true, 
+          success: twilioRes.ok, 
           reminderSid: twilioData.sid,
-          status: twilioData.status 
+          error: twilioData.message 
         }), { 
-          status: 200, 
+          status: twilioRes.status, 
           headers: { ...corsHeaders, "Content-Type": "application/json" } 
         });
   
