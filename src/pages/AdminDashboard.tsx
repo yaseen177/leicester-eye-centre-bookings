@@ -102,6 +102,8 @@ const updateAppointment = async () => {
   if (!editingApp) return;
   try {
     const appRef = doc(db, "appointments", editingApp.id);
+    
+    // Update Firestore
     await setDoc(appRef, {
       patientName: editingApp.patientName,
       email: editingApp.email,
@@ -110,8 +112,33 @@ const updateAppointment = async () => {
       appointmentTime: editingApp.appointmentTime,
       appointmentDate: editingApp.appointmentDate
     }, { merge: true });
+
+    // Calculate new reminder time
+    const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
+    const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
+
+    // Update SMS Reminders
+    const smsRes = await fetch("YOUR_CLOUDFLARE_WORKER_URL", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: editingApp.phone,
+        firstName: editingApp.patientName.split(' ')[0],
+        time: editingApp.appointmentTime,
+        date: new Date(editingApp.appointmentDate).toLocaleDateString('en-GB'),
+        type: 'amendment',
+        oldReminderSid: editingApp.reminderSid, // Tell worker to cancel old one
+        reminderTime: newReminderDate.toISOString()
+      })
+    });
+
+    if (smsRes.ok) {
+      const smsData = await smsRes.json();
+      await setDoc(appRef, { reminderSid: smsData.reminderSid }, { merge: true });
+    }
+
     setEditingApp(null);
-    alert("Patient details updated successfully.");
+    alert("Patient details and SMS reminders updated.");
   } catch (err) {
     alert("Failed to update appointment.");
   }

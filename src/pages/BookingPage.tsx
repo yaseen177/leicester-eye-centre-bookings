@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
+import { collection, setDoc, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
 import emailjs from '@emailjs/browser';
 
 const toMins = (t: string) => { 
@@ -177,7 +177,8 @@ export default function BookingPage() {
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
-      await addDoc(collection(db, "appointments"), {
+      // 1. Save to Firebase
+      const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
         email: booking.email,
         phone: booking.phone,
@@ -188,6 +189,7 @@ export default function BookingPage() {
         createdAt: serverTimestamp(),
       });
 
+      // 2. Send Confirmation Email
       const emailParams = {
         to_email: booking.email,
         patient_name: booking.firstName,
@@ -196,12 +198,35 @@ export default function BookingPage() {
         time: booking.time,
         reply_to: 'enquiries@theeyecentre.com'
       };
-
       await emailjs.send('service_et75v9m', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+
+      // 3. Send SMS via Cloudflare Worker
+      const appointmentDate = new Date(`${booking.date}T${booking.time}`);
+      const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
+
+      const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: booking.phone,
+          firstName: booking.firstName,
+          time: booking.time,
+          date: new Date(booking.date).toLocaleDateString('en-GB'),
+          type: 'confirmation',
+          reminderTime: reminderDate.toISOString() // For the 24h SMS
+        })
+      });
+
+      // Store the SMS SID if you want to cancel/track it later
+      if (smsResponse.ok) {
+        const smsData = await smsResponse.json();
+        await setDoc(docRef, { reminderSid: smsData.reminderSid }, { merge: true });
+      }
+
       setStep(4);
     } catch (e) {
       console.error("Error:", e);
-      alert("Booking saved, but confirmation email failed to send.");
+      alert("Booking saved, but notifications may have failed.");
       setStep(4);
     }
     setLoading(false);
