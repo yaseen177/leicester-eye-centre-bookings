@@ -109,8 +109,11 @@ export default function BookingPage() {
     // 1. Get Lunch Settings with a "Switch" check
     // If lunch.enabled is false, we set the times to 0 so they never overlap
     const lunchConfig = settings.lunch as { start?: string; end?: string; enabled?: boolean } | undefined;
-    const isLunchEnabled = lunchConfig?.enabled ?? true; 
 
+    // 2. Check if lunch is enabled (default to true if the property is missing)
+    const isLunchEnabled = lunchConfig?.enabled ?? true;
+
+    // 3. Convert to minutes ONLY if enabled; otherwise, set to -1 so they never overlap
     const lunchStart = isLunchEnabled ? toMins(lunchConfig?.start || "13:00") : -1;
     const lunchEnd = isLunchEnabled ? toMins(lunchConfig?.end || "14:00") : -1;
 
