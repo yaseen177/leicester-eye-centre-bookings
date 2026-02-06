@@ -64,7 +64,8 @@ export default function BookingPage() {
           contactLens: Number(data.times?.contactLens) || 20,
           closedDates: data.closedDates || [],
           openDates: data.openDates || [],
-          weeklyOff: data.weeklyOff || []
+          weeklyOff: data.weeklyOff || [],
+          lunch: data.lunch || prev.lunch
         }));
       }
     });
