@@ -95,22 +95,25 @@ export default function BookingPage() {
     today.setHours(0, 0, 0, 0);
     if (dateObj < today) return [];
   
-    const { closedDates, openDates, weeklyOff, dailyOverrides, lunch } = settings;
+    const { closedDates, openDates, weeklyOff, dailyOverrides } = settings;
   
     if (closedDates.includes(targetDate)) return [];
     const isStandardDayOff = weeklyOff.includes(dayOfWeek);
     const isManuallyOverriddenToOpen = openDates.includes(targetDate);
     if (isStandardDayOff && !isManuallyOverriddenToOpen) return [];
   
-    // Use Daily Override Hours if they exist, else use standard hours
+    // 1. Properly extract start/end from dailyOverrides or general settings
     const dayHours = dailyOverrides?.[targetDate] || settings;
     const clinicStart = toMins(dayHours.start || "09:00");
     const clinicEnd = toMins(dayHours.end || "17:00");
-    
-    const lunchStart = toMins(lunch?.start || "13:00");
-    const lunchEnd = toMins(lunch?.end || "14:00");
+
+    // 2. Use the lunch settings from your database
+    const lunchStart = toMins(settings.lunch?.start || "13:00");
+    const lunchEnd = toMins(settings.lunch?.end || "14:00");
+
     const now = new Date();
-    const isToday = targetDate === now.toISOString().split('T')[0];
+    // Use local date string to match your targetDate format (YYYY-MM-DD)
+    const isToday = targetDate === now.toLocaleDateString('en-CA'); 
     const currentMins = (now.getHours() * 60) + now.getMinutes();
   
     const slots: string[] = [];
@@ -123,24 +126,26 @@ export default function BookingPage() {
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
   
-      for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
-        const potentialEnd = current + duration;
-        
-        // Fix: Filter out times that have already passed today
-        if (isToday && current <= currentMins) continue;
-  
-        // Fix: Check Lunch Break with precise minute matching
-        if (current < lunchEnd && potentialEnd > lunchStart) continue;
-        
-        const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-  
-        if (!isOverlap) {
-          slots.push(fromMins(current));
-        }
-      }
+    for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
+      const potentialEnd = current + duration;
       
-      return Array.from(new Set(slots)).sort();
-    };
+      // Filter out times that have already passed today
+      if (isToday && current <= currentMins) continue;
+
+      // 3. IMPROVED LUNCH CHECK
+      // This blocks the slot if ANY part of the appointment overlaps with the lunch hour
+      const overlapsLunch = current < lunchEnd && potentialEnd > lunchStart;
+      if (overlapsLunch) continue;
+      
+      const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
+
+      if (!isOverlap) {
+        slots.push(fromMins(current));
+      }
+    }
+    
+    return Array.from(new Set(slots)).sort();
+};
   const findFirstAvailableDate = () => {
     let checkDate = new Date();
     for (let i = 0; i < 30; i++) {
