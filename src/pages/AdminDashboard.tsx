@@ -37,39 +37,6 @@ export default function AdminDashboard() {
     familyGlaucoma: false
   });
 
-  const calculateSlotsForDate = (targetDate: string) => {
-    const dayHours = config.dailyOverrides?.[targetDate] || config.hours;
-    const startMins = toMins(dayHours.start);
-    const endMins = toMins(dayHours.end);
-
-    const isLunchEnabled = config.lunch?.enabled ?? true;
-    const lunchStartMins = toMins(config.lunch?.start || "13:00");
-    const lunchEndMins = toMins(config.lunch?.end || "14:00");
-
-    const duration = newBooking.service === 'Eye Check' ? config.times.eyeCheck : config.times.contactLens;
-    const slots: string[] = [];
-
-    // Map existing bookings for overlap checks
-    const dayBookings = appointments
-      .filter(b => b.appointmentDate === targetDate)
-      .map(b => {
-        const d = b.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck;
-        return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
-      });
-
-    for (let current = startMins; current + duration <= endMins; current += 5) {
-      const potentialEnd = current + duration;
-      const overlapsLunch = isLunchEnabled && (current < lunchEndMins && potentialEnd > lunchStartMins);
-      const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
-
-      if (!overlapsLunch && !isOverlap) {
-        slots.push(fromMins(current));
-      }
-    }
-    return slots;
-};
-
-  // 2. Initial State with enabled property
   const [config, setConfig] = useState<ClinicConfig>({ 
     times: { eyeCheck: 30, contactLens: 20 }, 
     hours: { start: "09:00", end: "17:00" },
@@ -78,6 +45,11 @@ export default function AdminDashboard() {
     openDates: [],
     dailyOverrides: {}
   });
+
+  
+
+  // 2. Initial State with enabled property
+  
 
   const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -117,6 +89,54 @@ export default function AdminDashboard() {
     return h * 60 + m;
   };
 
+  const fromMins = (m: number) => {
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`;
+  };
+
+  const calculateAge = (dobString: string) => {
+    if (!dobString) return 0;
+    const birthDate = new Date(dobString);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+    return age;
+  };
+
+  const calculateSlotsForDate = (targetDate: string) => {
+    const dayHours = config.dailyOverrides?.[targetDate] || config.hours;
+    const startMins = toMins(dayHours.start);
+    const endMins = toMins(dayHours.end);
+
+    const isLunchEnabled = config.lunch?.enabled ?? true;
+    const lunchStartMins = toMins(config.lunch?.start || "13:00");
+    const lunchEndMins = toMins(config.lunch?.end || "14:00");
+
+    const duration = newBooking.service === 'Eye Check' ? config.times.eyeCheck : config.times.contactLens;
+    const slots: string[] = [];
+
+    // Map existing bookings for overlap checks
+    const dayBookings = appointments
+      .filter(b => b.appointmentDate === targetDate)
+      .map(b => {
+        const d = b.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck;
+        return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
+      });
+
+    for (let current = startMins; current + duration <= endMins; current += 5) {
+      const potentialEnd = current + duration;
+      const overlapsLunch = isLunchEnabled && (current < lunchEndMins && potentialEnd > lunchStartMins);
+      const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
+
+      if (!overlapsLunch && !isOverlap) {
+        slots.push(fromMins(current));
+      }
+    }
+    return slots;
+};
+
   // Inside AdminDashboard component
 
 
@@ -135,8 +155,7 @@ export default function AdminDashboard() {
         else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
       }
   
-      // 2. Capture docRef when adding to Firestore
-      // This resolves the "Cannot find name 'docRef'" error
+      // 2. Save to Firestore
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${newBooking.firstName} ${newBooking.lastName}`,
         email: newBooking.email,
@@ -153,7 +172,7 @@ export default function AdminDashboard() {
         createdAt: serverTimestamp()
       });
   
-      // 3. EmailJS Logic...
+      // 3. EmailJS Logic (FIXED: Added back and checked for email)
       if (newBooking.email) {
         const emailParams = {
           to_email: newBooking.email,
@@ -164,10 +183,15 @@ export default function AdminDashboard() {
           reply_to: 'enquiries@theeyecentre.com'
         };
         
-        await emailjs.send('service_et75v9a', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+        // We wrap this in a separate try/catch so email failure doesn't stop the SMS/Booking
+        try {
+          await emailjs.send('service_et75v9a', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+        } catch (emailErr) {
+          console.error("Failed to send email:", emailErr);
+        }
       }
   
-      // 4. SMS logic with corrected variable names
+      // 4. SMS Logic
       const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
       const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
       
@@ -177,7 +201,6 @@ export default function AdminDashboard() {
         body: JSON.stringify({
           to: newBooking.phone,
           body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}. The Eye Centre, Leicester.`,
-          // FIX: Use newReminderDate here
           reminderTime: newReminderDate.toISOString() 
         })
       });
@@ -186,7 +209,6 @@ export default function AdminDashboard() {
         const smsData = await smsRes.json();
         const sid = smsData.sid || smsData.reminderSid;
         if (sid) {
-          // FIX: docRef is now used here, resolving the 'never read' warning
           await setDoc(docRef, { reminderSid: sid }, { merge: true });
         }
       }
@@ -195,15 +217,11 @@ export default function AdminDashboard() {
       alert("Appointment successfully booked.");
     } catch (err) {
       console.error("Booking Error:", err);
-      alert("Error saving booking.");
+      alert("Error saving booking. Check console.");
     }
   };
 
-  const fromMins = (m: number) => {
-    const h = Math.floor(m / 60);
-    const mm = m % 60;
-    return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`;
-  };
+  
 
   const isDateClosed = () => {
     const dateObj = new Date(selectedDate);
@@ -220,15 +238,7 @@ export default function AdminDashboard() {
     return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
   };
 
-  const calculateAge = (dobString: string) => {
-    if (!dobString) return 0;
-    const birthDate = new Date(dobString);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const m = today.getMonth() - birthDate.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
-    return age;
-  };
+  
 
   const deleteApp = async (id: string) => {
     if (window.confirm("Are you sure you want to cancel this appointment?")) {
@@ -241,51 +251,49 @@ export default function AdminDashboard() {
   };
 
   const updateAppointment = async () => {
-  if (!editingApp) return;
-  try {
-    // 1. Define the document reference first so we can use it later
-    const appRef = doc(db, "appointments", editingApp.id);
-    
-    // 2. Update Firestore
-    await setDoc(appRef, {
-      patientName: editingApp.patientName,
-      email: editingApp.email,
-      phone: editingApp.phone,
-      dob: editingApp.dob,
-      appointmentTime: editingApp.appointmentTime,
-      appointmentDate: editingApp.appointmentDate
-    }, { merge: true });
-
-    // 3. Calculate new reminder time
-    const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
-    const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
-
-    // 4. Send SMS (Fix: Use editingApp data, not newBooking)
-    const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: editingApp.phone, // Fixed
-        body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} at ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
-        reminderTime: newReminderDate.toISOString() // Fixed variable name
-      })
-    });
-
-    // 5. Save SMS ID (Fix: Use appRef, not docRef)
-    if (smsRes.ok) {
-      const { sid } = await smsRes.json();
-      if (sid) {
-        await setDoc(appRef, { reminderSid: sid }, { merge: true }); // Fixed docRef -> appRef
+    if (!editingApp) return;
+    try {
+      const appRef = doc(db, "appointments", editingApp.id);
+      
+      // 1. Update Firestore
+      await setDoc(appRef, {
+        patientName: editingApp.patientName,
+        email: editingApp.email,
+        phone: editingApp.phone,
+        dob: editingApp.dob,
+        appointmentTime: editingApp.appointmentTime,
+        appointmentDate: editingApp.appointmentDate
+      }, { merge: true });
+  
+      // 2. Calculate new reminder time
+      const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
+      const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
+  
+      // 3. Send SMS (FIXED: Uses editingApp data)
+      const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: editingApp.phone,
+          body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} at ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
+          reminderTime: newReminderDate.toISOString()
+        })
+      });
+  
+      if (smsRes.ok) {
+        const { sid } = await smsRes.json();
+        if (sid) {
+          await setDoc(appRef, { reminderSid: sid }, { merge: true });
+        }
       }
+  
+      setEditingApp(null);
+      alert("Appointment updated and new SMS reminder scheduled.");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update appointment.");
     }
-
-    setEditingApp(null);
-    alert("Patient details and SMS reminders updated.");
-  } catch (err) {
-    console.error(err);
-    alert("Failed to update appointment.");
-  }
-};
+  };
 
   const handleDrop = async (e: React.DragEvent, newTime: string) => {
     e.preventDefault();
