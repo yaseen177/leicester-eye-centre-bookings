@@ -122,9 +122,10 @@ export default function AdminDashboard() {
 
   const handleAdminBooking = async () => {
     try {
-      // 1. Calculate Category (Matches BookingPage logic)
+      // 1. Calculate clinical category based on age and checkboxes
       const age = calculateAge(newBooking.dob);
       let category = 'Eye Check Private';
+      
       if (newBooking.service === 'Contact Lens Check') {
         category = 'Contact Lens Check';
       } else {
@@ -134,24 +135,24 @@ export default function AdminDashboard() {
         else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
       }
   
-      // 2. Save to Firestore with all Clinical Details
+      // 2. Save to Firestore
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${newBooking.firstName} ${newBooking.lastName}`,
         email: newBooking.email,
         phone: newBooking.phone,
         dob: newBooking.dob,
         appointmentType: category,
-        appointmentDate: selectedDate, // Uses the date currently selected in the modal
+        appointmentDate: selectedDate,
         appointmentTime: newBooking.time,
-        source: 'Admin',
-        inFullTimeEducation: newBooking.inFullTimeEducation,
-        onBenefits: newBooking.onBenefits,
+        source: 'Admin', // Tracks that this was an internal booking
         isDiabetic: newBooking.isDiabetic,
+        onBenefits: newBooking.onBenefits,
         familyGlaucoma: newBooking.familyGlaucoma,
-        createdAt: serverTimestamp(),
+        inFullTimeEducation: newBooking.inFullTimeEducation,
+        createdAt: serverTimestamp()
       });
   
-      // 3. EmailJS Notification (Fixes the missing email issue)
+      // 3. EmailJS Notification with fixed parameters
       const emailParams = {
         to_email: newBooking.email,
         patient_name: newBooking.firstName,
@@ -165,7 +166,6 @@ export default function AdminDashboard() {
       // 4. SMS Notification
       const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
       const reminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
-  
       const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -184,8 +184,8 @@ export default function AdminDashboard() {
       setIsBookingModalOpen(false);
       alert("Appointment successfully booked and notifications sent.");
     } catch (err) {
-      console.error(err);
-      alert("Booking saved, but some notifications may have failed.");
+      console.error("Booking Error:", err);
+      alert("Error saving booking. Check console for details.");
     }
   };
 
@@ -584,22 +584,26 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* MODAL 2: NEW ADMIN BOOKING */}
-      {isBookingModalOpen && (
+      {/* MODAL: NEW ADMIN BOOKING */}
+{isBookingModalOpen && (
   <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4 backdrop-blur-sm">
     <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
       <h2 className="text-2xl font-black text-slate-800 mb-6">Direct Admin Booking</h2>
       
       <div className="space-y-4">
-        {/* Date Selector Inside Modal */}
+        {/* Date Selection: Prevents past dates and warns if closed */}
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
           <input 
             type="date" 
+            min={new Date().toISOString().split('T')[0]} 
             value={selectedDate} 
             onChange={(e) => setSelectedDate(e.target.value)} 
-            className="w-full p-4 bg-slate-50 rounded-xl font-bold text-[#3F9185] outline-none border-none focus:ring-2 focus:ring-[#3F9185]"
+            className="w-full p-4 bg-slate-50 rounded-xl font-bold text-[#3F9185] border-none outline-none focus:ring-2 focus:ring-[#3F9185]"
           />
+          {isDateClosed() && (
+            <p className="text-red-500 text-[10px] font-bold mt-1 ml-1 uppercase">Clinic is closed on this date</p>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -607,36 +611,51 @@ export default function AdminDashboard() {
           <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
         </div>
 
-        <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
+        <div className="grid grid-cols-2 gap-4">
+          <input placeholder="Email" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, email: e.target.value})} />
+          <input placeholder="Phone" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
+        </div>
+
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
+          <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
+        </div>
         
         <select className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={newBooking.service} onChange={e => setNewBooking({...newBooking, service: e.target.value})}>
           <option value="Eye Check">Eye Check</option>
           <option value="Contact Lens Check">Contact Lens Check</option>
         </select>
 
-        {/* Clinical Details (Only for Eye Check) */}
-        {newBooking.service === 'Eye Check' && (
-          <div className="grid grid-cols-2 gap-2 pt-2">
-            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
-              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, isDiabetic: e.target.checked})} />
-              <span className="text-[11px] font-bold text-slate-600">Diabetic</span>
-            </label>
-            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
-              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, onBenefits: e.target.checked})} />
-              <span className="text-[11px] font-bold text-slate-600">Benefits</span>
-            </label>
-            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
-              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, familyGlaucoma: e.target.checked})} />
-              <span className="text-[11px] font-bold text-slate-600">Glaucoma</span>
-            </label>
-            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
-              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, inFullTimeEducation: e.target.checked})} />
-              <span className="text-[11px] font-bold text-slate-600">Student</span>
-            </label>
+        {/* Clinical Eligibility Checks: Age-Dependent Logic */}
+        {newBooking.service === 'Eye Check' && newBooking.dob && (
+          <div className="space-y-2 pt-2">
+            {calculateAge(newBooking.dob) >= 16 && calculateAge(newBooking.dob) <= 18 && (
+              <label className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
+                <input type="checkbox" className="accent-[#3F9185] w-5 h-5" checked={newBooking.inFullTimeEducation} onChange={e => setNewBooking({...newBooking, inFullTimeEducation: e.target.checked})} />
+                <span className="text-[11px] font-bold text-slate-600">In full-time education?</span>
+              </label>
+            )}
+            {calculateAge(newBooking.dob) >= 19 && calculateAge(newBooking.dob) <= 59 && (
+              <>
+                <label className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
+                  <input type="checkbox" className="accent-[#3F9185] w-5 h-5" checked={newBooking.onBenefits} onChange={e => setNewBooking({...newBooking, onBenefits: e.target.checked})} />
+                  <span className="text-[11px] font-bold text-slate-600">Receiving benefits?</span>
+                </label>
+                <label className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
+                  <input type="checkbox" className="accent-[#3F9185] w-5 h-5" checked={newBooking.isDiabetic} onChange={e => setNewBooking({...newBooking, isDiabetic: e.target.checked})} />
+                  <span className="text-[11px] font-bold text-slate-600">Diabetic?</span>
+                </label>
+                {calculateAge(newBooking.dob) >= 40 && (
+                  <label className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-all">
+                    <input type="checkbox" className="accent-[#3F9185] w-5 h-5" checked={newBooking.familyGlaucoma} onChange={e => setNewBooking({...newBooking, familyGlaucoma: e.target.checked})} />
+                    <span className="text-[11px] font-bold text-slate-600">Family history of Glaucoma?</span>
+                  </label>
+                )}
+              </>
+            )}
           </div>
         )}
 
-        {/* Time Slots for the Selected Date */}
         <div className="space-y-2">
           <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
           <div className="grid grid-cols-4 gap-2">
@@ -645,7 +664,7 @@ export default function AdminDashboard() {
                 key={t}
                 onClick={() => setNewBooking({...newBooking, time: t})}
                 className={`py-2 rounded-lg text-[11px] font-black transition-all border-2 ${
-                  newBooking.time === t ? 'bg-[#3F9185] text-white' : 'bg-white text-slate-400 border-slate-100'
+                  newBooking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100'
                 }`}
               >
                 {t}
@@ -657,7 +676,13 @@ export default function AdminDashboard() {
 
       <div className="flex gap-3 mt-8">
         <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
-        <button onClick={handleAdminBooking} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg">Confirm Booking</button>
+        <button 
+          onClick={handleAdminBooking} 
+          disabled={!newBooking.time || !newBooking.firstName || isDateClosed()} 
+          className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+        >
+          Confirm Booking
+        </button>
       </div>
     </div>
   </div>
