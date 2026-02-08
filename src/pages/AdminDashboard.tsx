@@ -323,22 +323,32 @@ export default function AdminDashboard() {
 
           // 3. Call YOUR Cloudflare Worker
           const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/"; 
-          
-          fetch(WORKER_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                  type: "schedule_review", // This tells the worker to use the new logic
-                  email: booking.email,
-                  patientName: booking.patientName,
-                  reviewLink: "https://www.google.com/search?client=safari&hs=6XJp&sca_esv=a98330bec46d892d&hl=en-gb&sxsrf=ANbL-n7q1T411PmM5NcJOwroW6swm6hF1Q:1770557907167&q=the+eye+centre+leicester+reviews&uds=ALYpb_kHqLs5gcVMAt3VLSqkcdlMngXus-x9GFCSkvQn8dOI9knopxGU9LtrgKEndWds03AMNjaI5aH_9BC0i8ndBjxe0SsadfbbEnnBjLNMU7lLaqWGPqVSw1UkT5mz8-tC8KzEoKnmrcEYZqOyYsFStR9ixAAXYpnTFy_rHEtFibwKsz1Df_e0roHKvw_WTIdAN-O-V2wRmwFfijY7lRRcr8Fqsmzu4h6Uug98cMw3iZ6j4yDggD0DCXrHypYOBJgQy-e9BADe43T4RQ42gh2PduZz7fKKbuI2bYThxWuz0Qqw_WC07eCtysMbjvE1MHf-iD3PyHmiAKhimmwdFTIyWVYoesfaV6uHc10IAQRjorXWF7PoPE8DzWEcoiq69FCd_rlzM1cEvPzCQq53UdQAc9KQlB4iL33nJFRjrx76uuyN4T-8mYvsyV1TP_XmtTwZMp7KiXbH3yXrR-RdRB8kUNU_SwH3vBVSEhOoYBqRoYVTtUhCzyd3We2LXnedujTsoa4y54OSEmuSH4YgTWUUKmJUi8GTDQ&si=AL3DRZHrmvnFAVQPOO2Bzhf8AX9KZZ6raUI_dT7DG_z0kV2_x-NXv3ANlcDqRAVq-f0yXFMJFQ3KfdXqv9BUk7kRK8o1RdQyT1VtJMiyHySCLQPw_j7x1K2zM5lmjSef1pKTuZ7JpytYcGLwIoQL1NqkpHr5NiMPoQ%3D%3D&sa=X&ved=2ahUKEwjAovGYgsqSAxW2VUEAHctYDUsQk8gLegQIHBAB&ictx=1&biw=393&bih=659&dpr=3#ebo=2"
-              })
-          })
-          .then(() => {
-              console.log(`✅ Automation Triggered: Email will send in 10 mins.`);
-              alert(`Status updated! The Cloudflare Worker has scheduled the email for 10 minutes from now.`);
-          })
-          .catch(err => console.error("Worker failed", err));
+
+fetch(WORKER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+        type: "schedule_review",
+        email: booking.email,
+        patientName: booking.patientName,
+        reviewLink: "https://www.google.com/search?client=safari&hs=6XJp&sca_esv=a98330bec46d892d&hl=en-gb&sxsrf=ANbL-n7q1T411PmM5NcJOwroW6swm6hF1Q:1770557907167&q=the+eye+centre+leicester+reviews&uds=ALYpb_kHqLs5gcVMAt3VLSqkcdlMngXus-x9GFCSkvQn8dOI9knopxGU9LtrgKEndWds03AMNjaI5aH_9BC0i8ndBjxe0SsadfbbEnnBjLNMU7lLaqWGPqVSw1UkT5mz8-tC8KzEoKnmrcEYZqOyYsFStR9ixAAXYpnTFy_rHEtFibwKsz1Df_e0roHKvw_WTIdAN-O-V2wRmwFfijY7lRRcr8Fqsmzu4h6Uug98cMw3iZ6j4yDggD0DCXrHypYOBJgQy-e9BADe43T4RQ42gh2PduZz7fKKbuI2bYThxWuz0Qqw_WC07eCtysMbjvE1MHf-iD3PyHmiAKhimmwdFTIyWVYoesfaV6uHc10IAQRjorXWF7PoPE8DzWEcoiq69FCd_rlzM1cEvPzCQq53UdQAc9KQlB4iL33nJFRjrx76uuyN4T-8mYvsyV1TP_XmtTwZMp7KiXbH3yXrR-RdRB8kUNU_SwH3vBVSEhOoYBqRoYVTtUhCzyd3We2LXnedujTsoa4y54OSEmuSH4YgTWUUKmJUi8GTDQ&si=AL3DRZHrmvnFAVQPOO2Bzhf8AX9KZZ6raUI_dT7DG_z0kV2_x-NXv3ANlcDqRAVq-f0yXFMJFQ3KfdXqv9BUk7kRK8o1RdQyT1VtJMiyHySCLQPw_j7x1K2zM5lmjSef1pKTuZ7JpytYcGLwIoQL1NqkpHr5NiMPoQ%3D%3D&sa=X&ved=2ahUKEwjAovGYgsqSAxW2VUEAHctYDUsQk8gLegQIHBAB&ictx=1&biw=393&bih=659&dpr=3#ebo=2"
+    })
+})
+.then(async (res) => {
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || "Worker returned 500");
+    }
+    console.log(`✅ Automation Triggered: Email will send in 10 mins. ID: ${data.id}`);
+    alert(`Status updated! The Cloudflare Worker has scheduled the email.`);
+    
+    // Only mark as sent if it ACTUALLY succeeded
+    await setDoc(appRef, { reviewEmailSent: true }, { merge: true });
+})
+.catch(err => {
+    console.error("Worker failed:", err);
+    alert(`Failed to schedule email: ${err.message}`);
+});
 
           // Mark as sent in DB
           await setDoc(appRef, { reviewEmailSent: true }, { merge: true });
