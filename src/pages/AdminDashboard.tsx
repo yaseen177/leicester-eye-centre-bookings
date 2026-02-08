@@ -142,6 +142,12 @@ export default function AdminDashboard() {
 
   const handleAdminBooking = async () => {
     try {
+      // FORMAT PHONE NUMBER (Fixes Twilio 21211 Error)
+      const rawPhone = newBooking.phone.trim();
+      const formattedPhone = rawPhone.startsWith('0') 
+        ? `+44${rawPhone.substring(1)}` 
+        : rawPhone;
+  
       // 1. Calculate clinical category
       const age = calculateAge(newBooking.dob);
       let category = 'Eye Check Private';
@@ -155,11 +161,11 @@ export default function AdminDashboard() {
         else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
       }
   
-      // 2. Save to Firestore
+      // 2. Save to Firestore (Save the formatted number!)
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${newBooking.firstName} ${newBooking.lastName}`,
         email: newBooking.email,
-        phone: newBooking.phone,
+        phone: formattedPhone, // Use formattedPhone here
         dob: newBooking.dob,
         appointmentType: category,
         appointmentDate: selectedDate,
@@ -172,7 +178,7 @@ export default function AdminDashboard() {
         createdAt: serverTimestamp()
       });
   
-      // 3. EmailJS Logic (FIXED: Added back and checked for email)
+      // 3. EmailJS Logic
       if (newBooking.email) {
         const emailParams = {
           to_email: newBooking.email,
@@ -183,9 +189,8 @@ export default function AdminDashboard() {
           reply_to: 'enquiries@theeyecentre.com'
         };
         
-        // We wrap this in a separate try/catch so email failure doesn't stop the SMS/Booking
         try {
-          await emailjs.send('service_et75v9m', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+          await emailjs.send('service_et75v9a', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
         } catch (emailErr) {
           console.error("Failed to send email:", emailErr);
         }
@@ -199,7 +204,7 @@ export default function AdminDashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: newBooking.phone,
+          to: formattedPhone, // Use formattedPhone here
           body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}. The Eye Centre, Leicester.`,
           reminderTime: newReminderDate.toISOString() 
         })
@@ -253,13 +258,19 @@ export default function AdminDashboard() {
   const updateAppointment = async () => {
     if (!editingApp) return;
     try {
+      // FORMAT PHONE NUMBER (Fixes Twilio 21211 Error)
+      const rawPhone = editingApp.phone.trim();
+      const formattedPhone = rawPhone.startsWith('0') 
+        ? `+44${rawPhone.substring(1)}` 
+        : rawPhone;
+  
       const appRef = doc(db, "appointments", editingApp.id);
       
       // 1. Update Firestore
       await setDoc(appRef, {
         patientName: editingApp.patientName,
         email: editingApp.email,
-        phone: editingApp.phone,
+        phone: formattedPhone, // Save formatted number
         dob: editingApp.dob,
         appointmentTime: editingApp.appointmentTime,
         appointmentDate: editingApp.appointmentDate
@@ -269,12 +280,12 @@ export default function AdminDashboard() {
       const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
       const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
   
-      // 3. Send SMS (FIXED: Uses editingApp data)
+      // 3. Send SMS
       const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: editingApp.phone,
+          to: formattedPhone, // Use formatted number
           body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} at ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
           reminderTime: newReminderDate.toISOString()
         })
@@ -678,22 +689,36 @@ export default function AdminDashboard() {
         )}
 
         {/* 4. Filtered Time Selection */}
-        <div className="space-y-2">
-          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
-          <div className="grid grid-cols-4 gap-2">
-            {calculateSlotsForDate(selectedDate).map((t: string) => (
-              <button 
-                key={t}
-                onClick={() => setNewBooking({...newBooking, time: t})}
-                className={`py-2 rounded-lg text-[11px] font-black transition-all border-2 ${
-                  newBooking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100'
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* 4. Filtered Time Selection */}
+<div className="space-y-2">
+  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
+  
+  {/* CONDITIONAL RENDERING: Check if date is closed or no slots exist */}
+  {isDateClosed() || calculateSlotsForDate(selectedDate).length === 0 ? (
+    <div className="w-full p-6 bg-slate-50 rounded-xl border border-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
+      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center">
+        <span className="font-black text-xs">✕</span>
+      </div>
+      <span className="text-xs font-bold uppercase tracking-wider">No slots available</span>
+    </div>
+  ) : (
+    <div className="grid grid-cols-4 gap-2">
+      {calculateSlotsForDate(selectedDate).map((t: string) => (
+        <button 
+          key={t}
+          onClick={() => setNewBooking({...newBooking, time: t})}
+          className={`py-2 rounded-lg text-[11px] font-black transition-all border-2 ${
+            newBooking.time === t 
+              ? 'bg-[#3F9185] text-white border-[#3F9185]' 
+              : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'
+          }`}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  )}
+</div>
       </div>
 
       <div className="flex gap-3 mt-8">
