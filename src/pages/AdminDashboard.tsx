@@ -302,63 +302,61 @@ export default function AdminDashboard() {
   // Place this inside AdminDashboard component
 // Find your existing updateStatus function and replace it with this:
 
-  const updateStatus = async (id: string, newStatus: string) => {
-    try {
-      const appRef = doc(db, "appointments", id);
-      
-      // 1. Update status in Firestore immediately
-      await setDoc(appRef, { status: newStatus }, { merge: true });
-      
-      // 2. AUTOMATION: If 'Visit Complete', call your Worker
-      if (newStatus === 'Visit Complete') {
-        const booking = appointments.find(a => a.id === id);
-        
-        if (booking && booking.email && !booking.reviewEmailSent) {
-          
-          const confirmSend = window.confirm(
-            `Status updated to 'Visit Complete'.\n\nSchedule the 10-minute automated Google Review email for ${booking.patientName}?`
-          );
-
-          if (!confirmSend) return; 
-
-          // 3. Call YOUR Cloudflare Worker
-          const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/"; 
-
-fetch(WORKER_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-        type: "schedule_review",
-        email: booking.email,
-        patientName: booking.patientName,
-        reviewLink: "https://www.google.com/search?client=safari&hs=6XJp&sca_esv=a98330bec46d892d&hl=en-gb&sxsrf=ANbL-n7q1T411PmM5NcJOwroW6swm6hF1Q:1770557907167&q=the+eye+centre+leicester+reviews&uds=ALYpb_kHqLs5gcVMAt3VLSqkcdlMngXus-x9GFCSkvQn8dOI9knopxGU9LtrgKEndWds03AMNjaI5aH_9BC0i8ndBjxe0SsadfbbEnnBjLNMU7lLaqWGPqVSw1UkT5mz8-tC8KzEoKnmrcEYZqOyYsFStR9ixAAXYpnTFy_rHEtFibwKsz1Df_e0roHKvw_WTIdAN-O-V2wRmwFfijY7lRRcr8Fqsmzu4h6Uug98cMw3iZ6j4yDggD0DCXrHypYOBJgQy-e9BADe43T4RQ42gh2PduZz7fKKbuI2bYThxWuz0Qqw_WC07eCtysMbjvE1MHf-iD3PyHmiAKhimmwdFTIyWVYoesfaV6uHc10IAQRjorXWF7PoPE8DzWEcoiq69FCd_rlzM1cEvPzCQq53UdQAc9KQlB4iL33nJFRjrx76uuyN4T-8mYvsyV1TP_XmtTwZMp7KiXbH3yXrR-RdRB8kUNU_SwH3vBVSEhOoYBqRoYVTtUhCzyd3We2LXnedujTsoa4y54OSEmuSH4YgTWUUKmJUi8GTDQ&si=AL3DRZHrmvnFAVQPOO2Bzhf8AX9KZZ6raUI_dT7DG_z0kV2_x-NXv3ANlcDqRAVq-f0yXFMJFQ3KfdXqv9BUk7kRK8o1RdQyT1VtJMiyHySCLQPw_j7x1K2zM5lmjSef1pKTuZ7JpytYcGLwIoQL1NqkpHr5NiMPoQ%3D%3D&sa=X&ved=2ahUKEwjAovGYgsqSAxW2VUEAHctYDUsQk8gLegQIHBAB&ictx=1&biw=393&bih=659&dpr=3#ebo=2"
-    })
-})
-.then(async (res) => {
-    const data = await res.json();
-    if (!res.ok) {
-        throw new Error(data.error || "Worker returned 500");
-    }
-    console.log(`✅ Automation Triggered: Email will send in 10 mins. ID: ${data.id}`);
-    alert(`Status updated! The Cloudflare Worker has scheduled the email.`);
+const updateStatus = async (id: string, newStatus: string) => {
+  try {
+    const appRef = doc(db, "appointments", id);
     
-    // Only mark as sent if it ACTUALLY succeeded
-    await setDoc(appRef, { reviewEmailSent: true }, { merge: true });
-})
-.catch(err => {
-    console.error("Worker failed:", err);
-    alert(`Failed to schedule email: ${err.message}`);
-});
+    // 1. Update status in Firestore immediately
+    await setDoc(appRef, { status: newStatus }, { merge: true });
+    
+    // 2. AUTOMATION: Trigger whenever status becomes 'Visit Complete'
+    if (newStatus === 'Visit Complete') {
+      const booking = appointments.find(a => a.id === id);
+      
+      // REMOVED check for "!booking.reviewEmailSent" to allow re-triggering
+      if (booking && booking.email) {
+        
+        // Always ask for confirmation so you don't send accidental duplicates
+        const confirmSend = window.confirm(
+          `Status updated to 'Visit Complete'.\n\n(Re)Schedule the 10-minute automated Google Review email for ${booking.patientName}?`
+        );
 
-          // Mark as sent in DB
-          await setDoc(appRef, { reviewEmailSent: true }, { merge: true });
-        }
+        if (!confirmSend) return; 
+
+        // 3. Call Cloudflare Worker
+        const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/"; 
+        
+        fetch(WORKER_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                type: "schedule_review",
+                email: booking.email,
+                patientName: booking.patientName,
+                reviewLink: "https://www.google.com/search?client=safari&hs=6XJp&sca_esv=a98330bec46d892d&hl=en-gb&sxsrf=ANbL-n7q1T411PmM5NcJOwroW6swm6hF1Q:1770557907167&q=the+eye+centre+leicester+reviews&uds=ALYpb_kHqLs5gcVMAt3VLSqkcdlMngXus-x9GFCSkvQn8dOI9knopxGU9LtrgKEndWds03AMNjaI5aH_9BC0i8ndBjxe0SsadfbbEnnBjLNMU7lLaqWGPqVSw1UkT5mz8-tC8KzEoKnmrcEYZqOyYsFStR9ixAAXYpnTFy_rHEtFibwKsz1Df_e0roHKvw_WTIdAN-O-V2wRmwFfijY7lRRcr8Fqsmzu4h6Uug98cMw3iZ6j4yDggD0DCXrHypYOBJgQy-e9BADe43T4RQ42gh2PduZz7fKKbuI2bYThxWuz0Qqw_WC07eCtysMbjvE1MHf-iD3PyHmiAKhimmwdFTIyWVYoesfaV6uHc10IAQRjorXWF7PoPE8DzWEcoiq69FCd_rlzM1cEvPzCQq53UdQAc9KQlB4iL33nJFRjrx76uuyN4T-8mYvsyV1TP_XmtTwZMp7KiXbH3yXrR-RdRB8kUNU_SwH3vBVSEhOoYBqRoYVTtUhCzyd3We2LXnedujTsoa4y54OSEmuSH4YgTWUUKmJUi8GTDQ&si=AL3DRZHrmvnFAVQPOO2Bzhf8AX9KZZ6raUI_dT7DG_z0kV2_x-NXv3ANlcDqRAVq-f0yXFMJFQ3KfdXqv9BUk7kRK8o1RdQyT1VtJMiyHySCLQPw_j7x1K2zM5lmjSef1pKTuZ7JpytYcGLwIoQL1NqkpHr5NiMPoQ%3D%3D&sa=X&ved=2ahUKEwjAovGYgsqSAxW2VUEAHctYDUsQk8gLegQIHBAB&ictx=1&biw=393&bih=659&dpr=3#ebo=2"
+            })
+        })
+        .then(async (res) => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Worker failed");
+            
+            console.log(`✅ Automation Triggered. ID: ${data.id}`);
+            alert(`Email scheduled! (Sent via Worker)`);
+            
+            // We still log it for your records, but the logic above no longer checks this flag
+            await setDoc(appRef, { reviewEmailSent: true, reviewEmailLastSent: new Date().toISOString() }, { merge: true });
+        })
+        .catch(err => {
+            console.error("Worker failed:", err);
+            alert(`Failed to schedule: ${err.message}`);
+        });
       }
-    } catch (err) {
-      console.error("Error updating status:", err);
-      alert("Failed to update status");
     }
-  };
+  } catch (err) {
+    console.error("Error updating status:", err);
+    alert("Failed to update status");
+  }
+};
 
 // Helper to get color based on status
   const getStatusColor = (status: string) => {
