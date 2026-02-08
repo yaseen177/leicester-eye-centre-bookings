@@ -46,10 +46,40 @@ export default function AdminDashboard() {
     dailyOverrides: {}
   });
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [currentResultIndex, setCurrentResultIndex] = useState(0);
+
   
 
   // 2. Initial State with enabled property
   
+  // Place this inside AdminDashboard component
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const query = searchQuery.toLowerCase();
+    const results = appointments.filter(app => {
+      // Format DOB to DD/MM/YYYY for searching
+      const dobFormatted = app.dob ? new Date(app.dob).toLocaleDateString('en-GB') : '';
+      
+      return (
+        app.patientName?.toLowerCase().includes(query) ||
+        app.email?.toLowerCase().includes(query) ||
+        app.phone?.includes(query) ||
+        dobFormatted.includes(query)
+      );
+    });
+
+    // Sort results by date (newest first)
+    results.sort((a, b) => new Date(a.appointmentDate).getTime() - new Date(b.appointmentDate).getTime());
+
+    setSearchResults(results);
+    setCurrentResultIndex(0); // Reset to first result on new search
+  }, [searchQuery, appointments]);
 
   const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -226,7 +256,21 @@ export default function AdminDashboard() {
     }
   };
 
+  const navigateSearch = (direction: 'next' | 'prev') => {
+    if (searchResults.length === 0) return;
   
+    let newIndex = direction === 'next' ? currentResultIndex + 1 : currentResultIndex - 1;
+  
+    // Loop around logic
+    if (newIndex >= searchResults.length) newIndex = 0;
+    if (newIndex < 0) newIndex = searchResults.length - 1;
+  
+    setCurrentResultIndex(newIndex);
+    
+    // Jump to the date of the result
+    const targetDate = searchResults[newIndex].appointmentDate;
+    setSelectedDate(targetDate);
+  };
 
   const isDateClosed = () => {
     const dateObj = new Date(selectedDate);
@@ -386,6 +430,11 @@ export default function AdminDashboard() {
           ? (booking.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck)
           : 0;
         const endTimeStr = booking ? fromMins(time + duration) : '';
+
+        // Check if this booking matches the current search result
+        const isHighlighted = searchResults.length > 0 && 
+                              booking && 
+                              searchResults[currentResultIndex]?.id === booking.id;
   
         grid.push(
           <div 
@@ -403,8 +452,19 @@ export default function AdminDashboard() {
                 <div 
                   draggable 
                   onDragStart={(e) => e.dataTransfer.setData("appointmentId", booking.id)}
-                  className="bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185] p-4 rounded-xl flex justify-between items-center shadow-sm cursor-move"
+                  className={`relative p-4 rounded-xl flex justify-between items-center shadow-sm cursor-move transition-all duration-500 ${
+                    isHighlighted 
+                      ? 'bg-yellow-50 ring-2 ring-yellow-400 border-l-4 border-yellow-500 shadow-lg scale-[1.01] z-10' 
+                      : 'bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185]'
+                  }`}
                 >
+                  {/* Highlight Badge */}
+                  {isHighlighted && (
+                    <div className="absolute -top-3 -right-2 bg-yellow-400 text-yellow-900 text-[10px] font-black px-2 py-1 rounded-full shadow-sm animate-bounce">
+                      RESULT {currentResultIndex + 1}/{searchResults.length}
+                    </div>
+                  )}
+
                   <div className="flex flex-col gap-2 w-full">
                     <div className="flex items-center justify-between">
                       <div className="flex items-baseline gap-3">
@@ -426,7 +486,7 @@ export default function AdminDashboard() {
                         </span>
                       </div>
                     </div>
-                    {/* ... rest of your appointment card (DOB, Age, Contact details) */}
+                    
                     <div className="flex items-center gap-4 ml-1">
                       <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
                         <span className="text-[10px] font-black text-slate-400 uppercase">DOB:</span>
@@ -481,55 +541,94 @@ export default function AdminDashboard() {
         </div>
 
         {view === 'diary' && (
-          <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-              <div className="flex items-center gap-4">
-                <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
-                  <CalendarIcon className="text-[#3F9185]" /> Daily Grid
-                </h2>
-                {/* NEW ADMIN BOOKING BUTTON */}
-                <button 
-                  onClick={() => setIsBookingModalOpen(true)}
-                  className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-md"
-                >
-                  + New Booking
-                </button>
-              </div>
-              <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-3 bg-slate-100 rounded-xl font-bold text-[#3F9185] outline-none" />
-            </div>
+  <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
+    
+    {/* 1. Header & Controls */}
+    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+      <div className="flex items-center gap-4">
+        <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+          <CalendarIcon className="text-[#3F9185]" /> Daily Grid
+        </h2>
+        <button 
+          onClick={() => setIsBookingModalOpen(true)}
+          className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-md"
+        >
+          + New Booking
+        </button>
+      </div>
+      <input 
+        type="date" 
+        value={selectedDate} 
+        onChange={e => setSelectedDate(e.target.value)} 
+        className="p-3 bg-slate-100 rounded-xl font-bold text-[#3F9185] outline-none cursor-pointer hover:bg-slate-200 transition-colors" 
+      />
+    </div>
 
-            {/* Status Banner */}
-            <div className={`mb-6 p-5 rounded-2xl border flex items-center justify-between transition-all ${isDateClosed() ? 'bg-red-50 border-red-100' : 'bg-[#3F9185]/5 border-[#3F9185]/10'}`}>
-              <div className="flex items-center gap-4">
-                <div className={`w-3 h-3 rounded-full animate-pulse ${isDateClosed() ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
-                <div>
-                  <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Clinic Status</p>
-                  <p className="font-bold text-slate-800">{isDateClosed() ? 'Closed to Patients' : 'Open for Bookings'}</p>
-                </div>
-              </div>
-              <button onClick={() => toggleDayStatus(selectedDate)} className={`px-6 py-2 rounded-xl font-black text-xs uppercase ${isDateClosed() ? 'bg-white text-red-500 border border-red-200 shadow-sm' : 'bg-[#3F9185] text-white hover:opacity-90'}`}>
-                {isDateClosed() ? 'Mark as Open' : 'Mark as Closed'}
-              </button>
-            </div>
-
-            {/* Shift Override */}
-            <div className="mb-8 p-5 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-3 text-slate-500">
-                <Clock size={16} />
-                <span className="text-xs font-bold uppercase">Shift for this specific day:</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.start || config.hours.start} onChange={(e) => updateDailyHours(e.target.value, config.dailyOverrides?.[selectedDate]?.end || config.hours.end)} />
-                <span className="text-slate-300">to</span>
-                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.end || config.hours.end} onChange={(e) => updateDailyHours(config.dailyOverrides?.[selectedDate]?.start || config.hours.start, e.target.value)} />
-              </div>
-            </div>
-
-            <div className="max-h-[70vh] overflow-y-auto pr-2">
-              {renderGrid()}
-            </div>
-          </div>
+    {/* 2. SEARCH BAR */}
+    <div className="bg-white p-2 rounded-2xl border border-slate-100 mb-6 flex items-center justify-between gap-4 shadow-sm ring-1 ring-slate-100">
+      <div className="flex items-center gap-3 flex-1 bg-slate-50 p-3 rounded-xl transition-all focus-within:ring-2 focus-within:ring-[#3F9185]/20">
+        <span className="text-slate-400">🔍</span>
+        <input 
+          type="text" 
+          placeholder="Search patient name, email, phone..." 
+          className="bg-transparent outline-none w-full font-bold text-slate-700 placeholder:font-medium placeholder:text-slate-400 text-sm"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        {searchQuery && (
+          <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 font-bold text-xs">CLEAR</button>
         )}
+      </div>
+
+      {searchResults.length > 0 && (
+        <div className="flex items-center gap-3 bg-slate-800 text-white pl-4 pr-2 py-2 rounded-xl shadow-lg animate-in fade-in slide-in-from-right-4">
+          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">
+            Match {currentResultIndex + 1} / {searchResults.length}
+          </span>
+          <div className="flex gap-1">
+            <button onClick={() => navigateSearch('prev')} className="p-1.5 hover:bg-slate-600 rounded-lg transition-colors">⬆️</button>
+            <button onClick={() => navigateSearch('next')} className="p-1.5 hover:bg-slate-600 rounded-lg transition-colors">⬇️</button>
+          </div>
+        </div>
+      )}
+      
+      {searchQuery && searchResults.length === 0 && (
+        <span className="text-xs font-bold text-red-400 px-4 animate-in fade-in">No matches found</span>
+      )}
+    </div>
+
+    {/* 3. Status Banner */}
+    <div className={`mb-6 p-5 rounded-2xl border flex items-center justify-between transition-all ${isDateClosed() ? 'bg-red-50 border-red-100' : 'bg-[#3F9185]/5 border-[#3F9185]/10'}`}>
+      <div className="flex items-center gap-4">
+        <div className={`w-3 h-3 rounded-full animate-pulse ${isDateClosed() ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
+        <div>
+          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Clinic Status</p>
+          <p className="font-bold text-slate-800">{isDateClosed() ? 'Closed to Patients' : 'Open for Bookings'}</p>
+        </div>
+      </div>
+      <button onClick={() => toggleDayStatus(selectedDate)} className={`px-6 py-2 rounded-xl font-black text-xs uppercase ${isDateClosed() ? 'bg-white text-red-500 border border-red-200 shadow-sm' : 'bg-[#3F9185] text-white hover:opacity-90'}`}>
+        {isDateClosed() ? 'Mark as Open' : 'Mark as Closed'}
+      </button>
+    </div>
+
+    {/* 4. Shift Override */}
+    <div className="mb-8 p-5 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
+      <div className="flex items-center gap-3 text-slate-500">
+        <Clock size={16} />
+        <span className="text-xs font-bold uppercase">Shift for this specific day:</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.start || config.hours.start} onChange={(e) => updateDailyHours(e.target.value, config.dailyOverrides?.[selectedDate]?.end || config.hours.end)} />
+        <span className="text-slate-300">to</span>
+        <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.end || config.hours.end} onChange={(e) => updateDailyHours(config.dailyOverrides?.[selectedDate]?.start || config.hours.start, e.target.value)} />
+      </div>
+    </div>
+
+    <div className="max-h-[70vh] overflow-y-auto pr-2 scroll-smooth">
+      {renderGrid()}
+    </div>
+  </div>
+)}
 
         {view === 'settings' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-8">
