@@ -227,7 +227,7 @@ const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", 
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     to: formattedPhone,
-    body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled...`,
+    body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`,
     reminderTime: reminderDate.toISOString() // Fix: Change newReminderDate to reminderDate
   })
 });
