@@ -90,26 +90,17 @@ export default function BookingPage() {
   const calculateSlotsForDate = (targetDate: string) => {
     const [year, month, day] = targetDate.split('-').map(Number);
     const dateObj = new Date(year, month - 1, day);
-    
-    // JS getDay() returns 0 for Sunday, 1 for Monday, etc.
     const dayOfWeek = dateObj.getDay(); 
-  
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (dateObj < today) return [];
   
     const { closedDates, openDates, weeklyOff, dailyOverrides } = settings;
   
-    // 1. Check if the specific date is manually closed
+    // Priority 1: Manual Close
     if (closedDates.includes(targetDate)) return [];
 
-    // 2. Check if it's a standard day off (e.g., Sunday = 0)
+    // Priority 2: Weekly Off check with Manual Open override
     const isStandardDayOff = weeklyOff.includes(dayOfWeek);
-
-    // 3. Check if this specific day was manually marked as "Open" in the Diary
     const isManuallyOverriddenToOpen = openDates.includes(targetDate);
 
-    // FIX: If it's a Sunday (Weekly Off) and NOT manually overridden to open, return no slots
     if (isStandardDayOff && !isManuallyOverriddenToOpen) return [];
   
     const dayHours = dailyOverrides?.[targetDate] || settings;

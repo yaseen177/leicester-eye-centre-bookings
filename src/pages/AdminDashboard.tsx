@@ -75,6 +75,21 @@ export default function AdminDashboard() {
     return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`;
   };
 
+  const isDateClosed = () => {
+    const dateObj = new Date(selectedDate);
+    const dayOfWeek = dateObj.getDay(); // 0 = Sunday, 1 = Monday...
+    
+    const isWeeklyOff = config.weeklyOff?.includes(dayOfWeek);
+    const isManuallyOpened = config.openDates?.includes(selectedDate);
+    const isManuallyClosed = closedDates.includes(selectedDate);
+  
+    // Logic: 
+    // 1. If manually closed -> Closed
+    // 2. If it's a Weekly Off day but NOT manually opened -> Closed
+    // 3. Otherwise -> Open
+    return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
+  };
+
   const calculateAge = (dobString: string) => {
     if (!dobString) return 0;
     const birthDate = new Date(dobString);
@@ -312,18 +327,32 @@ export default function AdminDashboard() {
               <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-3 bg-slate-100 rounded-xl font-bold text-[#3F9185] outline-none" />
             </div>
 
-            <div className={`mb-6 p-5 rounded-2xl border flex items-center justify-between transition-all ${closedDates.includes(selectedDate) ? 'bg-red-50 border-red-100' : 'bg-[#3F9185]/5 border-[#3F9185]/10'}`}>
-              <div className="flex items-center gap-4">
-                <div className={`w-3 h-3 rounded-full animate-pulse ${closedDates.includes(selectedDate) ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
-                <div>
-                  <p className="text-[10px] font-black uppercase text-slate-400">Clinic Status</p>
-                  <p className="font-bold text-slate-800">{closedDates.includes(selectedDate) ? 'Closed to Patients' : 'Open for Bookings'}</p>
-                </div>
-              </div>
-              <button onClick={() => toggleDayStatus(selectedDate)} className={`px-6 py-2 rounded-xl font-black text-xs uppercase ${closedDates.includes(selectedDate) ? 'bg-white text-red-500 border-red-200' : 'bg-[#3F9185] text-white'}`}>
-                {closedDates.includes(selectedDate) ? 'Open this Day' : 'Close this Day'}
-              </button>
-            </div>
+            <div className={`mb-6 p-5 rounded-2xl border flex items-center justify-between transition-all ${
+  isDateClosed() 
+  ? 'bg-red-50 border-red-100' 
+  : 'bg-[#3F9185]/5 border-[#3F9185]/10'
+}`}>
+  <div className="flex items-center gap-4">
+    <div className={`w-3 h-3 rounded-full animate-pulse ${isDateClosed() ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
+    <div>
+      <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Clinic Status</p>
+      <p className="font-bold text-slate-800">
+        {isDateClosed() ? 'Closed to Patients' : 'Open for Bookings'}
+      </p>
+    </div>
+  </div>
+  
+  <button 
+    onClick={() => toggleDayStatus(selectedDate)}
+    className={`px-6 py-2 rounded-xl font-black text-xs uppercase tracking-tighter transition-all active:scale-95 shadow-sm ${
+      isDateClosed() 
+      ? 'bg-white text-red-500 border border-red-200 hover:bg-red-50' 
+      : 'bg-[#3F9185] text-white hover:opacity-90'
+    }`}
+  >
+    {isDateClosed() ? 'Mark as Open' : 'Mark as Closed'}
+  </button>
+</div>
 
             <div className="mb-8 p-5 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-3 text-slate-500">
