@@ -122,7 +122,7 @@ export default function AdminDashboard() {
 
   const handleAdminBooking = async () => {
     try {
-      // 1. Calculate clinical category based on age and checkboxes
+      // 1. Calculate clinical category
       const age = calculateAge(newBooking.dob);
       let category = 'Eye Check Private';
       
@@ -135,7 +135,8 @@ export default function AdminDashboard() {
         else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
       }
   
-      // 2. Save to Firestore
+      // 2. Capture docRef when adding to Firestore
+      // This resolves the "Cannot find name 'docRef'" error
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${newBooking.firstName} ${newBooking.lastName}`,
         email: newBooking.email,
@@ -144,7 +145,7 @@ export default function AdminDashboard() {
         appointmentType: category,
         appointmentDate: selectedDate,
         appointmentTime: newBooking.time,
-        source: 'Admin', // Tracks that this was an internal booking
+        source: 'Admin',
         isDiabetic: newBooking.isDiabetic,
         onBenefits: newBooking.onBenefits,
         familyGlaucoma: newBooking.familyGlaucoma,
@@ -152,40 +153,49 @@ export default function AdminDashboard() {
         createdAt: serverTimestamp()
       });
   
-      // 3. EmailJS Notification with fixed parameters
-      const emailParams = {
-        to_email: newBooking.email,
-        patient_name: newBooking.firstName,
-        appointment_type: category,
-        date: new Date(selectedDate).toLocaleDateString('en-GB'),
-        time: newBooking.time,
-        reply_to: 'enquiries@theeyecentre.com'
-      };
-      await emailjs.send('service_et75v9a', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+      // 3. EmailJS Logic...
+      if (newBooking.email) {
+        const emailParams = {
+          to_email: newBooking.email,
+          patient_name: newBooking.firstName,
+          appointment_type: category,
+          date: new Date(selectedDate).toLocaleDateString('en-GB'),
+          time: newBooking.time,
+          reply_to: 'enquiries@theeyecentre.com'
+        };
+        
+        await emailjs.send('service_et75v9a', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+      }
   
-      // 4. SMS Notification
+      // 4. SMS logic with corrected variable names
       const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
-      const reminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
+      const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
+      
       const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: newBooking.phone,
-          body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}. Our expert team looks forward to providing you with exceptional care. For any enquiries, please call 0116 253 2788. The Eye Centre, Leicester.`,
-          reminderTime: reminderDate.toISOString()
+          body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}. The Eye Centre, Leicester.`,
+          // FIX: Use newReminderDate here
+          reminderTime: newReminderDate.toISOString() 
         })
       });
   
       if (smsRes.ok) {
-        const { sid } = await smsRes.json();
-        await setDoc(docRef, { reminderSid: sid }, { merge: true });
+        const smsData = await smsRes.json();
+        const sid = smsData.sid || smsData.reminderSid;
+        if (sid) {
+          // FIX: docRef is now used here, resolving the 'never read' warning
+          await setDoc(docRef, { reminderSid: sid }, { merge: true });
+        }
       }
   
       setIsBookingModalOpen(false);
-      alert("Appointment successfully booked and notifications sent.");
+      alert("Appointment successfully booked.");
     } catch (err) {
       console.error("Booking Error:", err);
-      alert("Error saving booking. Check console for details.");
+      alert("Error saving booking.");
     }
   };
 
@@ -231,46 +241,51 @@ export default function AdminDashboard() {
   };
 
   const updateAppointment = async () => {
-    if (!editingApp) return;
-    try {
-      const appRef = doc(db, "appointments", editingApp.id);
-      await setDoc(appRef, {
-        patientName: editingApp.patientName,
-        email: editingApp.email,
-        phone: editingApp.phone,
-        dob: editingApp.dob,
-        appointmentTime: editingApp.appointmentTime,
-        appointmentDate: editingApp.appointmentDate
-      }, { merge: true });
+  if (!editingApp) return;
+  try {
+    // 1. Define the document reference first so we can use it later
+    const appRef = doc(db, "appointments", editingApp.id);
+    
+    // 2. Update Firestore
+    await setDoc(appRef, {
+      patientName: editingApp.patientName,
+      email: editingApp.email,
+      phone: editingApp.phone,
+      dob: editingApp.dob,
+      appointmentTime: editingApp.appointmentTime,
+      appointmentDate: editingApp.appointmentDate
+    }, { merge: true });
 
-      const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
-      const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
+    // 3. Calculate new reminder time
+    const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
+    const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
 
-      const smsRes = await fetch("YOUR_CLOUDFLARE_WORKER_URL", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: editingApp.phone,
-          firstName: editingApp.patientName.split(' ')[0],
-          time: editingApp.appointmentTime,
-          date: new Date(editingApp.appointmentDate).toLocaleDateString('en-GB'),
-          type: 'amendment',
-          oldReminderSid: editingApp.reminderSid,
-          reminderTime: newReminderDate.toISOString()
-        })
-      });
+    // 4. Send SMS (Fix: Use editingApp data, not newBooking)
+    const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: editingApp.phone, // Fixed
+        body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} at ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
+        reminderTime: newReminderDate.toISOString() // Fixed variable name
+      })
+    });
 
-      if (smsRes.ok) {
-        const smsData = await smsRes.json();
-        await setDoc(appRef, { reminderSid: smsData.reminderSid }, { merge: true });
+    // 5. Save SMS ID (Fix: Use appRef, not docRef)
+    if (smsRes.ok) {
+      const { sid } = await smsRes.json();
+      if (sid) {
+        await setDoc(appRef, { reminderSid: sid }, { merge: true }); // Fixed docRef -> appRef
       }
-
-      setEditingApp(null);
-      alert("Patient details and SMS reminders updated.");
-    } catch (err) {
-      alert("Failed to update appointment.");
     }
-  };
+
+    setEditingApp(null);
+    alert("Patient details and SMS reminders updated.");
+  } catch (err) {
+    console.error(err);
+    alert("Failed to update appointment.");
+  }
+};
 
   const handleDrop = async (e: React.DragEvent, newTime: string) => {
     e.preventDefault();
@@ -585,13 +600,13 @@ export default function AdminDashboard() {
       )}
 
       {/* MODAL: NEW ADMIN BOOKING */}
-{isBookingModalOpen && (
+      {isBookingModalOpen && (
   <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4 backdrop-blur-sm">
     <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
       <h2 className="text-2xl font-black text-slate-800 mb-6">Direct Admin Booking</h2>
       
       <div className="space-y-4">
-        {/* Date Selection: Prevents past dates and warns if closed */}
+        {/* 1. Date Selection: Prevents past dates and blocks closed dates */}
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
           <input 
@@ -599,23 +614,21 @@ export default function AdminDashboard() {
             min={new Date().toISOString().split('T')[0]} 
             value={selectedDate} 
             onChange={(e) => setSelectedDate(e.target.value)} 
-            className="w-full p-4 bg-slate-50 rounded-xl font-bold text-[#3F9185] border-none outline-none focus:ring-2 focus:ring-[#3F9185]"
+            className="w-full p-4 bg-slate-50 rounded-xl font-bold text-[#3F9185] outline-none border-none focus:ring-2 focus:ring-[#3F9185]"
           />
           {isDateClosed() && (
             <p className="text-red-500 text-[10px] font-bold mt-1 ml-1 uppercase">Clinic is closed on this date</p>
           )}
         </div>
 
+        {/* 2. Patient Demographics */}
         <div className="grid grid-cols-2 gap-4">
           <input placeholder="First Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, firstName: e.target.value})} />
           <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
         </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <input placeholder="Email" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, email: e.target.value})} />
-          <input placeholder="Phone" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
-        </div>
-
+        <input placeholder="Email" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, email: e.target.value})} />
+        <input placeholder="Phone" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
+        
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
           <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
@@ -626,7 +639,7 @@ export default function AdminDashboard() {
           <option value="Contact Lens Check">Contact Lens Check</option>
         </select>
 
-        {/* Clinical Eligibility Checks: Age-Dependent Logic */}
+        {/* 3. Clinical Eligibility Checks: Exact Age-Dependent logic from BookingPage.tsx */}
         {newBooking.service === 'Eye Check' && newBooking.dob && (
           <div className="space-y-2 pt-2">
             {calculateAge(newBooking.dob) >= 16 && calculateAge(newBooking.dob) <= 18 && (
@@ -656,6 +669,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* 4. Filtered Time Selection */}
         <div className="space-y-2">
           <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
           <div className="grid grid-cols-4 gap-2">

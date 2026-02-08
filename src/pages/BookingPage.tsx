@@ -220,18 +220,17 @@ export default function BookingPage() {
 
       // 4. SMS Logic via Cloudflare Worker
       const appointmentDate = new Date(`${booking.date}T${booking.time}`);
-      const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
+const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
 
-      const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: formattedPhone,
-          // Updated Template: Hi Name, Service is booked for Date + Time.
-          body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}. Our expert team looks forward to providing you with exceptional care. For any enquiries or to explore our latest eyewear collections, please call 0116 253 2788. The Eye Centre, Leicester.`,
-          reminderTime: reminderDate.toISOString() 
-        })
-      });
+const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    to: formattedPhone,
+    body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled...`,
+    reminderTime: reminderDate.toISOString() // Fix: Change newReminderDate to reminderDate
+  })
+});
 
       // 5. Safety Check: Only call setDoc if reminderSid exists
       if (smsResponse.ok) {
