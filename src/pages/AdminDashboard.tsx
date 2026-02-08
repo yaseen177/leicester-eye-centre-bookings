@@ -2,6 +2,7 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import emailjs from '@emailjs/browser';
 
 // 1. Updated Interface to fix TypeScript errors
 interface ClinicConfig {
@@ -119,63 +120,74 @@ export default function AdminDashboard() {
   // Inside AdminDashboard component
 
 
-const handleAdminBooking = async () => {
-  try {
-    // 1. Calculate Category (Matching BookingPage logic)
-    const age = calculateAge(newBooking.dob);
-    let category = 'Eye Check Private';
-    if (newBooking.service === 'Contact Lens Check') {
-      category = 'Contact Lens Check';
-    } else {
-      if (age >= 60) category = 'Eye Check Over 60';
-      else if (age < 16) category = 'Eye Check Child';
-      else if (age <= 18 && newBooking.inFullTimeEducation) category = 'Eye Check NHS';
-      else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
+  const handleAdminBooking = async () => {
+    try {
+      // 1. Calculate Category (Matches BookingPage logic)
+      const age = calculateAge(newBooking.dob);
+      let category = 'Eye Check Private';
+      if (newBooking.service === 'Contact Lens Check') {
+        category = 'Contact Lens Check';
+      } else {
+        if (age >= 60) category = 'Eye Check Over 60';
+        else if (age < 16) category = 'Eye Check Child';
+        else if (age <= 18 && newBooking.inFullTimeEducation) category = 'Eye Check NHS';
+        else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
+      }
+  
+      // 2. Save to Firestore with all Clinical Details
+      const docRef = await addDoc(collection(db, "appointments"), {
+        patientName: `${newBooking.firstName} ${newBooking.lastName}`,
+        email: newBooking.email,
+        phone: newBooking.phone,
+        dob: newBooking.dob,
+        appointmentType: category,
+        appointmentDate: selectedDate, // Uses the date currently selected in the modal
+        appointmentTime: newBooking.time,
+        source: 'Admin',
+        inFullTimeEducation: newBooking.inFullTimeEducation,
+        onBenefits: newBooking.onBenefits,
+        isDiabetic: newBooking.isDiabetic,
+        familyGlaucoma: newBooking.familyGlaucoma,
+        createdAt: serverTimestamp(),
+      });
+  
+      // 3. EmailJS Notification (Fixes the missing email issue)
+      const emailParams = {
+        to_email: newBooking.email,
+        patient_name: newBooking.firstName,
+        appointment_type: category,
+        date: new Date(selectedDate).toLocaleDateString('en-GB'),
+        time: newBooking.time,
+        reply_to: 'enquiries@theeyecentre.com'
+      };
+      await emailjs.send('service_et75v9a', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+  
+      // 4. SMS Notification
+      const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
+      const reminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
+  
+      const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: newBooking.phone,
+          body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}. Our expert team looks forward to providing you with exceptional care. For any enquiries, please call 0116 253 2788. The Eye Centre, Leicester.`,
+          reminderTime: reminderDate.toISOString()
+        })
+      });
+  
+      if (smsRes.ok) {
+        const { sid } = await smsRes.json();
+        await setDoc(docRef, { reminderSid: sid }, { merge: true });
+      }
+  
+      setIsBookingModalOpen(false);
+      alert("Appointment successfully booked and notifications sent.");
+    } catch (err) {
+      console.error(err);
+      alert("Booking saved, but some notifications may have failed.");
     }
-
-    // 2. Format Phone
-    const cleanPhone = newBooking.phone.trim();
-    const formattedPhone = cleanPhone.startsWith('0') ? `+44${cleanPhone.substring(1)}` : cleanPhone;
-
-    // 3. Save to Firestore
-    const docRef = await addDoc(collection(db, "appointments"), {
-      patientName: `${newBooking.firstName} ${newBooking.lastName}`,
-      email: newBooking.email,
-      phone: formattedPhone,
-      dob: newBooking.dob,
-      appointmentType: category,
-      appointmentDate: selectedDate,
-      appointmentTime: newBooking.time,
-      createdAt: serverTimestamp(),
-      source: 'Admin', // Added source tag
-    });
-
-    // 4. Send SMS Confirmation via Cloudflare
-    const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
-    const reminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
-
-    const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: formattedPhone,
-        body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}. Our expert team looks forward to providing you with exceptional care. For any enquiries, please call 0116 253 2788. The Eye Centre, Leicester.`,
-        reminderTime: reminderDate.toISOString()
-      })
-    });
-
-    if (smsRes.ok) {
-      const { sid } = await smsRes.json();
-      await setDoc(docRef, { reminderSid: sid }, { merge: true });
-    }
-
-    setIsBookingModalOpen(false);
-    alert("Appointment booked successfully!");
-  } catch (err) {
-    console.error(err);
-    alert("Booking failed.");
-  }
-};
+  };
 
   const fromMins = (m: number) => {
     const h = Math.floor(m / 60);
@@ -574,50 +586,82 @@ const handleAdminBooking = async () => {
 
       {/* MODAL 2: NEW ADMIN BOOKING */}
       {isBookingModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
-            <h2 className="text-2xl font-black text-slate-800 mb-6">Admin Booking: {new Date(selectedDate).toLocaleDateString('en-GB')}</h2>
-            
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <input placeholder="First Name" className="p-4 bg-slate-50 rounded-xl outline-none border-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setNewBooking({...newBooking, firstName: e.target.value})} />
-                <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none border-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
-              </div>
-              <input placeholder="Email" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, email: e.target.value})} />
-              <input placeholder="Phone" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
-              <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
-              
-              <select className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={newBooking.service} onChange={e => setNewBooking({...newBooking, service: e.target.value})}>
-                <option value="Eye Check">Eye Check</option>
-                <option value="Contact Lens Check">Contact Lens Check</option>
-              </select>
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4 backdrop-blur-sm">
+    <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
+      <h2 className="text-2xl font-black text-slate-800 mb-6">Direct Admin Booking</h2>
+      
+      <div className="space-y-4">
+        {/* Date Selector Inside Modal */}
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
+          <input 
+            type="date" 
+            value={selectedDate} 
+            onChange={(e) => setSelectedDate(e.target.value)} 
+            className="w-full p-4 bg-slate-50 rounded-xl font-bold text-[#3F9185] outline-none border-none focus:ring-2 focus:ring-[#3F9185]"
+          />
+        </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Filtered Available Times</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {/* IMPORTANT: Ensure calculateSlotsForDate is available in this component */}
-                  {calculateSlotsForDate(selectedDate).map(t => (
-                    <button 
-                      key={t}
-                      onClick={() => setNewBooking({...newBooking, time: t})}
-                      className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${
-                        newBooking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+        <div className="grid grid-cols-2 gap-4">
+          <input placeholder="First Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, firstName: e.target.value})} />
+          <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
+        </div>
 
-            <div className="flex gap-3 mt-8">
-              <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400 hover:bg-slate-50 rounded-xl transition-colors">Cancel</button>
-              <button onClick={handleAdminBooking} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg">Confirm Booking</button>
-            </div>
+        <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
+        
+        <select className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={newBooking.service} onChange={e => setNewBooking({...newBooking, service: e.target.value})}>
+          <option value="Eye Check">Eye Check</option>
+          <option value="Contact Lens Check">Contact Lens Check</option>
+        </select>
+
+        {/* Clinical Details (Only for Eye Check) */}
+        {newBooking.service === 'Eye Check' && (
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
+              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, isDiabetic: e.target.checked})} />
+              <span className="text-[11px] font-bold text-slate-600">Diabetic</span>
+            </label>
+            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
+              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, onBenefits: e.target.checked})} />
+              <span className="text-[11px] font-bold text-slate-600">Benefits</span>
+            </label>
+            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
+              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, familyGlaucoma: e.target.checked})} />
+              <span className="text-[11px] font-bold text-slate-600">Glaucoma</span>
+            </label>
+            <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg cursor-pointer">
+              <input type="checkbox" className="accent-[#3F9185]" onChange={e => setNewBooking({...newBooking, inFullTimeEducation: e.target.checked})} />
+              <span className="text-[11px] font-bold text-slate-600">Student</span>
+            </label>
+          </div>
+        )}
+
+        {/* Time Slots for the Selected Date */}
+        <div className="space-y-2">
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
+          <div className="grid grid-cols-4 gap-2">
+            {calculateSlotsForDate(selectedDate).map((t: string) => (
+              <button 
+                key={t}
+                onClick={() => setNewBooking({...newBooking, time: t})}
+                className={`py-2 rounded-lg text-[11px] font-black transition-all border-2 ${
+                  newBooking.time === t ? 'bg-[#3F9185] text-white' : 'bg-white text-slate-400 border-slate-100'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </div>
-      )}
+      </div>
+
+      <div className="flex gap-3 mt-8">
+        <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
+        <button onClick={handleAdminBooking} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg">Confirm Booking</button>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }
