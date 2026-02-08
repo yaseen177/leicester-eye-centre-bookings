@@ -204,6 +204,7 @@ export default function BookingPage() {
         appointmentDate: booking.date,
         appointmentTime: booking.time,
         createdAt: serverTimestamp(),
+        source: 'Online', // Added source tag
       });
 
       // 3. EmailJS Logic

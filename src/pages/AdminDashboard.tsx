@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 
 // 1. Updated Interface to fix TypeScript errors
 interface ClinicConfig {
@@ -21,6 +21,53 @@ export default function AdminDashboard() {
   const [editingApp, setEditingApp] = useState<any>(null);
   const [closedDates, setClosedDates] = useState<string[]>([]);
   
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [newBooking, setNewBooking] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    dob: '',
+    service: 'Eye Check',
+    time: '',
+    inFullTimeEducation: false,
+    onBenefits: false,
+    isDiabetic: false,
+    familyGlaucoma: false
+  });
+
+  const calculateSlotsForDate = (targetDate: string) => {
+    const dayHours = config.dailyOverrides?.[targetDate] || config.hours;
+    const startMins = toMins(dayHours.start);
+    const endMins = toMins(dayHours.end);
+
+    const isLunchEnabled = config.lunch?.enabled ?? true;
+    const lunchStartMins = toMins(config.lunch?.start || "13:00");
+    const lunchEndMins = toMins(config.lunch?.end || "14:00");
+
+    const duration = newBooking.service === 'Eye Check' ? config.times.eyeCheck : config.times.contactLens;
+    const slots: string[] = [];
+
+    // Map existing bookings for overlap checks
+    const dayBookings = appointments
+      .filter(b => b.appointmentDate === targetDate)
+      .map(b => {
+        const d = b.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck;
+        return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
+      });
+
+    for (let current = startMins; current + duration <= endMins; current += 5) {
+      const potentialEnd = current + duration;
+      const overlapsLunch = isLunchEnabled && (current < lunchEndMins && potentialEnd > lunchStartMins);
+      const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
+
+      if (!overlapsLunch && !isOverlap) {
+        slots.push(fromMins(current));
+      }
+    }
+    return slots;
+};
+
   // 2. Initial State with enabled property
   const [config, setConfig] = useState<ClinicConfig>({ 
     times: { eyeCheck: 30, contactLens: 20 }, 
@@ -68,6 +115,67 @@ export default function AdminDashboard() {
     const [h, m] = t.split(':').map(Number);
     return h * 60 + m;
   };
+
+  // Inside AdminDashboard component
+
+
+const handleAdminBooking = async () => {
+  try {
+    // 1. Calculate Category (Matching BookingPage logic)
+    const age = calculateAge(newBooking.dob);
+    let category = 'Eye Check Private';
+    if (newBooking.service === 'Contact Lens Check') {
+      category = 'Contact Lens Check';
+    } else {
+      if (age >= 60) category = 'Eye Check Over 60';
+      else if (age < 16) category = 'Eye Check Child';
+      else if (age <= 18 && newBooking.inFullTimeEducation) category = 'Eye Check NHS';
+      else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
+    }
+
+    // 2. Format Phone
+    const cleanPhone = newBooking.phone.trim();
+    const formattedPhone = cleanPhone.startsWith('0') ? `+44${cleanPhone.substring(1)}` : cleanPhone;
+
+    // 3. Save to Firestore
+    const docRef = await addDoc(collection(db, "appointments"), {
+      patientName: `${newBooking.firstName} ${newBooking.lastName}`,
+      email: newBooking.email,
+      phone: formattedPhone,
+      dob: newBooking.dob,
+      appointmentType: category,
+      appointmentDate: selectedDate,
+      appointmentTime: newBooking.time,
+      createdAt: serverTimestamp(),
+      source: 'Admin', // Added source tag
+    });
+
+    // 4. Send SMS Confirmation via Cloudflare
+    const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
+    const reminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
+
+    const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: formattedPhone,
+        body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}. Our expert team looks forward to providing you with exceptional care. For any enquiries, please call 0116 253 2788. The Eye Centre, Leicester.`,
+        reminderTime: reminderDate.toISOString()
+      })
+    });
+
+    if (smsRes.ok) {
+      const { sid } = await smsRes.json();
+      await setDoc(docRef, { reminderSid: sid }, { merge: true });
+    }
+
+    setIsBookingModalOpen(false);
+    alert("Appointment booked successfully!");
+  } catch (err) {
+    console.error(err);
+    alert("Booking failed.");
+  }
+};
 
   const fromMins = (m: number) => {
     const h = Math.floor(m / 60);
@@ -259,13 +367,20 @@ export default function AdminDashboard() {
                         </span>
                         <p className="font-bold text-slate-800 text-base">{booking.patientName}</p>
                       </div>
-                      <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border ${
-                        booking.appointmentType?.includes('Contact') ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-100'
-                      }`}>
-                        {booking.appointmentType || 'Routine Eye Check'}
-                      </span>
+                      <div className="flex flex-col items-end gap-1">
+                         <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+                           booking.source === 'Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                         }`}>
+                           {booking.source === 'Admin' ? 'Booked by Admin' : 'Booked Online'}
+                         </span>
+                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border ${
+                          booking.appointmentType?.includes('Contact') ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-100'
+                        }`}>
+                          {booking.appointmentType || 'Routine Eye Check'}
+                        </span>
+                      </div>
                     </div>
-                    
+                    {/* ... rest of your appointment card (DOB, Age, Contact details) */}
                     <div className="flex items-center gap-4 ml-1">
                       <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
                         <span className="text-[10px] font-black text-slate-400 uppercase">DOB:</span>
@@ -304,6 +419,7 @@ export default function AdminDashboard() {
     <div className="min-h-screen p-6 bg-[#f8fafc]">
       <div className="max-w-5xl mx-auto space-y-6">
         
+        {/* Navigation Bar */}
         <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex gap-2">
             <button onClick={() => setView('diary')} className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
@@ -321,39 +437,36 @@ export default function AdminDashboard() {
         {view === 'diary' && (
           <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
-                <CalendarIcon className="text-[#3F9185]" /> Daily Grid
-              </h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                  <CalendarIcon className="text-[#3F9185]" /> Daily Grid
+                </h2>
+                {/* NEW ADMIN BOOKING BUTTON */}
+                <button 
+                  onClick={() => setIsBookingModalOpen(true)}
+                  className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-md"
+                >
+                  + New Booking
+                </button>
+              </div>
               <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-3 bg-slate-100 rounded-xl font-bold text-[#3F9185] outline-none" />
             </div>
 
-            <div className={`mb-6 p-5 rounded-2xl border flex items-center justify-between transition-all ${
-  isDateClosed() 
-  ? 'bg-red-50 border-red-100' 
-  : 'bg-[#3F9185]/5 border-[#3F9185]/10'
-}`}>
-  <div className="flex items-center gap-4">
-    <div className={`w-3 h-3 rounded-full animate-pulse ${isDateClosed() ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
-    <div>
-      <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Clinic Status</p>
-      <p className="font-bold text-slate-800">
-        {isDateClosed() ? 'Closed to Patients' : 'Open for Bookings'}
-      </p>
-    </div>
-  </div>
-  
-  <button 
-    onClick={() => toggleDayStatus(selectedDate)}
-    className={`px-6 py-2 rounded-xl font-black text-xs uppercase tracking-tighter transition-all active:scale-95 shadow-sm ${
-      isDateClosed() 
-      ? 'bg-white text-red-500 border border-red-200 hover:bg-red-50' 
-      : 'bg-[#3F9185] text-white hover:opacity-90'
-    }`}
-  >
-    {isDateClosed() ? 'Mark as Open' : 'Mark as Closed'}
-  </button>
-</div>
+            {/* Status Banner */}
+            <div className={`mb-6 p-5 rounded-2xl border flex items-center justify-between transition-all ${isDateClosed() ? 'bg-red-50 border-red-100' : 'bg-[#3F9185]/5 border-[#3F9185]/10'}`}>
+              <div className="flex items-center gap-4">
+                <div className={`w-3 h-3 rounded-full animate-pulse ${isDateClosed() ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
+                <div>
+                  <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Clinic Status</p>
+                  <p className="font-bold text-slate-800">{isDateClosed() ? 'Closed to Patients' : 'Open for Bookings'}</p>
+                </div>
+              </div>
+              <button onClick={() => toggleDayStatus(selectedDate)} className={`px-6 py-2 rounded-xl font-black text-xs uppercase ${isDateClosed() ? 'bg-white text-red-500 border border-red-200 shadow-sm' : 'bg-[#3F9185] text-white hover:opacity-90'}`}>
+                {isDateClosed() ? 'Mark as Open' : 'Mark as Closed'}
+              </button>
+            </div>
 
+            {/* Shift Override */}
             <div className="mb-8 p-5 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-3 text-slate-500">
                 <Clock size={16} />
@@ -375,6 +488,7 @@ export default function AdminDashboard() {
         {view === 'settings' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-8">
             <h2 className="text-2xl font-black text-slate-800">Clinic Settings</h2>
+            {/* ... rest of your settings UI (Durations, Hours, Lunch, Weekly Off) */}
             <div className="grid md:grid-cols-2 gap-10">
               <div className="space-y-4">
                 <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Clock size={18}/> Durations (mins)</h3>
@@ -435,14 +549,15 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </div>
-            <button onClick={saveConfig} className="px-10 py-4 bg-[#3F9185] text-white font-black rounded-2xl shadow-lg">Save Changes</button>
+            <button onClick={saveConfig} className="px-10 py-4 bg-[#3F9185] text-white font-black rounded-2xl shadow-lg hover:opacity-90 transition-all">Save Changes</button>
           </div>
         )}
       </div>
 
+      {/* MODAL 1: EDIT APPOINTMENT */}
       {editingApp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full animate-in zoom-in-95">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full animate-in zoom-in-95 shadow-2xl">
             <h3 className="text-xl font-bold mb-6 text-slate-800">Edit Patient Details</h3>
             <div className="space-y-4">
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.patientName} onChange={e => setEditingApp({...editingApp, patientName: e.target.value})} placeholder="Name" />
@@ -452,6 +567,53 @@ export default function AdminDashboard() {
             <div className="flex gap-3 mt-8">
               <button onClick={() => setEditingApp(null)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
               <button onClick={updateAppointment} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: NEW ADMIN BOOKING */}
+      {isBookingModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
+            <h2 className="text-2xl font-black text-slate-800 mb-6">Admin Booking: {new Date(selectedDate).toLocaleDateString('en-GB')}</h2>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <input placeholder="First Name" className="p-4 bg-slate-50 rounded-xl outline-none border-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setNewBooking({...newBooking, firstName: e.target.value})} />
+                <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none border-none focus:ring-2 focus:ring-[#3F9185]" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
+              </div>
+              <input placeholder="Email" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, email: e.target.value})} />
+              <input placeholder="Phone" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
+              <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
+              
+              <select className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={newBooking.service} onChange={e => setNewBooking({...newBooking, service: e.target.value})}>
+                <option value="Eye Check">Eye Check</option>
+                <option value="Contact Lens Check">Contact Lens Check</option>
+              </select>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Filtered Available Times</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {/* IMPORTANT: Ensure calculateSlotsForDate is available in this component */}
+                  {calculateSlotsForDate(selectedDate).map(t => (
+                    <button 
+                      key={t}
+                      onClick={() => setNewBooking({...newBooking, time: t})}
+                      className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${
+                        newBooking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400 hover:bg-slate-50 rounded-xl transition-colors">Cancel</button>
+              <button onClick={handleAdminBooking} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg">Confirm Booking</button>
             </div>
           </div>
         </div>
