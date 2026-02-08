@@ -289,15 +289,48 @@ const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", 
                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
                <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value})} />
              </div>
-             <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
-                {calculateSlotsForDate(booking.date).length > 0 ? (
-                  calculateSlotsForDate(booking.date).map(t => (
-                    <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'}`}>{t}</button>
-                  ))
-                ) : (
-                  <div className="col-span-3 py-10 text-center text-slate-400 font-bold italic">No slots available for this date.</div>
-                )}
-             </div>
+             
+             {/* NEW COLLAPSED/GROUPED TIME SLOTS */}
+             {(() => {
+                const slots = calculateSlotsForDate(booking.date);
+                const morning = slots.filter(t => parseInt(t.split(':')[0]) < 12);
+                const afternoon = slots.filter(t => parseInt(t.split(':')[0]) >= 12);
+
+                if (slots.length === 0) {
+                   return <div className="py-10 text-center text-slate-400 font-bold italic">No slots available for this date.</div>;
+                }
+
+                return (
+                   <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-6">
+                      {morning.length > 0 && (
+                         <div className="space-y-2">
+                            <h3 className="text-[10px] font-black uppercase text-slate-400 ml-1 flex items-center gap-2">
+                               <span className="w-1.5 h-1.5 rounded-full bg-orange-300"></span> Morning
+                            </h3>
+                            <div className="grid grid-cols-3 gap-2">
+                               {morning.map(t => (
+                                  <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'}`}>{t}</button>
+                               ))}
+                            </div>
+                         </div>
+                      )}
+
+                      {afternoon.length > 0 && (
+                         <div className="space-y-2">
+                            <h3 className="text-[10px] font-black uppercase text-slate-400 ml-1 flex items-center gap-2">
+                               <span className="w-1.5 h-1.5 rounded-full bg-indigo-300"></span> Afternoon
+                            </h3>
+                            <div className="grid grid-cols-3 gap-2">
+                               {afternoon.map(t => (
+                                  <button key={t} onClick={() => setBooking({...booking, time: t})} className={`py-3 rounded-xl font-bold border-2 transition-all ${booking.time === t ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-50 hover:border-[#3F9185]/30'}`}>{t}</button>
+                               ))}
+                            </div>
+                         </div>
+                      )}
+                   </div>
+                );
+             })()}
+
              <button disabled={!booking.time} onClick={() => setStep(3)} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 transition-all active:scale-95" style={{ backgroundColor: '#3F9185' }}>Continue</button>
           </div>
         )}
