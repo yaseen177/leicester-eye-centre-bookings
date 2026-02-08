@@ -190,7 +190,7 @@ export default function AdminDashboard() {
         };
         
         try {
-          await emailjs.send('service_et75v9a', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+          await emailjs.send('service_et75v9m', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
         } catch (emailErr) {
           console.error("Failed to send email:", emailErr);
         }
