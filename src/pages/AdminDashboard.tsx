@@ -300,26 +300,66 @@ export default function AdminDashboard() {
   };
 
   // Place this inside AdminDashboard component
-const updateStatus = async (id: string, newStatus: string) => {
-  try {
-    const appRef = doc(db, "appointments", id);
-    await setDoc(appRef, { status: newStatus }, { merge: true });
-  } catch (err) {
-    console.error("Error updating status:", err);
-    alert("Failed to update status");
-  }
-};
+// Find your existing updateStatus function and replace it with this:
+
+  const updateStatus = async (id: string, newStatus: string) => {
+    try {
+      const appRef = doc(db, "appointments", id);
+      
+      // 1. Update status in Firestore immediately
+      await setDoc(appRef, { status: newStatus }, { merge: true });
+      
+      // 2. AUTOMATION: If 'Visit Complete', call your Worker
+      if (newStatus === 'Visit Complete') {
+        const booking = appointments.find(a => a.id === id);
+        
+        if (booking && booking.email && !booking.reviewEmailSent) {
+          
+          const confirmSend = window.confirm(
+            `Status updated to 'Visit Complete'.\n\nSchedule the 10-minute automated Google Review email for ${booking.patientName}?`
+          );
+
+          if (!confirmSend) return; 
+
+          // 3. Call YOUR Cloudflare Worker
+          const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/"; 
+          
+          fetch(WORKER_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                  type: "schedule_review", // This tells the worker to use the new logic
+                  email: booking.email,
+                  patientName: booking.patientName,
+                  reviewLink: "https://www.google.com/search?client=safari&hs=6XJp&sca_esv=a98330bec46d892d&hl=en-gb&sxsrf=ANbL-n7q1T411PmM5NcJOwroW6swm6hF1Q:1770557907167&q=the+eye+centre+leicester+reviews&uds=ALYpb_kHqLs5gcVMAt3VLSqkcdlMngXus-x9GFCSkvQn8dOI9knopxGU9LtrgKEndWds03AMNjaI5aH_9BC0i8ndBjxe0SsadfbbEnnBjLNMU7lLaqWGPqVSw1UkT5mz8-tC8KzEoKnmrcEYZqOyYsFStR9ixAAXYpnTFy_rHEtFibwKsz1Df_e0roHKvw_WTIdAN-O-V2wRmwFfijY7lRRcr8Fqsmzu4h6Uug98cMw3iZ6j4yDggD0DCXrHypYOBJgQy-e9BADe43T4RQ42gh2PduZz7fKKbuI2bYThxWuz0Qqw_WC07eCtysMbjvE1MHf-iD3PyHmiAKhimmwdFTIyWVYoesfaV6uHc10IAQRjorXWF7PoPE8DzWEcoiq69FCd_rlzM1cEvPzCQq53UdQAc9KQlB4iL33nJFRjrx76uuyN4T-8mYvsyV1TP_XmtTwZMp7KiXbH3yXrR-RdRB8kUNU_SwH3vBVSEhOoYBqRoYVTtUhCzyd3We2LXnedujTsoa4y54OSEmuSH4YgTWUUKmJUi8GTDQ&si=AL3DRZHrmvnFAVQPOO2Bzhf8AX9KZZ6raUI_dT7DG_z0kV2_x-NXv3ANlcDqRAVq-f0yXFMJFQ3KfdXqv9BUk7kRK8o1RdQyT1VtJMiyHySCLQPw_j7x1K2zM5lmjSef1pKTuZ7JpytYcGLwIoQL1NqkpHr5NiMPoQ%3D%3D&sa=X&ved=2ahUKEwjAovGYgsqSAxW2VUEAHctYDUsQk8gLegQIHBAB&ictx=1&biw=393&bih=659&dpr=3#ebo=2"
+              })
+          })
+          .then(() => {
+              console.log(`✅ Automation Triggered: Email will send in 10 mins.`);
+              alert(`Status updated! The Cloudflare Worker has scheduled the email for 10 minutes from now.`);
+          })
+          .catch(err => console.error("Worker failed", err));
+
+          // Mark as sent in DB
+          await setDoc(appRef, { reviewEmailSent: true }, { merge: true });
+        }
+      }
+    } catch (err) {
+      console.error("Error updating status:", err);
+      alert("Failed to update status");
+    }
+  };
 
 // Helper to get color based on status
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'Arrived': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-    case 'In Progress': return 'bg-purple-100 text-purple-700 border-purple-200';
-    case 'Visit Complete': return 'bg-green-100 text-green-700 border-green-200';
-    case 'FTA': return 'bg-red-100 text-red-700 border-red-200';
-    default: return 'bg-slate-100 text-slate-600 border-slate-200'; // Booked
-  }
-};
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'Arrived': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+      case 'In Progress': return 'bg-purple-100 text-purple-700 border-purple-200';
+      case 'Visit Complete': return 'bg-green-100 text-green-700 border-green-200';
+      case 'FTA': return 'bg-red-100 text-red-700 border-red-200';
+      default: return 'bg-slate-100 text-slate-600 border-slate-200'; // Booked
+    }
+  };
 
   const updateAppointment = async () => {
     if (!editingApp) return;
