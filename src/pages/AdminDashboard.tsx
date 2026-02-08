@@ -299,6 +299,28 @@ export default function AdminDashboard() {
     }
   };
 
+  // Place this inside AdminDashboard component
+const updateStatus = async (id: string, newStatus: string) => {
+  try {
+    const appRef = doc(db, "appointments", id);
+    await setDoc(appRef, { status: newStatus }, { merge: true });
+  } catch (err) {
+    console.error("Error updating status:", err);
+    alert("Failed to update status");
+  }
+};
+
+// Helper to get color based on status
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'Arrived': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+    case 'In Progress': return 'bg-purple-100 text-purple-700 border-purple-200';
+    case 'Visit Complete': return 'bg-green-100 text-green-700 border-green-200';
+    case 'FTA': return 'bg-red-100 text-red-700 border-red-200';
+    default: return 'bg-slate-100 text-slate-600 border-slate-200'; // Booked
+  }
+};
+
   const updateAppointment = async () => {
     if (!editingApp) return;
     try {
@@ -431,7 +453,7 @@ export default function AdminDashboard() {
           : 0;
         const endTimeStr = booking ? fromMins(time + duration) : '';
 
-        // Check if this booking matches the current search result
+        // Search Highlighting Logic
         const isHighlighted = searchResults.length > 0 && 
                               booking && 
                               searchResults[currentResultIndex]?.id === booking.id;
@@ -460,12 +482,13 @@ export default function AdminDashboard() {
                 >
                   {/* Highlight Badge */}
                   {isHighlighted && (
-                    <div className="absolute -top-3 -right-2 bg-yellow-400 text-yellow-900 text-[10px] font-black px-2 py-1 rounded-full shadow-sm animate-bounce">
+                    <div className="absolute -top-3 -right-2 bg-yellow-400 text-yellow-900 text-[10px] font-black px-2 py-1 rounded-full shadow-sm animate-bounce z-20">
                       RESULT {currentResultIndex + 1}/{searchResults.length}
                     </div>
                   )}
 
                   <div className="flex flex-col gap-2 w-full">
+                    {/* Top Row: Time, Name, Status */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-baseline gap-3">
                         <span className="text-[11px] font-black text-[#3F9185] bg-teal-50 px-2.5 py-1 rounded-md tabular-nums border border-[#3F9185]/10">
@@ -473,39 +496,59 @@ export default function AdminDashboard() {
                         </span>
                         <p className="font-bold text-slate-800 text-base">{booking.patientName}</p>
                       </div>
-                      <div className="flex flex-col items-end gap-1">
-                         <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+
+                      <div className="flex items-center gap-2">
+                         {/* Source Tag */}
+                         <span className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-wider ${
                            booking.source === 'Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
                          }`}>
-                           {booking.source === 'Admin' ? 'Booked by Admin' : 'Booked Online'}
+                           {booking.source === 'Admin' ? 'Admin' : 'Online'}
                          </span>
-                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border ${
-                          booking.appointmentType?.includes('Contact') ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-100'
-                        }`}>
-                          {booking.appointmentType || 'Routine Eye Check'}
-                        </span>
+
+                         {/* STATUS DROPDOWN */}
+                         <select 
+                           value={booking.status || 'Booked'} 
+                           onChange={(e) => updateStatus(booking.id, e.target.value)}
+                           className={`text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded border cursor-pointer outline-none transition-colors appearance-none text-center ${getStatusColor(booking.status || 'Booked')}`}
+                           // Stop propagation so clicking the select doesn't start a drag
+                           onClick={(e) => e.stopPropagation()} 
+                         >
+                           <option value="Booked">Booked</option>
+                           <option value="Arrived">Arrived</option>
+                           <option value="In Progress">In Progress</option>
+                           <option value="Visit Complete">Completed</option>
+                           <option value="FTA">FTA</option>
+                         </select>
                       </div>
                     </div>
                     
+                    {/* Middle Row: DOB & Type */}
                     <div className="flex items-center gap-4 ml-1">
                       <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
                         <span className="text-[10px] font-black text-slate-400 uppercase">DOB:</span>
                         <span className="text-[11px] font-bold text-slate-600">{booking.dob || 'N/A'}</span>
                         <span className="text-[10px] font-medium text-slate-400 border-l border-slate-200 pl-1.5 ml-1">Age: {calculateAge(booking.dob)}</span>
                       </div>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${
+                          booking.appointmentType?.includes('Contact') ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-100'
+                        }`}>
+                          {booking.appointmentType || 'Routine Eye Check'}
+                      </span>
                     </div>
   
+                    {/* Bottom Row: Contacts */}
                     <div className="flex flex-wrap gap-x-6 gap-y-1 ml-1 pt-1">
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">E:</span> {booking.email}</span>
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">T:</span> {booking.phone}</span>
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-2 ml-4">
-                    <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full">
+                  {/* Action Buttons */}
+                  <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
+                    <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit">
                       <Settings size={18} />
                     </button>
-                    <button onClick={() => deleteApp(booking.id)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full">
+                    <button onClick={() => deleteApp(booking.id)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete">
                       <Trash2 size={18} />
                     </button>
                   </div>
