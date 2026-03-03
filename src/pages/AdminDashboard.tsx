@@ -612,6 +612,28 @@ const updateStatus = async (id: string, newStatus: string) => {
     return grid;
   };
 
+  // Date Navigation Handlers
+  const handlePreviousDay = () => {
+    if (!selectedDate) return;
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(d.toISOString().split('T')[0]);
+  };
+
+  const handleNextDay = () => {
+    if (!selectedDate) return;
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + 1);
+    setSelectedDate(d.toISOString().split('T')[0]);
+  };
+
+  const handleToday = () => {
+    const d = new Date();
+    // Adjusts for local timezone offset to avoid jumping a day behind
+    const localDate = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+    setSelectedDate(localDate.toISOString().split('T')[0]);
+  };
+
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -647,12 +669,35 @@ const updateStatus = async (id: string, newStatus: string) => {
           + New Booking
         </button>
       </div>
-      <input 
-        type="date" 
-        value={selectedDate} 
-        onChange={e => setSelectedDate(e.target.value)} 
-        className="p-3 bg-slate-100 rounded-xl font-bold text-[#3F9185] outline-none cursor-pointer hover:bg-slate-200 transition-colors" 
-      />
+      
+      {/* NEW DATE CONTROLS */}
+      <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
+        <button 
+          onClick={handlePreviousDay}
+          className="px-3 py-2 bg-white rounded-xl font-bold text-slate-500 hover:text-[#3F9185] hover:shadow-sm transition-all text-xs uppercase"
+        >
+          &larr; Prev
+        </button>
+        <button 
+          onClick={handleToday}
+          className="px-4 py-2 bg-[#3F9185]/10 rounded-xl font-black text-[#3F9185] hover:bg-[#3F9185]/20 transition-all text-xs uppercase"
+        >
+          Today
+        </button>
+        <button 
+          onClick={handleNextDay}
+          className="px-3 py-2 bg-white rounded-xl font-bold text-slate-500 hover:text-[#3F9185] hover:shadow-sm transition-all text-xs uppercase"
+        >
+          Next &rarr;
+        </button>
+        <div className="w-px h-6 bg-slate-200 mx-1"></div> {/* Divider */}
+        <input 
+          type="date" 
+          value={selectedDate} 
+          onChange={e => setSelectedDate(e.target.value)} 
+          className="p-2 bg-transparent font-black text-[#3F9185] outline-none cursor-pointer text-sm" 
+        />
+      </div>
     </div>
 
     {/* 2. SEARCH BAR */}
