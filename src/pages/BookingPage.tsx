@@ -220,29 +220,46 @@ export default function BookingPage() {
 
       // 4. SMS Logic via Cloudflare Worker
       const appointmentDate = new Date(`${booking.date}T${booking.time}`);
-const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
+      const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
 
-const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    to: formattedPhone,
-    body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`,
-    reminderTime: reminderDate.toISOString() // Fix: Change newReminderDate to reminderDate
-  })
-});
+      try {
+        // --- CALL 1: IMMEDIATE CONFIRMATION ---
+        // Sent instantly because there is no 'reminderTime' attached
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: formattedPhone,
+            body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`
+          })
+        });
 
-      // 5. Safety Check: Only call setDoc if reminderSid exists
-      if (smsResponse.ok) {
-        const smsData = await smsResponse.json();
-        // Use sid OR reminderSid depending on what your worker returns
-        const sidToSave = smsData.sid || smsData.reminderSid;
-        
-        if (sidToSave) {
-          await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+        // --- CALL 2: SCHEDULED 24-HOUR REMINDER ---
+        // Held by Twilio and sent 24 hours before the appointment
+        const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: formattedPhone,
+            body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow at ${booking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
+            reminderTime: reminderDate.toISOString() 
+          })
+        });
+
+        // 5. Safety Check: Save the SID of the scheduled reminder (so you can cancel it later if needed)
+        if (smsResponse.ok) {
+          const smsData = await smsResponse.json();
+          const sidToSave = smsData.sid || smsData.reminderSid;
+          
+          if (sidToSave) {
+            await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+          }
         }
+      } catch (smsError) {
+        console.error("SMS API Error:", smsError);
       }
 
+      // Move to success screen
       setStep(4);
     } catch (e) {
       console.error("Error:", e);
