@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Settings, LayoutDashboard, LogOut, Activity, ExternalLink } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 
 // 1. Updated Interface to fix TypeScript errors
 interface ClinicConfig {
@@ -288,15 +288,6 @@ export default function AdminDashboard() {
     return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
   };
 
-  const deleteApp = async (id: string) => {
-    if (window.confirm("Are you sure you want to cancel this appointment?")) {
-      try {
-        await deleteDoc(doc(db, "appointments", id));
-      } catch (err) {
-        alert("Failed to delete appointment.");
-      }
-    }
-  };
 
 const updateStatus = async (id: string, newStatus: string) => {
   try {
