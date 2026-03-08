@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -287,8 +287,6 @@ export default function AdminDashboard() {
     // 3. Otherwise -> Open
     return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
   };
-
-  
 
   const deleteApp = async (id: string) => {
     if (window.confirm("Are you sure you want to cancel this appointment?")) {
@@ -589,13 +587,13 @@ const updateStatus = async (id: string, newStatus: string) => {
                     </div>
                   </div>
                   
-                  {/* Action Buttons */}
+                  {/* Action Buttons (UPDATED TO MANAGE BOOKING LINK) */}
                   <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
                     <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit">
                       <Settings size={18} />
                     </button>
-                    <button onClick={() => deleteApp(booking.id)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete">
-                      <Trash2 size={18} />
+                    <button onClick={() => window.open(`/manage/${booking.id}`, '_blank')} className="text-slate-300 hover:text-blue-500 p-2 hover:bg-blue-50 rounded-full transition-colors" title="Manage Booking">
+                      <ExternalLink size={18} />
                     </button>
                   </div>
                 </div>

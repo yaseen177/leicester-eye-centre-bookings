@@ -192,7 +192,8 @@ export default function ManageBooking() {
           params: {
             patient_name: appointment.patientName.split(' ')[0],
             new_date: new Date(rescheduleDate).toLocaleDateString('en-GB'),
-            new_time: rescheduleTime
+            new_time: rescheduleTime,
+            manage_link: `${window.location.origin}/manage/${id}` // <--- ADDED MANAGE LINK HERE
           }
         })
       });
