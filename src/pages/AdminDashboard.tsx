@@ -2,7 +2,6 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
-import emailjs from '@emailjs/browser';
 
 // 1. Updated Interface to fix TypeScript errors
 interface ClinicConfig {
@@ -50,10 +49,6 @@ export default function AdminDashboard() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [currentResultIndex, setCurrentResultIndex] = useState(0);
 
-  
-
-  // 2. Initial State with enabled property
-  
   // Place this inside AdminDashboard component
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -167,9 +162,6 @@ export default function AdminDashboard() {
     return slots;
 };
 
-  // Inside AdminDashboard component
-
-
   const handleAdminBooking = async () => {
     try {
       // FORMAT PHONE NUMBER (Fixes Twilio 21211 Error)
@@ -207,20 +199,29 @@ export default function AdminDashboard() {
         inFullTimeEducation: newBooking.inFullTimeEducation,
         createdAt: serverTimestamp()
       });
+
+      const manageLink = `${window.location.origin}/manage/${docRef.id}`;
   
-      // 3. EmailJS Logic
+      // 3. Email Logic (Brevo via Cloudflare)
       if (newBooking.email) {
-        const emailParams = {
-          to_email: newBooking.email,
-          patient_name: newBooking.firstName,
-          appointment_type: category,
-          date: new Date(selectedDate).toLocaleDateString('en-GB'),
-          time: newBooking.time,
-          reply_to: 'enquiries@theeyecentre.com'
-        };
-        
         try {
-          await emailjs.send('service_et75v9m', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+          await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "send_email",
+              templateId: 1, // Booking Confirmation Template ID
+              to_email: newBooking.email,
+              patient_name: newBooking.firstName,
+              params: {
+                patient_name: newBooking.firstName,
+                appointment_type: category,
+                date: new Date(selectedDate).toLocaleDateString('en-GB'),
+                time: newBooking.time,
+                manage_link: manageLink
+              }
+            })
+          });
         } catch (emailErr) {
           console.error("Failed to send email:", emailErr);
         }
@@ -298,9 +299,6 @@ export default function AdminDashboard() {
       }
     }
   };
-
-  // Place this inside AdminDashboard component
-// Find your existing updateStatus function and replace it with this:
 
 const updateStatus = async (id: string, newStatus: string) => {
   try {

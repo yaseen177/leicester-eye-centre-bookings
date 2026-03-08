@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import BookingPage from './pages/BookingPage';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import ManageBooking from './pages/ManageBooking';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -17,6 +18,7 @@ export default function App() {
             path="/admin-panel-secret" 
             element={isAuthenticated ? <AdminDashboard /> : <Navigate to="/admin-login" />} 
           />
+          <Route path="/manage/:id" element={<ManageBooking />} />
         </Routes>
       </div>
     </Router>

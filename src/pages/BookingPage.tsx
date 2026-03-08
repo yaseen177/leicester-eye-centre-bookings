@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, setDoc, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
-import emailjs from '@emailjs/browser';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
@@ -207,16 +206,26 @@ export default function BookingPage() {
         source: 'Online', // Added source tag
       });
 
-      // 3. EmailJS Logic
-      const emailParams = {
-        to_email: booking.email,
-        patient_name: booking.firstName,
-        appointment_type: getCategory(),
-        date: new Date(booking.date).toLocaleDateString('en-GB'),
-        time: booking.time,
-        reply_to: 'enquiries@theeyecentre.com'
-      };
-      await emailjs.send('service_et75v9m', 'template_prhl49a', emailParams, 'kjN74GNmFhu6fNch8');
+      const manageLink = `${window.location.origin}/manage/${docRef.id}`;
+
+      // 3. Email Logic (Brevo via Cloudflare)
+      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "send_email",
+          templateId: 1, // Booking Confirmation Template ID
+          to_email: booking.email,
+          patient_name: booking.firstName,
+          params: {
+            patient_name: booking.firstName,
+            appointment_type: getCategory(),
+            date: new Date(booking.date).toLocaleDateString('en-GB'),
+            time: booking.time,
+            manage_link: manageLink
+          }
+        })
+      });
 
       // 4. SMS Logic via Cloudflare Worker
       const appointmentDate = new Date(`${booking.date}T${booking.time}`);
