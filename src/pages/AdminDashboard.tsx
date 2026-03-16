@@ -221,7 +221,7 @@ export default function AdminDashboard() {
 
       // If email is blank, append the Magic Link!
       if (!newBooking.email) {
-        smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}.\n\nTo receive your full digital receipt and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
+        smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}.\n\nTo receive your full digital confirmation and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
       }
 
       const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
