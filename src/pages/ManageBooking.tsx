@@ -162,7 +162,7 @@ export default function ManageBooking() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: appointment.phone,
-          body: `Cancellation: ${appointment.patientName.split(' ')[0]}, your appointment on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} has been cancelled. The Eye Centre.`,
+          body: `Cancellation: ${appointment.patientName.split(' ')[0]}, your appointment on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} has been cancelled. The Eye Centre.`,
           cancelSid: appointment.reminderSid
         })
       });
