@@ -20,6 +20,8 @@ export default function App() {
             element={isAuthenticated ? <AdminDashboard /> : <Navigate to="/admin-login" />} 
           />
           <Route path="/manage/:id" element={<ManageBooking />} />
+          {/* Added the missing AddEmailPage route below */}
+          <Route path="/receipt/:id" element={<AddEmailPage />} />
         </Routes>
       </div>
     </Router>
