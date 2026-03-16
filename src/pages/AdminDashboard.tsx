@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Settings, LayoutDashboard, LogOut, Activity, ExternalLink } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 
 // 1. Updated Interface to fix TypeScript errors
 interface ClinicConfig {
@@ -49,7 +49,6 @@ export default function AdminDashboard() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [currentResultIndex, setCurrentResultIndex] = useState(0);
 
-  // Place this inside AdminDashboard component
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
@@ -58,9 +57,7 @@ export default function AdminDashboard() {
 
     const query = searchQuery.toLowerCase();
     const results = appointments.filter(app => {
-      // Format DOB to DD/MM/YYYY for searching
       const dobFormatted = app.dob ? new Date(app.dob).toLocaleDateString('en-GB') : '';
-      
       return (
         app.patientName?.toLowerCase().includes(query) ||
         app.email?.toLowerCase().includes(query) ||
@@ -69,11 +66,9 @@ export default function AdminDashboard() {
       );
     });
 
-    // Sort results by date (newest first)
     results.sort((a, b) => new Date(a.appointmentDate).getTime() - new Date(b.appointmentDate).getTime());
-
     setSearchResults(results);
-    setCurrentResultIndex(0); // Reset to first result on new search
+    setCurrentResultIndex(0);
   }, [searchQuery, appointments]);
 
   const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -108,7 +103,6 @@ export default function AdminDashboard() {
     return () => unsub();
   }, []);
 
-  // --- Helper Functions ---
   const toMins = (t: string) => {
     const [h, m] = t.split(':').map(Number);
     return h * 60 + m;
@@ -142,7 +136,6 @@ export default function AdminDashboard() {
     const duration = newBooking.service === 'Eye Check' ? config.times.eyeCheck : config.times.contactLens;
     const slots: string[] = [];
 
-    // Map existing bookings for overlap checks
     const dayBookings = appointments
       .filter(b => b.appointmentDate === targetDate)
       .map(b => {
@@ -164,13 +157,9 @@ export default function AdminDashboard() {
 
   const handleAdminBooking = async () => {
     try {
-      // FORMAT PHONE NUMBER (Fixes Twilio 21211 Error)
       const rawPhone = newBooking.phone.trim();
-      const formattedPhone = rawPhone.startsWith('0') 
-        ? `+44${rawPhone.substring(1)}` 
-        : rawPhone;
+      const formattedPhone = rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone;
   
-      // 1. Calculate clinical category
       const age = calculateAge(newBooking.dob);
       let category = 'Eye Check Private';
       
@@ -183,11 +172,10 @@ export default function AdminDashboard() {
         else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
       }
   
-      // 2. Save to Firestore (Save the formatted number!)
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${newBooking.firstName} ${newBooking.lastName}`,
         email: newBooking.email,
-        phone: formattedPhone, // Use formattedPhone here
+        phone: formattedPhone,
         dob: newBooking.dob,
         appointmentType: category,
         appointmentDate: selectedDate,
@@ -201,8 +189,9 @@ export default function AdminDashboard() {
       });
 
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
+      const receiptLink = `${window.location.origin}/receipt/${docRef.id}`;
   
-      // 3. Email Logic (Brevo via Cloudflare)
+      // Send Email ONLY if an email address was provided
       if (newBooking.email) {
         try {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
@@ -210,7 +199,7 @@ export default function AdminDashboard() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               type: "send_email",
-              templateId: 1, // Booking Confirmation Template ID
+              templateId: 1, 
               to_email: newBooking.email,
               patient_name: newBooking.firstName,
               params: {
@@ -227,7 +216,14 @@ export default function AdminDashboard() {
         }
       }
   
-      // 4. SMS Logic
+      // Dynamic SMS Logic based on email presence
+      let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`;
+
+      // If email is blank, append the Magic Link!
+      if (!newBooking.email) {
+        smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}.\n\nTo receive your full digital receipt and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
+      }
+
       const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
       const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
       
@@ -235,8 +231,8 @@ export default function AdminDashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: formattedPhone, // Use formattedPhone here
-          body: `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`,
+          to: formattedPhone,
+          body: smsMessage,
           reminderTime: newReminderDate.toISOString() 
         })
       });
@@ -250,6 +246,9 @@ export default function AdminDashboard() {
       }
   
       setIsBookingModalOpen(false);
+      setNewBooking({
+        firstName: '', lastName: '', email: '', phone: '', dob: '', service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+      });
       alert("Appointment successfully booked.");
     } catch (err) {
       console.error("Booking Error:", err);
@@ -259,134 +258,105 @@ export default function AdminDashboard() {
 
   const navigateSearch = (direction: 'next' | 'prev') => {
     if (searchResults.length === 0) return;
-  
     let newIndex = direction === 'next' ? currentResultIndex + 1 : currentResultIndex - 1;
-  
-    // Loop around logic
     if (newIndex >= searchResults.length) newIndex = 0;
     if (newIndex < 0) newIndex = searchResults.length - 1;
-  
     setCurrentResultIndex(newIndex);
-    
-    // Jump to the date of the result
     const targetDate = searchResults[newIndex].appointmentDate;
     setSelectedDate(targetDate);
   };
 
   const isDateClosed = () => {
     const dateObj = new Date(selectedDate);
-    const dayOfWeek = dateObj.getDay(); // 0 = Sunday, 1 = Monday...
-    
+    const dayOfWeek = dateObj.getDay(); 
     const isWeeklyOff = config.weeklyOff?.includes(dayOfWeek);
     const isManuallyOpened = config.openDates?.includes(selectedDate);
     const isManuallyClosed = closedDates.includes(selectedDate);
-  
-    // Logic: 
-    // 1. If manually closed -> Closed
-    // 2. If it's a Weekly Off day but NOT manually opened -> Closed
-    // 3. Otherwise -> Open
     return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
   };
 
-
-const updateStatus = async (id: string, newStatus: string) => {
-  try {
-    const appRef = doc(db, "appointments", id);
-    
-    // 1. Update status in Firestore immediately
-    await setDoc(appRef, { status: newStatus }, { merge: true });
-    
-    // 2. AUTOMATION: Trigger whenever status becomes 'Visit Complete'
-    if (newStatus === 'Visit Complete') {
-      const booking = appointments.find(a => a.id === id);
-      
-      // REMOVED check for "!booking.reviewEmailSent" to allow re-triggering
-      if (booking && booking.email) {
-        
-        // Always ask for confirmation so you don't send accidental duplicates
-        const confirmSend = window.confirm(
-          `Status updated to 'Visit Complete'.\n\n(Re)Schedule the 10-minute automated Google Review email for ${booking.patientName}?`
-        );
-
-        if (!confirmSend) return; 
-
-        // 3. Call Cloudflare Worker
-        const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/"; 
-        
-        fetch(WORKER_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                type: "schedule_review",
-                email: booking.email,
-                patientName: booking.patientName,
-                reviewLink: "https://www.google.com/search?client=safari&hs=6XJp&sca_esv=a98330bec46d892d&hl=en-gb&sxsrf=ANbL-n7q1T411PmM5NcJOwroW6swm6hF1Q:1770557907167&q=the+eye+centre+leicester+reviews&uds=ALYpb_kHqLs5gcVMAt3VLSqkcdlMngXus-x9GFCSkvQn8dOI9knopxGU9LtrgKEndWds03AMNjaI5aH_9BC0i8ndBjxe0SsadfbbEnnBjLNMU7lLaqWGPqVSw1UkT5mz8-tC8KzEoKnmrcEYZqOyYsFStR9ixAAXYpnTFy_rHEtFibwKsz1Df_e0roHKvw_WTIdAN-O-V2wRmwFfijY7lRRcr8Fqsmzu4h6Uug98cMw3iZ6j4yDggD0DCXrHypYOBJgQy-e9BADe43T4RQ42gh2PduZz7fKKbuI2bYThxWuz0Qqw_WC07eCtysMbjvE1MHf-iD3PyHmiAKhimmwdFTIyWVYoesfaV6uHc10IAQRjorXWF7PoPE8DzWEcoiq69FCd_rlzM1cEvPzCQq53UdQAc9KQlB4iL33nJFRjrx76uuyN4T-8mYvsyV1TP_XmtTwZMp7KiXbH3yXrR-RdRB8kUNU_SwH3vBVSEhOoYBqRoYVTtUhCzyd3We2LXnedujTsoa4y54OSEmuSH4YgTWUUKmJUi8GTDQ&si=AL3DRZHrmvnFAVQPOO2Bzhf8AX9KZZ6raUI_dT7DG_z0kV2_x-NXv3ANlcDqRAVq-f0yXFMJFQ3KfdXqv9BUk7kRK8o1RdQyT1VtJMiyHySCLQPw_j7x1K2zM5lmjSef1pKTuZ7JpytYcGLwIoQL1NqkpHr5NiMPoQ%3D%3D&sa=X&ved=2ahUKEwjAovGYgsqSAxW2VUEAHctYDUsQk8gLegQIHBAB&ictx=1&biw=393&bih=659&dpr=3#ebo=2"
-            })
-        })
-        .then(async (res) => {
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Worker failed");
-            
-            console.log(`✅ Automation Triggered. ID: ${data.id}`);
-            alert(`Email scheduled! (Sent via Worker)`);
-            
-            // We still log it for your records, but the logic above no longer checks this flag
-            await setDoc(appRef, { reviewEmailSent: true, reviewEmailLastSent: new Date().toISOString() }, { merge: true });
-        })
-        .catch(err => {
-            console.error("Worker failed:", err);
-            alert(`Failed to schedule: ${err.message}`);
-        });
+  const deleteApp = async (id: string) => {
+    if (window.confirm("Are you sure you want to cancel this appointment?")) {
+      try {
+        await deleteDoc(doc(db, "appointments", id));
+      } catch (err) {
+        alert("Failed to delete appointment.");
       }
     }
-  } catch (err) {
-    console.error("Error updating status:", err);
-    alert("Failed to update status");
-  }
-};
+  };
 
-// Helper to get color based on status
+  const updateStatus = async (id: string, newStatus: string) => {
+    try {
+      const appRef = doc(db, "appointments", id);
+      await setDoc(appRef, { status: newStatus }, { merge: true });
+      
+      if (newStatus === 'Visit Complete') {
+        const booking = appointments.find(a => a.id === id);
+        if (booking && booking.email) {
+          const confirmSend = window.confirm(`Status updated to 'Visit Complete'.\n\n(Re)Schedule the 10-minute automated Google Review email for ${booking.patientName}?`);
+          if (!confirmSend) return; 
+
+          const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/"; 
+          fetch(WORKER_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                  type: "schedule_review",
+                  email: booking.email,
+                  patientName: booking.patientName,
+                  reviewLink: "https://www.google.com/search?client=safari&hs=6XJp&sca_esv=a98330bec46d892d&hl=en-gb&sxsrf=ANbL-n7q1T411PmM5NcJOwroW6swm6hF1Q:1770557907167&q=the+eye+centre+leicester+reviews&uds=ALYpb_kHqLs5gcVMAt3VLSqkcdlMngXus-x9GFCSkvQn8dOI9knopxGU9LtrgKEndWds03AMNjaI5aH_9BC0i8ndBjxe0SsadfbbEnnBjLNMU7lLaqWGPqVSw1UkT5mz8-tC8KzEoKnmrcEYZqOyYsFStR9ixAAXYpnTFy_rHEtFibwKsz1Df_e0roHKvw_WTIdAN-O-V2wRmwFfijY7lRRcr8Fqsmzu4h6Uug98cMw3iZ6j4yDggD0DCXrHypYOBJgQy-e9BADe43T4RQ42gh2PduZz7fKKbuI2bYThxWuz0Qqw_WC07eCtysMbjvE1MHf-iD3PyHmiAKhimmwdFTIyWVYoesfaV6uHc10IAQRjorXWF7PoPE8DzWEcoiq69FCd_rlzM1cEvPzCQq53UdQAc9KQlB4iL33nJFRjrx76uuyN4T-8mYvsyV1TP_XmtTwZMp7KiXbH3yXrR-RdRB8kUNU_SwH3vBVSEhOoYBqRoYVTtUhCzyd3We2LXnedujTsoa4y54OSEmuSH4YgTWUUKmJUi8GTDQ&si=AL3DRZHrmvnFAVQPOO2Bzhf8AX9KZZ6raUI_dT7DG_z0kV2_x-NXv3ANlcDqRAVq-f0yXFMJFQ3KfdXqv9BUk7kRK8o1RdQyT1VtJMiyHySCLQPw_j7x1K2zM5lmjSef1pKTuZ7JpytYcGLwIoQL1NqkpHr5NiMPoQ%3D%3D&sa=X&ved=2ahUKEwjAovGYgsqSAxW2VUEAHctYDUsQk8gLegQIHBAB&ictx=1&biw=393&bih=659&dpr=3#ebo=2"
+              })
+          }).then(async (res) => {
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Worker failed");
+              alert(`Email scheduled! (Sent via Worker)`);
+              await setDoc(appRef, { reviewEmailSent: true, reviewEmailLastSent: new Date().toISOString() }, { merge: true });
+          }).catch(err => {
+              console.error("Worker failed:", err);
+              alert(`Failed to schedule: ${err.message}`);
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Error updating status:", err);
+      alert("Failed to update status");
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'Arrived': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
       case 'In Progress': return 'bg-purple-100 text-purple-700 border-purple-200';
       case 'Visit Complete': return 'bg-green-100 text-green-700 border-green-200';
       case 'FTA': return 'bg-red-100 text-red-700 border-red-200';
-      default: return 'bg-slate-100 text-slate-600 border-slate-200'; // Booked
+      default: return 'bg-slate-100 text-slate-600 border-slate-200';
     }
   };
 
   const updateAppointment = async () => {
     if (!editingApp) return;
     try {
-      // FORMAT PHONE NUMBER (Fixes Twilio 21211 Error)
       const rawPhone = editingApp.phone.trim();
-      const formattedPhone = rawPhone.startsWith('0') 
-        ? `+44${rawPhone.substring(1)}` 
-        : rawPhone;
+      const formattedPhone = rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone;
   
       const appRef = doc(db, "appointments", editingApp.id);
-      
-      // 1. Update Firestore
       await setDoc(appRef, {
         patientName: editingApp.patientName,
         email: editingApp.email,
-        phone: formattedPhone, // Save formatted number
+        phone: formattedPhone,
         dob: editingApp.dob,
         appointmentTime: editingApp.appointmentTime,
         appointmentDate: editingApp.appointmentDate
       }, { merge: true });
   
-      // 2. Calculate new reminder time
       const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
       const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
   
-      // 3. Send SMS
       const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: formattedPhone, // Use formatted number
+          to: formattedPhone,
           body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} at ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
           reminderTime: newReminderDate.toISOString()
         })
@@ -488,7 +458,6 @@ const updateStatus = async (id: string, newStatus: string) => {
           : 0;
         const endTimeStr = booking ? fromMins(time + duration) : '';
 
-        // Search Highlighting Logic
         const isHighlighted = searchResults.length > 0 && 
                               booking && 
                               searchResults[currentResultIndex]?.id === booking.id;
@@ -515,7 +484,6 @@ const updateStatus = async (id: string, newStatus: string) => {
                       : 'bg-white ring-1 ring-[#3F9185]/20 border-l-4 border-[#3F9185]'
                   }`}
                 >
-                  {/* Highlight Badge */}
                   {isHighlighted && (
                     <div className="absolute -top-3 -right-2 bg-yellow-400 text-yellow-900 text-[10px] font-black px-2 py-1 rounded-full shadow-sm animate-bounce z-20">
                       RESULT {currentResultIndex + 1}/{searchResults.length}
@@ -523,7 +491,6 @@ const updateStatus = async (id: string, newStatus: string) => {
                   )}
 
                   <div className="flex flex-col gap-2 w-full">
-                    {/* Top Row: Time, Name, Status */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-baseline gap-3">
                         <span className="text-[11px] font-black text-[#3F9185] bg-teal-50 px-2.5 py-1 rounded-md tabular-nums border border-[#3F9185]/10">
@@ -533,19 +500,16 @@ const updateStatus = async (id: string, newStatus: string) => {
                       </div>
 
                       <div className="flex items-center gap-2">
-                         {/* Source Tag */}
                          <span className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-wider ${
                            booking.source === 'Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
                          }`}>
                            {booking.source === 'Admin' ? 'Admin' : 'Online'}
                          </span>
 
-                         {/* STATUS DROPDOWN */}
                          <select 
                            value={booking.status || 'Booked'} 
                            onChange={(e) => updateStatus(booking.id, e.target.value)}
                            className={`text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded border cursor-pointer outline-none transition-colors appearance-none text-center ${getStatusColor(booking.status || 'Booked')}`}
-                           // Stop propagation so clicking the select doesn't start a drag
                            onClick={(e) => e.stopPropagation()} 
                          >
                            <option value="Booked">Booked</option>
@@ -557,7 +521,6 @@ const updateStatus = async (id: string, newStatus: string) => {
                       </div>
                     </div>
                     
-                    {/* Middle Row: DOB & Type */}
                     <div className="flex items-center gap-4 ml-1">
                       <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
                         <span className="text-[10px] font-black text-slate-400 uppercase">DOB:</span>
@@ -571,14 +534,14 @@ const updateStatus = async (id: string, newStatus: string) => {
                       </span>
                     </div>
   
-                    {/* Bottom Row: Contacts */}
                     <div className="flex flex-wrap gap-x-6 gap-y-1 ml-1 pt-1">
-                      <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">E:</span> {booking.email}</span>
+                      <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
+                        <span className="font-black text-[#3F9185]">E:</span> {booking.email ? booking.email : <span className="text-orange-400 italic">No email provided</span>}
+                      </span>
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">T:</span> {booking.phone}</span>
                     </div>
                   </div>
                   
-                  {/* Action Buttons (UPDATED TO MANAGE BOOKING LINK) */}
                   <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
                     <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit">
                       <Settings size={18} />
@@ -599,7 +562,6 @@ const updateStatus = async (id: string, newStatus: string) => {
     return grid;
   };
 
-  // Date Navigation Handlers
   const handlePreviousDay = () => {
     if (!selectedDate) return;
     const d = new Date(selectedDate);
@@ -616,7 +578,6 @@ const updateStatus = async (id: string, newStatus: string) => {
 
   const handleToday = () => {
     const d = new Date();
-    // Adjusts for local timezone offset to avoid jumping a day behind
     const localDate = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
@@ -625,7 +586,6 @@ const updateStatus = async (id: string, newStatus: string) => {
     <div className="min-h-screen p-6 bg-[#f8fafc]">
       <div className="max-w-5xl mx-auto space-y-6">
         
-        {/* Navigation Bar */}
         <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex gap-2">
             <button onClick={() => setView('diary')} className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
@@ -643,7 +603,6 @@ const updateStatus = async (id: string, newStatus: string) => {
         {view === 'diary' && (
   <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
     
-    {/* 1. Header & Controls */}
     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
       <div className="flex items-center gap-4">
         <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
@@ -657,7 +616,6 @@ const updateStatus = async (id: string, newStatus: string) => {
         </button>
       </div>
       
-      {/* NEW DATE CONTROLS */}
       <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
         <button 
           onClick={handlePreviousDay}
@@ -677,7 +635,7 @@ const updateStatus = async (id: string, newStatus: string) => {
         >
           Next &rarr;
         </button>
-        <div className="w-px h-6 bg-slate-200 mx-1"></div> {/* Divider */}
+        <div className="w-px h-6 bg-slate-200 mx-1"></div>
         <input 
           type="date" 
           value={selectedDate} 
@@ -687,7 +645,6 @@ const updateStatus = async (id: string, newStatus: string) => {
       </div>
     </div>
 
-    {/* 2. SEARCH BAR */}
     <div className="bg-white p-2 rounded-2xl border border-slate-100 mb-6 flex items-center justify-between gap-4 shadow-sm ring-1 ring-slate-100">
       <div className="flex items-center gap-3 flex-1 bg-slate-50 p-3 rounded-xl transition-all focus-within:ring-2 focus-within:ring-[#3F9185]/20">
         <span className="text-slate-400">🔍</span>
@@ -720,7 +677,6 @@ const updateStatus = async (id: string, newStatus: string) => {
       )}
     </div>
 
-    {/* 3. Status Banner */}
     <div className={`mb-6 p-5 rounded-2xl border flex items-center justify-between transition-all ${isDateClosed() ? 'bg-red-50 border-red-100' : 'bg-[#3F9185]/5 border-[#3F9185]/10'}`}>
       <div className="flex items-center gap-4">
         <div className={`w-3 h-3 rounded-full animate-pulse ${isDateClosed() ? 'bg-red-500' : 'bg-[#3F9185]'}`}></div>
@@ -734,7 +690,6 @@ const updateStatus = async (id: string, newStatus: string) => {
       </button>
     </div>
 
-    {/* 4. Shift Override */}
     <div className="mb-8 p-5 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
       <div className="flex items-center gap-3 text-slate-500">
         <Clock size={16} />
@@ -756,7 +711,6 @@ const updateStatus = async (id: string, newStatus: string) => {
         {view === 'settings' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-8">
             <h2 className="text-2xl font-black text-slate-800">Clinic Settings</h2>
-            {/* ... rest of your settings UI (Durations, Hours, Lunch, Weekly Off) */}
             <div className="grid md:grid-cols-2 gap-10">
               <div className="space-y-4">
                 <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Clock size={18}/> Durations (mins)</h3>
@@ -822,7 +776,6 @@ const updateStatus = async (id: string, newStatus: string) => {
         )}
       </div>
 
-      {/* MODAL 1: EDIT APPOINTMENT */}
       {editingApp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
           <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full animate-in zoom-in-95 shadow-2xl">
@@ -840,14 +793,12 @@ const updateStatus = async (id: string, newStatus: string) => {
         </div>
       )}
 
-      {/* MODAL: NEW ADMIN BOOKING */}
       {isBookingModalOpen && (
   <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4 backdrop-blur-sm">
     <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
       <h2 className="text-2xl font-black text-slate-800 mb-6">Direct Admin Booking</h2>
       
       <div className="space-y-4">
-        {/* 1. Date Selection: Prevents past dates and blocks closed dates */}
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
           <input 
@@ -862,12 +813,36 @@ const updateStatus = async (id: string, newStatus: string) => {
           )}
         </div>
 
-        {/* 2. Patient Demographics */}
         <div className="grid grid-cols-2 gap-4">
           <input placeholder="First Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, firstName: e.target.value})} />
           <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
         </div>
-        <input placeholder="Email" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, email: e.target.value})} />
+        
+        {/* NEW OPTIONAL EMAIL FIELD WITH QUICK DOMAIN BUTTONS */}
+        <div className="col-span-full space-y-2">
+          <input 
+            type="email"
+            placeholder="Email Address (Optional - skip if struggling over phone)" 
+            className="w-full p-4 bg-slate-50 rounded-xl outline-none placeholder:text-slate-400" 
+            value={newBooking.email}
+            onChange={e => setNewBooking({...newBooking, email: e.target.value.toLowerCase()})} 
+          />
+          {/* Quick Domain Buttons - Only show if they have started typing but haven't added the @ yet */}
+          {newBooking.email && !newBooking.email.includes('@') && (
+            <div className="flex flex-wrap gap-2 px-1 animate-in fade-in">
+              {['@gmail.com', '@hotmail.co.uk', '@hotmail.com', '@outlook.com', '@yahoo.co.uk'].map(domain => (
+                <button 
+                  key={domain}
+                  onClick={() => setNewBooking({...newBooking, email: newBooking.email + domain})}
+                  className="text-[10px] font-bold bg-slate-100 text-slate-500 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-lg transition-colors shadow-sm"
+                >
+                  {domain}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        
         <input placeholder="Phone" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
         
         <div>
@@ -880,7 +855,6 @@ const updateStatus = async (id: string, newStatus: string) => {
           <option value="Contact Lens Check">Contact Lens Check</option>
         </select>
 
-        {/* 3. Clinical Eligibility Checks: Exact Age-Dependent logic from BookingPage.tsx */}
         {newBooking.service === 'Eye Check' && newBooking.dob && (
           <div className="space-y-2 pt-2">
             {calculateAge(newBooking.dob) >= 16 && calculateAge(newBooking.dob) <= 18 && (
@@ -910,12 +884,8 @@ const updateStatus = async (id: string, newStatus: string) => {
           </div>
         )}
 
-        {/* 4. Filtered Time Selection */}
-        {/* 4. Filtered Time Selection */}
 <div className="space-y-2">
   <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
-  
-  {/* CONDITIONAL RENDERING: Check if date is closed or no slots exist */}
   {isDateClosed() || calculateSlotsForDate(selectedDate).length === 0 ? (
     <div className="w-full p-6 bg-slate-50 rounded-xl border border-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
       <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center">

@@ -4,6 +4,7 @@ import BookingPage from './pages/BookingPage';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import ManageBooking from './pages/ManageBooking';
+import AddEmailPage from './pages/AddEmailPage';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
