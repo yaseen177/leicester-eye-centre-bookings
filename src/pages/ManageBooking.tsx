@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/firebase';
 import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft } from 'lucide-react';
+import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone } from 'lucide-react';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
@@ -22,6 +22,10 @@ export default function ManageBooking() {
   const [actionLoading, setActionLoading] = useState(false);
   const [appointment, setAppointment] = useState<any>(null);
   const [view, setView] = useState<'main' | 'cancel' | 'reschedule'>('main');
+
+  // Phone Addition State
+  const [newPhone, setNewPhone] = useState('');
+  const [isUpdatingPhone, setIsUpdatingPhone] = useState(false);
 
   const [existingBookings, setExistingBookings] = useState<any[]>([]);
   const [settings, setSettings] = useState({ 
@@ -132,17 +136,64 @@ export default function ManageBooking() {
     setActionLoading(false);
   };
 
+  // --- NEW: ADD PHONE NUMBER LOGIC ---
+  const handleAddPhone = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPhone || newPhone.length < 10) return alert("Please enter a valid mobile number.");
+
+    setIsUpdatingPhone(true);
+    try {
+      const rawPhone = newPhone.trim();
+      const formattedPhone = rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone;
+
+      const docRef = doc(db, 'appointments', id!);
+      
+      // 1. Update Firestore
+      await setDoc(docRef, { phone: formattedPhone }, { merge: true });
+
+      // 2. Schedule Reminder & Send Welcome SMS
+      const apptDate = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}`);
+      const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
+
+      const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: formattedPhone,
+          body: `Alert: ${appointment.patientName.split(' ')[0]}, your mobile number has been successfully linked to your booking on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime}. You will now receive SMS updates.`,
+          reminderTime: newReminderDate.toISOString()
+        })
+      });
+
+      if (smsRes.ok) {
+        const smsData = await smsRes.json();
+        const sid = smsData.sid || smsData.reminderSid;
+        if (sid) {
+          await setDoc(docRef, { reminderSid: sid }, { merge: true });
+        }
+      }
+
+      // Update local state so UI refreshes
+      setAppointment({ ...appointment, phone: formattedPhone });
+      setNewPhone('');
+      alert("Phone number added successfully! A confirmation text has been sent.");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to add phone number.");
+    }
+    setIsUpdatingPhone(false);
+  };
+
   const handleCancel = async () => {
     setActionLoading(true);
     try {
-      // 1. Send Email (if provided)
       if (appointment.email) {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             type: "send_email",
-            templateId: 3, // CANCELLATION TEMPLATE ID
+            templateId: 3, 
             to_email: appointment.email,
             patient_name: appointment.patientName.split(' ')[0],
             params: {
@@ -154,7 +205,6 @@ export default function ManageBooking() {
         }).catch(e => console.error(e));
       }
 
-      // 2. Send SMS & Cancel 24hr reminder (if provided)
       if (appointment.phone) {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -181,14 +231,13 @@ export default function ManageBooking() {
       const docRef = doc(db, 'appointments', id!);
       await setDoc(docRef, { appointmentDate: rescheduleDate, appointmentTime: rescheduleTime }, { merge: true });
 
-      // 1. Email Logic
       if (appointment.email) {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             type: "send_email",
-            templateId: 4, // RESCHEDULE TEMPLATE ID
+            templateId: 4, 
             to_email: appointment.email,
             patient_name: appointment.patientName.split(' ')[0],
             params: {
@@ -201,22 +250,19 @@ export default function ManageBooking() {
         }).catch(e => console.error(e));
       }
 
-      // 2. SMS Logic
       if (appointment.phone) {
         const newApptDate = new Date(`${rescheduleDate}T${rescheduleTime}`);
         const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
 
-        // Immediate Update
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: appointment.phone,
             body: `Update: ${appointment.patientName.split(' ')[0]}, your appointment is rescheduled to ${new Date(rescheduleDate).toLocaleDateString('en-GB')} @ ${rescheduleTime}. The Eye Centre.`,
-            cancelSid: appointment.reminderSid // Kills old reminder
+            cancelSid: appointment.reminderSid 
           })
         });
 
-        // New Reminder
         const smsReminderRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -263,14 +309,44 @@ export default function ManageBooking() {
               </div>
             </div>
 
+            {/* CONDITIONAL ADD PHONE BANNER */}
+            {!appointment.phone && (
+              <form onSubmit={handleAddPhone} className="bg-[#3F9185]/10 p-4 rounded-2xl border border-[#3F9185]/20 space-y-3 animate-in fade-in slide-in-from-bottom-2">
+                <div className="flex items-center gap-2">
+                  <Phone size={16} className="text-[#3F9185]" />
+                  <p className="text-xs font-bold text-[#3F9185]">Add a mobile number to receive your 24-hour SMS reminder:</p>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="tel"
+                    placeholder="e.g. 07700 900077"
+                    className="flex-1 p-3 rounded-xl outline-none text-sm font-medium border border-transparent focus:border-[#3F9185] focus:ring-1 focus:ring-[#3F9185]"
+                    value={newPhone}
+                    onChange={e => setNewPhone(e.target.value)}
+                    required
+                  />
+                  <button
+                    type="submit"
+                    disabled={isUpdatingPhone || !newPhone}
+                    className="px-5 py-2 bg-[#3F9185] text-white rounded-xl font-bold text-sm hover:brightness-110 disabled:opacity-50 transition-all flex items-center justify-center shadow-sm"
+                  >
+                    {isUpdatingPhone ? <Loader2 className="animate-spin" size={16} /> : 'Save'}
+                  </button>
+                </div>
+              </form>
+            )}
+
             <div className="space-y-3 pt-4">
-              <button onClick={handleResendSMS} disabled={actionLoading} className="w-full py-3 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 flex justify-center items-center gap-2">
-                <Send size={18} /> Resend SMS Confirmation
-              </button>
-              <button onClick={() => { setRescheduleDate(appointment.appointmentDate); setView('reschedule'); }} className="w-full py-3 rounded-xl font-bold bg-[#3F9185] text-white hover:brightness-110 flex justify-center items-center gap-2 shadow-md">
+              {/* ONLY SHOW RESEND SMS IF PHONE EXISTS */}
+              {appointment.phone && (
+                <button onClick={handleResendSMS} disabled={actionLoading} className="w-full py-3 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 flex justify-center items-center gap-2 transition-colors">
+                  <Send size={18} /> Resend SMS Confirmation
+                </button>
+              )}
+              <button onClick={() => { setRescheduleDate(appointment.appointmentDate); setView('reschedule'); }} className="w-full py-3 rounded-xl font-bold bg-[#3F9185] text-white hover:brightness-110 flex justify-center items-center gap-2 shadow-md transition-all">
                 <Calendar size={18} /> Reschedule
               </button>
-              <button onClick={() => setView('cancel')} className="w-full py-3 rounded-xl font-bold bg-red-50 text-red-600 hover:bg-red-100 flex justify-center items-center gap-2">
+              <button onClick={() => setView('cancel')} className="w-full py-3 rounded-xl font-bold bg-red-50 text-red-600 hover:bg-red-100 flex justify-center items-center gap-2 transition-colors">
                 <XCircle size={18} /> Cancel Appointment
               </button>
             </div>
@@ -283,10 +359,10 @@ export default function ManageBooking() {
             <h2 className="text-xl font-black text-slate-800">Are you sure?</h2>
             <p className="text-slate-500">This will permanently cancel your appointment for <strong>{appointment.appointmentTime}</strong> on <strong>{new Date(appointment.appointmentDate).toLocaleDateString('en-GB')}</strong>.</p>
             <div className="space-y-3 pt-4">
-              <button onClick={handleCancel} disabled={actionLoading} className="w-full py-4 rounded-xl font-black bg-red-500 text-white hover:bg-red-600 flex justify-center shadow-md">
+              <button onClick={handleCancel} disabled={actionLoading} className="w-full py-4 rounded-xl font-black bg-red-500 text-white hover:bg-red-600 flex justify-center shadow-md transition-all">
                 {actionLoading ? <Loader2 className="animate-spin" /> : 'Yes, Cancel Appointment'}
               </button>
-              <button onClick={() => setView('main')} disabled={actionLoading} className="w-full py-4 rounded-xl font-bold text-slate-500 hover:bg-slate-50">No, go back</button>
+              <button onClick={() => setView('main')} disabled={actionLoading} className="w-full py-4 rounded-xl font-bold text-slate-500 hover:bg-slate-50 transition-colors">No, go back</button>
             </div>
           </div>
         )}
@@ -334,7 +410,7 @@ export default function ManageBooking() {
                 );
              })()}
 
-             <button disabled={!rescheduleTime || actionLoading} onClick={handleReschedule} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 flex justify-center" style={{ backgroundColor: '#3F9185' }}>
+             <button disabled={!rescheduleTime || actionLoading} onClick={handleReschedule} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 flex justify-center transition-all" style={{ backgroundColor: '#3F9185' }}>
                {actionLoading ? <Loader2 className="animate-spin" /> : 'Confirm New Time'}
              </button>
           </div>
