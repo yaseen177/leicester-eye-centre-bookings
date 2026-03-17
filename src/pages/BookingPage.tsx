@@ -27,7 +27,7 @@ export default function BookingPage() {
     closedDates: [] as string[],
     openDates: [] as string[],
     weeklyOff: [] as number[],
-    lunch: { start: "13:00", end: "14:00" }, // Fix: Added property
+    lunch: { start: "13:00", end: "14:00" },
     dailyOverrides: {} as Record<string, { start: string; end: string }>
   });
   
@@ -46,7 +46,6 @@ export default function BookingPage() {
     familyGlaucoma: false
   });
 
-  // 1. Setup Live Sync and Initial Settings
   useEffect(() => {
     const unsubBookings = onSnapshot(collection(db, "appointments"), (snap) => {
       setExistingBookings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -75,7 +74,6 @@ export default function BookingPage() {
     };
   }, []);
 
-  // 2. Logic: Find the first date that actually has slots
   useEffect(() => {
     if (existingBookings.length >= 0 && booking.service) {
       const firstAvailable = findFirstAvailableDate();
@@ -85,7 +83,6 @@ export default function BookingPage() {
     }
   }, [existingBookings, booking.service]);
 
-  // --- SLOT CALCULATION ENGINE ---
   const calculateSlotsForDate = (targetDate: string) => {
     const [year, month, day] = targetDate.split('-').map(Number);
     const dateObj = new Date(year, month - 1, day);
@@ -93,10 +90,8 @@ export default function BookingPage() {
   
     const { closedDates, openDates, weeklyOff, dailyOverrides } = settings;
   
-    // Priority 1: Manual Close
     if (closedDates.includes(targetDate)) return [];
 
-    // Priority 2: Weekly Off check with Manual Open override
     const isStandardDayOff = weeklyOff.includes(dayOfWeek);
     const isManuallyOverriddenToOpen = openDates.includes(targetDate);
 
@@ -106,12 +101,9 @@ export default function BookingPage() {
     const clinicStart = toMins(dayHours.start || "09:00");
     const clinicEnd = toMins(dayHours.end || "17:00");
 
-    // 1. Get Lunch Settings with a "Switch" check
-    // If lunch.enabled is false, we set the times to 0 so they never overlap
     const lunchConfig = settings.lunch as { start?: string; end?: string; enabled?: boolean } | undefined;
     const isLunchEnabled = lunchConfig?.enabled ?? true;
 
-    // 2. Only calculate lunch minutes if lunch is actually enabled
     const lunchStart = isLunchEnabled ? toMins(lunchConfig?.start || "13:00") : -1;
     const lunchEnd = isLunchEnabled ? toMins(lunchConfig?.end || "14:00") : -1;
 
@@ -132,11 +124,8 @@ export default function BookingPage() {
     for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
       const potentialEnd = current + duration;
       
-      // Filter out past times for today
       if (isToday && current <= currentMins) continue;
 
-      // 2. The Clean Lunch Check
-      // This will only block time if lunch is enabled AND the slot overlaps
       if (isLunchEnabled) {
         const overlapsLunch = current < lunchEnd && potentialEnd > lunchStart;
         if (overlapsLunch) continue;
@@ -187,88 +176,85 @@ export default function BookingPage() {
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
-      // 1. Format Phone Number to +44 (E.164)
+      // 1. Format Phone Number (if provided)
       const cleanPhone = booking.phone.trim();
-      const formattedPhone = cleanPhone.startsWith('0') 
-        ? `+44${cleanPhone.substring(1)}` 
-        : cleanPhone.startsWith('+') ? cleanPhone : `+44${cleanPhone}`;
+      const formattedPhone = cleanPhone 
+        ? (cleanPhone.startsWith('0') ? `+44${cleanPhone.substring(1)}` : (cleanPhone.startsWith('+') ? cleanPhone : `+44${cleanPhone}`)) 
+        : '';
 
       // 2. Save the initial appointment
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
-        email: booking.email,
-        phone: formattedPhone, // Save formatted version
+        email: booking.email.toLowerCase(),
+        phone: formattedPhone, 
         dob: booking.dob,
         appointmentType: getCategory(),
         appointmentDate: booking.date,
         appointmentTime: booking.time,
         createdAt: serverTimestamp(),
-        source: 'Online', // Added source tag
+        source: 'Online',
       });
 
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
 
-      // 3. Email Logic (Brevo via Cloudflare)
-      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "send_email",
-          templateId: 1, // Booking Confirmation Template ID
-          to_email: booking.email,
-          patient_name: booking.firstName,
-          params: {
-            patient_name: booking.firstName,
-            appointment_type: getCategory(),
-            date: new Date(booking.date).toLocaleDateString('en-GB'),
-            time: booking.time,
-            manage_link: manageLink
-          }
-        })
-      });
-
-      // 4. SMS Logic via Cloudflare Worker
-      const appointmentDate = new Date(`${booking.date}T${booking.time}`);
-      const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
-
-      try {
-        // --- CALL 1: IMMEDIATE CONFIRMATION ---
-        // Sent instantly because there is no 'reminderTime' attached
+      // 3. Email Logic (Only if Email is provided)
+      if (booking.email) {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            to: formattedPhone,
-            body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} at ${booking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`
+            type: "send_email",
+            templateId: 1, 
+            to_email: booking.email.toLowerCase(),
+            patient_name: booking.firstName,
+            params: {
+              patient_name: booking.firstName,
+              appointment_type: getCategory(),
+              date: new Date(booking.date).toLocaleDateString('en-GB'),
+              time: booking.time,
+              manage_link: manageLink
+            }
           })
-        });
-
-        // --- CALL 2: SCHEDULED 24-HOUR REMINDER ---
-        // Held by Twilio and sent 24 hours before the appointment
-        const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: formattedPhone,
-            body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow at ${booking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
-            reminderTime: reminderDate.toISOString() 
-          })
-        });
-
-        // 5. Safety Check: Save the SID of the scheduled reminder (so you can cancel it later if needed)
-        if (smsResponse.ok) {
-          const smsData = await smsResponse.json();
-          const sidToSave = smsData.sid || smsData.reminderSid;
-          
-          if (sidToSave) {
-            await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
-          }
-        }
-      } catch (smsError) {
-        console.error("SMS API Error:", smsError);
+        }).catch(e => console.error("Email error", e));
       }
 
-      // Move to success screen
+      // 4. SMS Logic (Only if Phone is provided)
+      if (formattedPhone && formattedPhone.length > 5) {
+        const appointmentDate = new Date(`${booking.date}T${booking.time}`);
+        const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
+
+        try {
+          await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: formattedPhone,
+              body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} @ ${booking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`
+            })
+          });
+
+          const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: formattedPhone,
+              body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow @ ${booking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
+              reminderTime: reminderDate.toISOString() 
+            })
+          });
+
+          if (smsResponse.ok) {
+            const smsData = await smsResponse.json();
+            const sidToSave = smsData.sid || smsData.reminderSid;
+            if (sidToSave) {
+              await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+            }
+          }
+        } catch (smsError) {
+          console.error("SMS API Error:", smsError);
+        }
+      }
+
       setStep(4);
     } catch (e) {
       console.error("Error:", e);
@@ -277,6 +263,7 @@ export default function BookingPage() {
     }
     setLoading(false);
   };
+  
   return (
     <div className="max-w-xl mx-auto px-6 py-12">
       <header className="text-center mb-8 px-4">
@@ -316,7 +303,6 @@ export default function BookingPage() {
                <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value})} />
              </div>
              
-             {/* NEW COLLAPSED/GROUPED TIME SLOTS */}
              {(() => {
                 const slots = calculateSlotsForDate(booking.date);
                 const morning = slots.filter(t => parseInt(t.split(':')[0]) < 12);
@@ -368,10 +354,13 @@ export default function BookingPage() {
               <input placeholder="First Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, firstName: e.target.value})} />
               <input placeholder="Last Name" className="p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, lastName: e.target.value})} />
             </div>
+            
             <div className="space-y-3">
-              <input type="email" placeholder="Email Address" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, email: e.target.value})} required />
-              <input type="tel" placeholder="Telephone Number" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, phone: e.target.value})} required />
+              <p className="text-xs font-bold text-slate-400 px-1 mt-4">Please provide at least one contact method:</p>
+              <input type="email" placeholder="Email Address" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, email: e.target.value})} />
+              <input type="tel" placeholder="Mobile Number" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, phone: e.target.value})} />
             </div>
+
             <div>
               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
               <input type="date" className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" onChange={e => setBooking({...booking, dob: e.target.value})} />
@@ -405,7 +394,12 @@ export default function BookingPage() {
                 )}
               </div>
             )}
-            <button onClick={handleFinalSubmit} disabled={loading || !booking.firstName || !booking.dob} className="w-full py-4 rounded-2xl font-black text-white shadow-lg flex justify-center items-center transition-all hover:brightness-110" style={{ backgroundColor: '#3F9185' }}>
+            <button 
+              onClick={handleFinalSubmit} 
+              disabled={loading || !booking.firstName || !booking.lastName || !booking.dob || (!booking.email && !booking.phone)} 
+              className="w-full py-4 rounded-2xl font-black text-white shadow-lg flex justify-center items-center transition-all hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed" 
+              style={{ backgroundColor: '#3F9185' }}
+            >
               {loading ? <Loader2 className="animate-spin" /> : 'Confirm Appointment'}
             </button>
           </div>

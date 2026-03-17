@@ -23,7 +23,6 @@ export default function ManageBooking() {
   const [appointment, setAppointment] = useState<any>(null);
   const [view, setView] = useState<'main' | 'cancel' | 'reschedule'>('main');
 
-  // Booking Engine State
   const [existingBookings, setExistingBookings] = useState<any[]>([]);
   const [settings, setSettings] = useState({ 
     start: "09:00", end: "17:00", eyeCheck: 30, contactLens: 20, buffer: 0,
@@ -69,7 +68,6 @@ export default function ManageBooking() {
     return () => { unsubBookings(); unsubSettings(); };
   }, [id]);
 
-  // --- SLOT CALCULATION ENGINE ---
   const calculateSlotsForDate = (targetDate: string) => {
     const [year, month, day] = targetDate.split('-').map(Number);
     const dateObj = new Date(year, month - 1, day);
@@ -97,7 +95,7 @@ export default function ManageBooking() {
     const duration = isContactLens ? settings.contactLens : settings.eyeCheck;
   
     const dayBookings = existingBookings
-      .filter(b => b.appointmentDate === targetDate && b.id !== appointment?.id) // IGNORE CURRENT APPOINTMENT
+      .filter(b => b.appointmentDate === targetDate && b.id !== appointment?.id)
       .map(b => {
         const d = b.appointmentType?.includes('Contact') ? settings.contactLens : settings.eyeCheck;
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
@@ -118,16 +116,15 @@ export default function ManageBooking() {
   if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#3F9185]" size={40} /></div>;
   if (!appointment) return <div className="text-center mt-20 font-bold text-slate-500">Appointment not found or already cancelled.</div>;
 
-  // --- ACTIONS ---
-
   const handleResendSMS = async () => {
+    if (!appointment.phone) return alert("No phone number on file to send SMS to.");
     setActionLoading(true);
     try {
       await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: appointment.phone,
-          body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} at ${appointment.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${id}`
+          body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${id}`
         })
       });
       alert("SMS Sent Successfully!");
@@ -138,98 +135,109 @@ export default function ManageBooking() {
   const handleCancel = async () => {
     setActionLoading(true);
     try {
-      await deleteDoc(doc(db, 'appointments', id!));
-      
-      // 1. Send Cancellation Email via Brevo
-      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "send_email",
-          templateId: 3, // <--- CANCELLATION TEMPLATE ID
-          to_email: appointment.email,
-          patient_name: appointment.patientName.split(' ')[0],
-          params: {
+      // 1. Send Email (if provided)
+      if (appointment.email) {
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "send_email",
+            templateId: 3, // CANCELLATION TEMPLATE ID
+            to_email: appointment.email,
             patient_name: appointment.patientName.split(' ')[0],
-            date: new Date(appointment.appointmentDate).toLocaleDateString('en-GB'),
-            time: appointment.appointmentTime
-          }
-        })
-      });
+            params: {
+              patient_name: appointment.patientName.split(' ')[0],
+              date: new Date(appointment.appointmentDate).toLocaleDateString('en-GB'),
+              time: appointment.appointmentTime
+            }
+          })
+        }).catch(e => console.error(e));
+      }
 
-      // 2. Send SMS & Cancel 24hr reminder
-      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: appointment.phone,
-          body: `Cancellation: ${appointment.patientName.split(' ')[0]}, your appointment on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} has been cancelled. The Eye Centre.`,
-          cancelSid: appointment.reminderSid
-        })
-      });
+      // 2. Send SMS & Cancel 24hr reminder (if provided)
+      if (appointment.phone) {
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: appointment.phone,
+            body: `Cancellation: ${appointment.patientName.split(' ')[0]}, your appointment on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} has been cancelled. The Eye Centre.`,
+            cancelSid: appointment.reminderSid
+          })
+        }).catch(e => console.error(e));
+      }
 
+      await deleteDoc(doc(db, 'appointments', id!));
       alert("Appointment Cancelled.");
       navigate('/');
-    } catch (err) { alert("Error cancelling appointment."); setActionLoading(false); }
+    } catch (err) { 
+      alert("Error cancelling appointment."); 
+      setActionLoading(false); 
+    }
   };
 
   const handleReschedule = async () => {
     setActionLoading(true);
     try {
       const docRef = doc(db, 'appointments', id!);
-      
-      // 1. Update Firestore Date & Time
       await setDoc(docRef, { appointmentDate: rescheduleDate, appointmentTime: rescheduleTime }, { merge: true });
 
-      // 2. Email - Reschedule Email via Brevo
-      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "send_email",
-          templateId: 4, // <--- RESCHEDULE TEMPLATE ID
-          to_email: appointment.email,
-          patient_name: appointment.patientName.split(' ')[0],
-          params: {
+      // 1. Email Logic
+      if (appointment.email) {
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "send_email",
+            templateId: 4, // RESCHEDULE TEMPLATE ID
+            to_email: appointment.email,
             patient_name: appointment.patientName.split(' ')[0],
-            new_date: new Date(rescheduleDate).toLocaleDateString('en-GB'),
-            new_time: rescheduleTime,
-            manage_link: `${window.location.origin}/manage/${id}` // <--- ADDED MANAGE LINK HERE
-          }
-        })
-      });
+            params: {
+              patient_name: appointment.patientName.split(' ')[0],
+              new_date: new Date(rescheduleDate).toLocaleDateString('en-GB'),
+              new_time: rescheduleTime,
+              manage_link: `${window.location.origin}/manage/${id}`
+            }
+          })
+        }).catch(e => console.error(e));
+      }
 
-      const newApptDate = new Date(`${rescheduleDate}T${rescheduleTime}`);
-      const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
+      // 2. SMS Logic
+      if (appointment.phone) {
+        const newApptDate = new Date(`${rescheduleDate}T${rescheduleTime}`);
+        const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
 
-      // 3. Cancel old reminder & send Immediate Update SMS
-      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: appointment.phone,
-          body: `Update: ${appointment.patientName.split(' ')[0]}, your appointment is rescheduled to ${new Date(rescheduleDate).toLocaleDateString('en-GB')} at ${rescheduleTime}. The Eye Centre.`,
-          cancelSid: appointment.reminderSid // Kills old reminder
-        })
-      });
+        // Immediate Update
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: appointment.phone,
+            body: `Update: ${appointment.patientName.split(' ')[0]}, your appointment is rescheduled to ${new Date(rescheduleDate).toLocaleDateString('en-GB')} @ ${rescheduleTime}. The Eye Centre.`,
+            cancelSid: appointment.reminderSid // Kills old reminder
+          })
+        });
 
-      // 4. Schedule new 24hr reminder
-      const smsReminderRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: appointment.phone,
-          body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow at ${rescheduleTime} at The Eye Centre. If you need to manage this, click here: ${window.location.origin}/manage/${id}`,
-          reminderTime: newReminderDate.toISOString() 
-        })
-      });
+        // New Reminder
+        const smsReminderRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: appointment.phone,
+            body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${rescheduleTime} at The Eye Centre. If you need to manage this, click here: ${window.location.origin}/manage/${id}`,
+            reminderTime: newReminderDate.toISOString() 
+          })
+        });
 
-      if (smsReminderRes.ok) {
-        const smsData = await smsReminderRes.json();
-        const sidToSave = smsData.sid || smsData.reminderSid;
-        if (sidToSave) await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+        if (smsReminderRes.ok) {
+          const smsData = await smsReminderRes.json();
+          const sidToSave = smsData.sid || smsData.reminderSid;
+          if (sidToSave) await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+        }
       }
 
       alert("Appointment successfully rescheduled!");
       window.location.reload();
-    } catch (err) { alert("Error rescheduling appointment."); }
+    } catch (err) { 
+      alert("Error rescheduling appointment."); 
+    }
     setActionLoading(false);
   };
 

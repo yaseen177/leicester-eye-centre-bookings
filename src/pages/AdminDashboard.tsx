@@ -1,9 +1,8 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Settings, LayoutDashboard, LogOut, Activity, ExternalLink } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 
-// 1. Updated Interface to fix TypeScript errors
 interface ClinicConfig {
   times: { eyeCheck: number; contactLens: number };
   hours: { start: string; end: string };
@@ -158,7 +157,7 @@ export default function AdminDashboard() {
   const handleAdminBooking = async () => {
     try {
       const rawPhone = newBooking.phone.trim();
-      const formattedPhone = rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone;
+      const formattedPhone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
   
       const age = calculateAge(newBooking.dob);
       let category = 'Eye Check Private';
@@ -191,7 +190,7 @@ export default function AdminDashboard() {
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
       const receiptLink = `${window.location.origin}/receipt/${docRef.id}`;
   
-      // Send Email ONLY if an email address was provided
+      // Send Email ONLY if provided
       if (newBooking.email) {
         try {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
@@ -216,32 +215,33 @@ export default function AdminDashboard() {
         }
       }
   
-      // Dynamic SMS Logic based on email presence
-      let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`;
+      // Send SMS ONLY if phone provided
+      if (formattedPhone && formattedPhone.length > 5) {
+        let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`;
 
-      // If email is blank, append the Magic Link!
-      if (!newBooking.email) {
-        smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} at ${newBooking.time}.\n\nTo receive your full digital confirmation and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
-      }
+        if (!newBooking.email) {
+          smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\n\nTo receive your full digital receipt and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
+        }
 
-      const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
-      const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
-      
-      const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: formattedPhone,
-          body: smsMessage,
-          reminderTime: newReminderDate.toISOString() 
-        })
-      });
-  
-      if (smsRes.ok) {
-        const smsData = await smsRes.json();
-        const sid = smsData.sid || smsData.reminderSid;
-        if (sid) {
-          await setDoc(docRef, { reminderSid: sid }, { merge: true });
+        const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
+        const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
+        
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: formattedPhone,
+            body: smsMessage,
+            reminderTime: newReminderDate.toISOString() 
+          })
+        });
+    
+        if (smsRes.ok) {
+          const smsData = await smsRes.json();
+          const sid = smsData.sid || smsData.reminderSid;
+          if (sid) {
+            await setDoc(docRef, { reminderSid: sid }, { merge: true });
+          }
         }
       }
   
@@ -275,7 +275,47 @@ export default function AdminDashboard() {
     return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
   };
 
-  
+  // ADMIN CANCELLATION (Now sends notifications)
+  const deleteApp = async (bookingData: any) => {
+    if (window.confirm("Are you sure you want to cancel this appointment and notify the patient?")) {
+      try {
+        // Send Email
+        if (bookingData.email) {
+          await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "send_email",
+              templateId: 3, 
+              to_email: bookingData.email,
+              patient_name: bookingData.patientName.split(' ')[0],
+              params: {
+                patient_name: bookingData.patientName.split(' ')[0],
+                date: new Date(bookingData.appointmentDate).toLocaleDateString('en-GB'),
+                time: bookingData.appointmentTime
+              }
+            })
+          }).catch(e => console.error(e));
+        }
+
+        // Send SMS & Cancel Reminder
+        if (bookingData.phone) {
+          await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: bookingData.phone,
+              body: `Cancellation: ${bookingData.patientName.split(' ')[0]}, your appointment on ${new Date(bookingData.appointmentDate).toLocaleDateString('en-GB')} @ ${bookingData.appointmentTime} has been cancelled. The Eye Centre.`,
+              cancelSid: bookingData.reminderSid
+            })
+          }).catch(e => console.error(e));
+        }
+
+        await deleteDoc(doc(db, "appointments", bookingData.id));
+      } catch (err) {
+        alert("Failed to delete appointment.");
+      }
+    }
+  };
 
   const updateStatus = async (id: string, newStatus: string) => {
     try {
@@ -301,11 +341,10 @@ export default function AdminDashboard() {
           }).then(async (res) => {
               const data = await res.json();
               if (!res.ok) throw new Error(data.error || "Worker failed");
-              alert(`Email scheduled! (Sent via Worker)`);
+              alert(`Email scheduled!`);
               await setDoc(appRef, { reviewEmailSent: true, reviewEmailLastSent: new Date().toISOString() }, { merge: true });
           }).catch(err => {
               console.error("Worker failed:", err);
-              alert(`Failed to schedule: ${err.message}`);
           });
         }
       }
@@ -325,11 +364,12 @@ export default function AdminDashboard() {
     }
   };
 
+  // ADMIN RESCHEDULING (Now sends notifications)
   const updateAppointment = async () => {
     if (!editingApp) return;
     try {
       const rawPhone = editingApp.phone.trim();
-      const formattedPhone = rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone;
+      const formattedPhone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
   
       const appRef = doc(db, "appointments", editingApp.id);
       await setDoc(appRef, {
@@ -340,29 +380,52 @@ export default function AdminDashboard() {
         appointmentTime: editingApp.appointmentTime,
         appointmentDate: editingApp.appointmentDate
       }, { merge: true });
+
+      // 1. Send Email (if provided)
+      if (editingApp.email) {
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "send_email",
+            templateId: 4, 
+            to_email: editingApp.email,
+            patient_name: editingApp.patientName.split(' ')[0],
+            params: {
+              patient_name: editingApp.patientName.split(' ')[0],
+              new_date: new Date(editingApp.appointmentDate).toLocaleDateString('en-GB'),
+              new_time: editingApp.appointmentTime,
+              manage_link: `${window.location.origin}/manage/${editingApp.id}`
+            }
+          })
+        }).catch(e => console.error(e));
+      }
   
-      const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
-      const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
-  
-      const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: formattedPhone,
-          body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} at ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
-          reminderTime: newReminderDate.toISOString()
-        })
-      });
-  
-      if (smsRes.ok) {
-        const { sid } = await smsRes.json();
-        if (sid) {
-          await setDoc(appRef, { reminderSid: sid }, { merge: true });
+      // 2. Send SMS (if provided)
+      if (formattedPhone && formattedPhone.length > 5) {
+        const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
+        const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
+    
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: formattedPhone,
+            body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} @ ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
+            reminderTime: newReminderDate.toISOString()
+          })
+        });
+    
+        if (smsRes.ok) {
+          const { sid } = await smsRes.json();
+          if (sid) {
+            await setDoc(appRef, { reminderSid: sid }, { merge: true });
+          }
         }
       }
   
       setEditingApp(null);
-      alert("Appointment updated and new SMS reminder scheduled.");
+      alert("Appointment updated and notifications scheduled.");
     } catch (err) {
       console.error(err);
       alert("Failed to update appointment.");
@@ -530,13 +593,19 @@ export default function AdminDashboard() {
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
                         <span className="font-black text-[#3F9185]">E:</span> {booking.email ? booking.email : <span className="text-orange-400 italic">No email provided</span>}
                       </span>
-                      <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">T:</span> {booking.phone}</span>
+                      <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
+                        <span className="font-black text-[#3F9185]">T:</span> {booking.phone ? booking.phone : <span className="text-orange-400 italic">No phone provided</span>}
+                      </span>
                     </div>
                   </div>
                   
                   <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
                     <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit">
                       <Settings size={18} />
+                    </button>
+                    {/* Add back the delete button here, but using the whole booking object */}
+                    <button onClick={() => deleteApp(booking)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete">
+                      <Trash2 size={18} />
                     </button>
                     <button onClick={() => window.open(`/manage/${booking.id}`, '_blank')} className="text-slate-300 hover:text-blue-500 p-2 hover:bg-blue-50 rounded-full transition-colors" title="Manage Booking">
                       <ExternalLink size={18} />
@@ -810,7 +879,6 @@ export default function AdminDashboard() {
           <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
         </div>
         
-        {/* NEW OPTIONAL EMAIL FIELD WITH QUICK DOMAIN BUTTONS */}
         <div className="col-span-full space-y-2">
           <input 
             type="email"
@@ -819,7 +887,6 @@ export default function AdminDashboard() {
             value={newBooking.email}
             onChange={e => setNewBooking({...newBooking, email: e.target.value.toLowerCase()})} 
           />
-          {/* Quick Domain Buttons - Only show if they have started typing but haven't added the @ yet */}
           {newBooking.email && !newBooking.email.includes('@') && (
             <div className="flex flex-wrap gap-2 px-1 animate-in fade-in">
               {['@gmail.com', '@hotmail.co.uk', '@hotmail.com', '@outlook.com', '@yahoo.co.uk'].map(domain => (
@@ -835,7 +902,7 @@ export default function AdminDashboard() {
           )}
         </div>
         
-        <input placeholder="Phone" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
+        <input placeholder="Phone (Optional if Email provided)" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
         
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
@@ -909,7 +976,7 @@ export default function AdminDashboard() {
         <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
         <button 
           onClick={handleAdminBooking} 
-          disabled={!newBooking.time || !newBooking.firstName || isDateClosed()} 
+          disabled={!newBooking.time || !newBooking.firstName || (!newBooking.email && !newBooking.phone) || isDateClosed()} 
           className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
         >
           Confirm Booking
