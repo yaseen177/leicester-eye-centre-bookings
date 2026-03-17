@@ -176,13 +176,11 @@ export default function BookingPage() {
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
-      // 1. Format Phone Number (if provided)
       const cleanPhone = booking.phone.trim();
       const formattedPhone = cleanPhone 
         ? (cleanPhone.startsWith('0') ? `+44${cleanPhone.substring(1)}` : (cleanPhone.startsWith('+') ? cleanPhone : `+44${cleanPhone}`)) 
         : '';
 
-      // 2. Save the initial appointment
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
         email: booking.email.toLowerCase(),
@@ -197,7 +195,6 @@ export default function BookingPage() {
 
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
 
-      // 3. Email Logic (Only if Email is provided)
       if (booking.email) {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST",
@@ -218,12 +215,13 @@ export default function BookingPage() {
         }).catch(e => console.error("Email error", e));
       }
 
-      // 4. SMS Logic (Only if Phone is provided)
       if (formattedPhone && formattedPhone.length > 5) {
-        const appointmentDate = new Date(`${booking.date}T${booking.time}`);
-        const reminderDate = new Date(appointmentDate.getTime() - (24 * 60 * 60 * 1000));
+        const appointmentDateObj = new Date(`${booking.date}T${booking.time}`);
+        const reminderDate = new Date(appointmentDateObj.getTime() - (24 * 60 * 60 * 1000));
+        const now = new Date();
 
         try {
+          // 1. Immediate Confirmation SMS
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -233,21 +231,25 @@ export default function BookingPage() {
             })
           });
 
-          const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              to: formattedPhone,
-              body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow @ ${booking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
-              reminderTime: reminderDate.toISOString() 
-            })
-          });
+          // 2. Schedule 24h Reminder ONLY if appointment is more than 24 hours away
+          // We include a 15 min buffer as Twilio requires scheduling to be at least 15 mins in the future
+          if (reminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
+            const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: formattedPhone,
+                body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow @ ${booking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
+                reminderTime: reminderDate.toISOString() 
+              })
+            });
 
-          if (smsResponse.ok) {
-            const smsData = await smsResponse.json();
-            const sidToSave = smsData.sid || smsData.reminderSid;
-            if (sidToSave) {
-              await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+            if (smsResponse.ok) {
+              const smsData = await smsResponse.json();
+              const sidToSave = smsData.sid || smsData.reminderSid;
+              if (sidToSave) {
+                await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+              }
             }
           }
         } catch (smsError) {

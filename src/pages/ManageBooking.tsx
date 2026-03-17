@@ -23,7 +23,6 @@ export default function ManageBooking() {
   const [appointment, setAppointment] = useState<any>(null);
   const [view, setView] = useState<'main' | 'cancel' | 'reschedule'>('main');
 
-  // Phone Addition State
   const [newPhone, setNewPhone] = useState('');
   const [isUpdatingPhone, setIsUpdatingPhone] = useState(false);
 
@@ -136,7 +135,6 @@ export default function ManageBooking() {
     setActionLoading(false);
   };
 
-  // --- NEW: ADD PHONE NUMBER LOGIC ---
   const handleAddPhone = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPhone || newPhone.length < 10) return alert("Please enter a valid mobile number.");
@@ -147,33 +145,43 @@ export default function ManageBooking() {
       const formattedPhone = rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone;
 
       const docRef = doc(db, 'appointments', id!);
-      
-      // 1. Update Firestore
       await setDoc(docRef, { phone: formattedPhone }, { merge: true });
 
-      // 2. Schedule Reminder & Send Welcome SMS
-      const apptDate = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}`);
-      const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
+      const apptDateObj = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}`);
+      const newReminderDate = new Date(apptDateObj.getTime() - (24 * 60 * 60 * 1000));
+      const now = new Date();
 
-      const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+      // 1. Immediate Welcome SMS
+      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: formattedPhone,
-          body: `Alert: ${appointment.patientName.split(' ')[0]}, your mobile number has been successfully linked to your booking on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime}. You will now receive SMS updates.`,
-          reminderTime: newReminderDate.toISOString()
+          body: `Alert: ${appointment.patientName.split(' ')[0]}, your mobile number has been successfully linked to your booking on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime}. You will now receive SMS updates.`
         })
       });
 
-      if (smsRes.ok) {
-        const smsData = await smsRes.json();
-        const sid = smsData.sid || smsData.reminderSid;
-        if (sid) {
-          await setDoc(docRef, { reminderSid: sid }, { merge: true });
+      // 2. Schedule Reminder ONLY if > 24 hours away
+      if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: formattedPhone,
+            body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${appointment.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${id}`,
+            reminderTime: newReminderDate.toISOString()
+          })
+        });
+
+        if (smsRes.ok) {
+          const smsData = await smsRes.json();
+          const sid = smsData.sid || smsData.reminderSid;
+          if (sid) {
+            await setDoc(docRef, { reminderSid: sid }, { merge: true });
+          }
         }
       }
 
-      // Update local state so UI refreshes
       setAppointment({ ...appointment, phone: formattedPhone });
       setNewPhone('');
       alert("Phone number added successfully! A confirmation text has been sent.");
@@ -251,9 +259,7 @@ export default function ManageBooking() {
       }
 
       if (appointment.phone) {
-        const newApptDate = new Date(`${rescheduleDate}T${rescheduleTime}`);
-        const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
-
+        // 1. Immediate Update SMS
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -263,19 +269,26 @@ export default function ManageBooking() {
           })
         });
 
-        const smsReminderRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: appointment.phone,
-            body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${rescheduleTime} at The Eye Centre. If you need to manage this, click here: ${window.location.origin}/manage/${id}`,
-            reminderTime: newReminderDate.toISOString() 
-          })
-        });
+        const newApptDateObj = new Date(`${rescheduleDate}T${rescheduleTime}`);
+        const newReminderDate = new Date(newApptDateObj.getTime() - (24 * 60 * 60 * 1000));
+        const now = new Date();
 
-        if (smsReminderRes.ok) {
-          const smsData = await smsReminderRes.json();
-          const sidToSave = smsData.sid || smsData.reminderSid;
-          if (sidToSave) await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+        // 2. Schedule new Reminder ONLY if > 24 hours away
+        if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
+          const smsReminderRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: appointment.phone,
+              body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${rescheduleTime} at The Eye Centre. If you need to manage this, click here: ${window.location.origin}/manage/${id}`,
+              reminderTime: newReminderDate.toISOString() 
+            })
+          });
+
+          if (smsReminderRes.ok) {
+            const smsData = await smsReminderRes.json();
+            const sidToSave = smsData.sid || smsData.reminderSid;
+            if (sidToSave) await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
+          }
         }
       }
 
@@ -309,7 +322,6 @@ export default function ManageBooking() {
               </div>
             </div>
 
-            {/* CONDITIONAL ADD PHONE BANNER */}
             {!appointment.phone && (
               <form onSubmit={handleAddPhone} className="bg-[#3F9185]/10 p-4 rounded-2xl border border-[#3F9185]/20 space-y-3 animate-in fade-in slide-in-from-bottom-2">
                 <div className="flex items-center gap-2">
@@ -337,7 +349,6 @@ export default function ManageBooking() {
             )}
 
             <div className="space-y-3 pt-4">
-              {/* ONLY SHOW RESEND SMS IF PHONE EXISTS */}
               {appointment.phone && (
                 <button onClick={handleResendSMS} disabled={actionLoading} className="w-full py-3 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 flex justify-center items-center gap-2 transition-colors">
                   <Send size={18} /> Resend SMS Confirmation

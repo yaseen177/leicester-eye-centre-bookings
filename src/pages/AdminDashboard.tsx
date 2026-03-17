@@ -190,7 +190,6 @@ export default function AdminDashboard() {
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
       const receiptLink = `${window.location.origin}/receipt/${docRef.id}`;
   
-      // Send Email ONLY if provided
       if (newBooking.email) {
         try {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
@@ -215,7 +214,6 @@ export default function AdminDashboard() {
         }
       }
   
-      // Send SMS ONLY if phone provided
       if (formattedPhone && formattedPhone.length > 5) {
         let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`;
 
@@ -223,24 +221,38 @@ export default function AdminDashboard() {
           smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\n\nTo receive your full digital receipt and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
         }
 
-        const apptDate = new Date(`${selectedDate}T${newBooking.time}`);
-        const newReminderDate = new Date(apptDate.getTime() - (24 * 60 * 60 * 1000));
-        
-        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        // 1. Immediate Admin Confirmation SMS
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: formattedPhone,
-            body: smsMessage,
-            reminderTime: newReminderDate.toISOString() 
+            body: smsMessage
           })
         });
-    
-        if (smsRes.ok) {
-          const smsData = await smsRes.json();
-          const sid = smsData.sid || smsData.reminderSid;
-          if (sid) {
-            await setDoc(docRef, { reminderSid: sid }, { merge: true });
+
+        const apptDateObj = new Date(`${selectedDate}T${newBooking.time}`);
+        const newReminderDate = new Date(apptDateObj.getTime() - (24 * 60 * 60 * 1000));
+        const now = new Date();
+        
+        // 2. Schedule Reminder ONLY if > 24 hours away
+        if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
+          const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: formattedPhone,
+              body: `Reminder: ${newBooking.firstName}, your ${newBooking.service} is tomorrow @ ${newBooking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
+              reminderTime: newReminderDate.toISOString() 
+            })
+          });
+      
+          if (smsRes.ok) {
+            const smsData = await smsRes.json();
+            const sid = smsData.sid || smsData.reminderSid;
+            if (sid) {
+              await setDoc(docRef, { reminderSid: sid }, { merge: true });
+            }
           }
         }
       }
@@ -275,11 +287,9 @@ export default function AdminDashboard() {
     return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
   };
 
-  // ADMIN CANCELLATION (Now sends notifications)
   const deleteApp = async (bookingData: any) => {
     if (window.confirm("Are you sure you want to cancel this appointment and notify the patient?")) {
       try {
-        // Send Email
         if (bookingData.email) {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
             method: "POST",
@@ -298,7 +308,6 @@ export default function AdminDashboard() {
           }).catch(e => console.error(e));
         }
 
-        // Send SMS & Cancel Reminder
         if (bookingData.phone) {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -364,7 +373,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // ADMIN RESCHEDULING (Now sends notifications)
   const updateAppointment = async () => {
     if (!editingApp) return;
     try {
@@ -381,7 +389,6 @@ export default function AdminDashboard() {
         appointmentDate: editingApp.appointmentDate
       }, { merge: true });
 
-      // 1. Send Email (if provided)
       if (editingApp.email) {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST",
@@ -401,25 +408,39 @@ export default function AdminDashboard() {
         }).catch(e => console.error(e));
       }
   
-      // 2. Send SMS (if provided)
       if (formattedPhone && formattedPhone.length > 5) {
-        const newApptDate = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
-        const newReminderDate = new Date(newApptDate.getTime() - (24 * 60 * 60 * 1000));
-    
-        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        // 1. Immediate Update SMS & Cancel old reminder
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: formattedPhone,
             body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} @ ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
-            reminderTime: newReminderDate.toISOString()
+            cancelSid: editingApp.reminderSid
           })
         });
+
+        const newApptDateObj = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
+        const newReminderDate = new Date(newApptDateObj.getTime() - (24 * 60 * 60 * 1000));
+        const now = new Date();
     
-        if (smsRes.ok) {
-          const { sid } = await smsRes.json();
-          if (sid) {
-            await setDoc(appRef, { reminderSid: sid }, { merge: true });
+        // 2. Schedule New Reminder ONLY if > 24 hours away
+        if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
+          const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: formattedPhone,
+              body: `Reminder: ${editingApp.patientName.split(' ')[0]}, your appointment is tomorrow @ ${editingApp.appointmentTime} at The Eye Centre. If you need to manage this, click here: ${window.location.origin}/manage/${editingApp.id}`,
+              reminderTime: newReminderDate.toISOString()
+            })
+          });
+      
+          if (smsRes.ok) {
+            const { sid } = await smsRes.json();
+            if (sid) {
+              await setDoc(appRef, { reminderSid: sid }, { merge: true });
+            }
           }
         }
       }
@@ -603,7 +624,6 @@ export default function AdminDashboard() {
                     <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit">
                       <Settings size={18} />
                     </button>
-                    {/* Add back the delete button here, but using the whole booking object */}
                     <button onClick={() => deleteApp(booking)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete">
                       <Trash2 size={18} />
                     </button>
