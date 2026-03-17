@@ -14,9 +14,10 @@ interface ClinicConfig {
 }
 
 export default function AdminDashboard() {
+  // 1. ADDED LOGS VIEW STATE
   const [view, setView] = useState<'diary' | 'settings' | 'logs'>('diary');
   const [appointments, setAppointments] = useState<any[]>([]);
-  const [logs, setLogs] = useState<any[]>([]); // NEW: State for Logs
+  const [logs, setLogs] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [editingApp, setEditingApp] = useState<any>(null);
   const [closedDates, setClosedDates] = useState<string[]>([]);
@@ -37,7 +38,7 @@ export default function AdminDashboard() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [currentResultIndex, setCurrentResultIndex] = useState(0);
 
-  // NEW: Log Search & Filter State
+  // 2. ADDED LOG FILTER STATES
   const [logSearch, setLogSearch] = useState("");
   const [logTypeFilter, setLogTypeFilter] = useState("All");
   const [logStatusFilter, setLogStatusFilter] = useState("All");
@@ -69,7 +70,7 @@ export default function AdminDashboard() {
       setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // NEW: Listen for Logs
+    // 3. RESTORED FIREBASE LOGS SYNC
     const qLogs = query(collection(db, "logs"), orderBy("timestamp", "desc"));
     const unsubLogs = onSnapshot(qLogs, (snap) => {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -100,7 +101,7 @@ export default function AdminDashboard() {
     return () => { unsubAppts(); unsubLogs(); };
   }, []);
 
-  // --- NEW: HELPER TO WRITE LOGS ---
+  // 4. RESTORED LOG WRITING HELPER
   const writeLog = async (type: 'Email' | 'SMS', patientName: string, contactInfo: string, status: 'Sent' | 'Failed', action: string, apptDate: string, apptTime: string, errorMsg = '') => {
     try {
       await addDoc(collection(db, "logs"), {
@@ -142,6 +143,12 @@ export default function AdminDashboard() {
     const duration = newBooking.service === 'Eye Check' ? config.times.eyeCheck : config.times.contactLens;
     const slots: string[] = [];
 
+    // 5. FIXED TIME FILTERING (No past slots today)
+    const now = new Date();
+    const localDateStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    const isToday = targetDate === localDateStr;
+    const currentMins = (now.getHours() * 60) + now.getMinutes();
+
     const dayBookings = appointments
       .filter(b => b.appointmentDate === targetDate)
       .map(b => {
@@ -151,6 +158,10 @@ export default function AdminDashboard() {
 
     for (let current = startMins; current + duration <= endMins; current += 5) {
       const potentialEnd = current + duration;
+      
+      // Blocks past times today
+      if (isToday && current <= currentMins) continue;
+
       const overlapsLunch = isLunchEnabled && (current < lunchEndMins && potentialEnd > lunchStartMins);
       const isOverlap = dayBookings.some(b => (current < b.end && potentialEnd > b.start));
 
@@ -332,7 +343,7 @@ export default function AdminDashboard() {
 
           const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
               method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "schedule_review", email: booking.email, patientName: booking.patientName, reviewLink: "https://www.google.com/search?q=the+eye+centre+leicester+reviews" }) // Truncated URL for brevity
+              body: JSON.stringify({ type: "schedule_review", email: booking.email, patientName: booking.patientName, reviewLink: "https://www.google.com/search?q=the+eye+centre+leicester+reviews" })
           });
           if (res.ok) {
             await writeLog('Email', booking.patientName, booking.email, 'Sent', 'Review Request Queued', booking.appointmentDate, booking.appointmentTime);
