@@ -383,6 +383,8 @@ export default function AdminDashboard() {
       const formattedPhone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
   
       const appRef = doc(db, "appointments", editingApp.id);
+      
+      // Simply update the database silently without triggering any webhooks/APIs
       await setDoc(appRef, {
         patientName: editingApp.patientName,
         email: editingApp.email,
@@ -390,55 +392,13 @@ export default function AdminDashboard() {
         dob: editingApp.dob,
         appointmentTime: editingApp.appointmentTime,
         appointmentDate: editingApp.appointmentDate,
-        notes: editingApp.notes || ""
+        notes: editingApp.notes || "" 
       }, { merge: true });
-
-      if (editingApp.email) {
-        const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "send_email", templateId: 4, to_email: editingApp.email, patient_name: editingApp.patientName.split(' ')[0],
-            params: { patient_name: editingApp.patientName.split(' ')[0], new_date: new Date(editingApp.appointmentDate).toLocaleDateString('en-GB'), new_time: editingApp.appointmentTime, manage_link: `${window.location.origin}/manage/${editingApp.id}` }
-          })
-        });
-        if (res.ok) await writeLog('Email', editingApp.patientName, editingApp.email, 'Sent', 'Reschedule', editingApp.appointmentDate, editingApp.appointmentTime);
-      }
-  
-      if (formattedPhone && formattedPhone.length > 5) {
-        const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: formattedPhone,
-            body: `Update: ${editingApp.patientName.split(' ')[0]}, your appointment has been updated to ${new Date(editingApp.appointmentDate).toLocaleDateString('en-GB')} @ ${editingApp.appointmentTime}. The Eye Centre, Leicester.`,
-            cancelSid: editingApp.reminderSid
-          })
-        });
-        if (res.ok) await writeLog('SMS', editingApp.patientName, formattedPhone, 'Sent', 'Reschedule', editingApp.appointmentDate, editingApp.appointmentTime);
-
-        const newApptDateObj = new Date(`${editingApp.appointmentDate}T${editingApp.appointmentTime}`);
-        const newReminderDate = new Date(newApptDateObj.getTime() - (24 * 60 * 60 * 1000));
-        const now = new Date();
-    
-        if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
-          const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              to: formattedPhone,
-              body: `Reminder: ${editingApp.patientName.split(' ')[0]}, your appointment is tomorrow @ ${editingApp.appointmentTime} at The Eye Centre. If you need to manage this, click here: ${window.location.origin}/manage/${editingApp.id}`,
-              reminderTime: newReminderDate.toISOString()
-            })
-          });
-      
-          if (smsRes.ok) {
-            const { sid } = await smsRes.json();
-            if (sid) await setDoc(appRef, { reminderSid: sid }, { merge: true });
-          }
-        }
-      }
   
       setEditingApp(null);
-      alert("Appointment updated and notifications scheduled.");
+      alert("Patient details updated successfully.");
     } catch (err) {
+      console.error(err);
       alert("Failed to update appointment.");
     }
   };
