@@ -188,6 +188,14 @@ export default function AdminDashboard() {
         else if (age <= 18 && newBooking.inFullTimeEducation) category = 'Eye Check NHS';
         else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
       }
+
+      // NEW: Automatically generate notes from the checkboxes
+      const generatedNotes = [
+        newBooking.inFullTimeEducation ? "In full-time education" : "",
+        newBooking.onBenefits ? "Receiving income-related benefits" : "",
+        newBooking.isDiabetic ? "Diabetic" : "",
+        newBooking.familyGlaucoma ? "Family history of Glaucoma" : ""
+      ].filter(Boolean).join(", ");
   
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${newBooking.firstName} ${newBooking.lastName}`,
@@ -202,6 +210,7 @@ export default function AdminDashboard() {
         onBenefits: newBooking.onBenefits,
         familyGlaucoma: newBooking.familyGlaucoma,
         inFullTimeEducation: newBooking.inFullTimeEducation,
+        notes: generatedNotes, // <-- NEW: Save notes to database
         createdAt: serverTimestamp()
       });
 
@@ -375,8 +384,13 @@ export default function AdminDashboard() {
   
       const appRef = doc(db, "appointments", editingApp.id);
       await setDoc(appRef, {
-        patientName: editingApp.patientName, email: editingApp.email, phone: formattedPhone,
-        dob: editingApp.dob, appointmentTime: editingApp.appointmentTime, appointmentDate: editingApp.appointmentDate
+        patientName: editingApp.patientName,
+        email: editingApp.email,
+        phone: formattedPhone,
+        dob: editingApp.dob,
+        appointmentTime: editingApp.appointmentTime,
+        appointmentDate: editingApp.appointmentDate,
+        notes: editingApp.notes || ""
       }, { merge: true });
 
       if (editingApp.email) {
@@ -543,6 +557,19 @@ export default function AdminDashboard() {
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">E:</span> {booking.email ? booking.email : <span className="text-orange-400 italic">No email provided</span>}</span>
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">T:</span> {booking.phone ? booking.phone : <span className="text-orange-400 italic">No phone provided</span>}</span>
                     </div>
+
+                    {/* NEW: Admin Notes Display */}
+                    {booking.notes && (
+                      <div className="ml-1 pt-2">
+                        <div className="bg-yellow-50/70 border border-yellow-100/50 rounded-lg p-2.5 shadow-sm">
+                          <p className="text-[11px] font-medium text-slate-600 leading-snug">
+                            <span className="font-black text-yellow-600 uppercase tracking-wider mr-1">Notes:</span> 
+                            {booking.notes}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    
                   </div>
                   <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
                     <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit"><Settings size={18} /></button>
@@ -825,6 +852,7 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      {/* MODAL 1: EDIT APPOINTMENT */}
       {editingApp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
           <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full animate-in zoom-in-95 shadow-2xl">
@@ -833,6 +861,15 @@ export default function AdminDashboard() {
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.patientName} onChange={e => setEditingApp({...editingApp, patientName: e.target.value})} placeholder="Name" />
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.email} onChange={e => setEditingApp({...editingApp, email: e.target.value})} placeholder="Email" />
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.phone} onChange={e => setEditingApp({...editingApp, phone: e.target.value})} placeholder="Phone" />
+              
+              {/* NEW: Notes Textarea */}
+              <textarea 
+                className="w-full p-4 bg-slate-50 rounded-xl outline-none resize-none h-24 text-sm" 
+                value={editingApp.notes || ''} 
+                onChange={e => setEditingApp({...editingApp, notes: e.target.value})} 
+                placeholder="Admin Notes (Internal only)" 
+              />
+              
             </div>
             <div className="flex gap-3 mt-8">
               <button onClick={() => setEditingApp(null)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>

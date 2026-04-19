@@ -181,6 +181,14 @@ export default function BookingPage() {
         ? (cleanPhone.startsWith('0') ? `+44${cleanPhone.substring(1)}` : (cleanPhone.startsWith('+') ? cleanPhone : `+44${cleanPhone}`)) 
         : '';
 
+      // NEW: Automatically generate notes from the checkboxes
+      const generatedNotes = [
+        booking.inFullTimeEducation ? "In full-time education" : "",
+        booking.onBenefits ? "Receiving income-related benefits" : "",
+        booking.isDiabetic ? "Diabetic" : "",
+        booking.familyGlaucoma ? "Family history of Glaucoma" : ""
+      ].filter(Boolean).join(", ");
+
       const docRef = await addDoc(collection(db, "appointments"), {
         patientName: `${booking.firstName} ${booking.lastName}`,
         email: booking.email.toLowerCase(),
@@ -189,6 +197,7 @@ export default function BookingPage() {
         appointmentType: getCategory(),
         appointmentDate: booking.date,
         appointmentTime: booking.time,
+        notes: generatedNotes, // <-- NEW: Save notes to database
         createdAt: serverTimestamp(),
         source: 'Online',
       });
