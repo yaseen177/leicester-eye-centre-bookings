@@ -658,12 +658,27 @@ export default function AdminDashboard() {
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
 
-  // NEW: Refined Unique Patients with WhatsApp-style sorting & unread tracking
+  // NEW: Build the patient list from BOTH Bookings AND Message History
   const uniquePatientsMap = new Map();
+  
+  // 1. Add all known patients who have booked an appointment
   appointments.forEach(app => {
     const key = app.phone || app.email;
     if (key && !uniquePatientsMap.has(key)) {
       uniquePatientsMap.set(key, app);
+    }
+  });
+
+  // 2. Add ANYONE who has sent/received a message, even if they've never booked!
+  chatMessages.forEach(msg => {
+    const key = msg.phone || msg.email;
+    if (key && !uniquePatientsMap.has(key)) {
+      uniquePatientsMap.set(key, {
+        id: `unknown-${key}`, // Creates a safe temporary ID
+        patientName: msg.patientName && msg.patientName !== 'Patient Reply' ? msg.patientName : 'Unknown Sender',
+        phone: msg.phone || '',
+        email: msg.email || ''
+      });
     }
   });
 
