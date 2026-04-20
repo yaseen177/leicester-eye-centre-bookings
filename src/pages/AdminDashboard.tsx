@@ -117,6 +117,25 @@ export default function AdminDashboard() {
     return () => { unsubAppts(); unsubLogs(); unsubMessages(); };
   }, []);
 
+  // NEW: Auto-mark messages as read when viewing a chat
+  useEffect(() => {
+    if (selectedChatPatient && view === 'messages') {
+      const unreadMsgs = chatMessages.filter(m => 
+        m.direction === 'inbound' && 
+        !m.isRead && 
+        ((m.phone && m.phone === selectedChatPatient.phone) || (m.email && m.email === selectedChatPatient.email))
+      );
+
+      if (unreadMsgs.length > 0) {
+        unreadMsgs.forEach(async (msg) => {
+          try {
+            await setDoc(doc(db, "messages", msg.id), { isRead: true }, { merge: true });
+          } catch (e) { console.error("Failed to mark read", e); }
+        });
+      }
+    }
+  }, [chatMessages, selectedChatPatient, view]);
+
   const writeLog = async (type: 'Email' | 'SMS', patientName: string, contactInfo: string, status: 'Sent' | 'Failed', action: string, apptDate: string, apptTime: string, errorMsg = '') => {
     try {
       await addDoc(collection(db, "logs"), {
@@ -639,7 +658,7 @@ export default function AdminDashboard() {
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
 
-  // NEW: Refined Unique Patients to allow those with only emails
+  // NEW: Refined Unique Patients with WhatsApp-style sorting & unread tracking
   const uniquePatientsMap = new Map();
   appointments.forEach(app => {
     const key = app.phone || app.email;
@@ -647,7 +666,40 @@ export default function AdminDashboard() {
       uniquePatientsMap.set(key, app);
     }
   });
-  const uniquePatients = Array.from(uniquePatientsMap.values());
+
+  const patientStats = new Map();
+  let totalUnreadMessages = 0;
+
+  chatMessages.forEach(msg => {
+     const key = msg.phone || msg.email;
+     if (!key) return;
+     if (!patientStats.has(key)) patientStats.set(key, { unread: 0, lastTime: 0 });
+     const stats = patientStats.get(key);
+
+     // Count inbound messages without the isRead flag
+     if (msg.direction === 'inbound' && !msg.isRead) {
+       stats.unread += 1;
+       totalUnreadMessages += 1;
+     }
+
+     // Track the latest message time for sorting
+     const msgTime = msg.timestamp?.seconds || 0;
+     if (msgTime > stats.lastTime) stats.lastTime = msgTime;
+  });
+
+  const uniquePatients = Array.from(uniquePatientsMap.values()).sort((a, b) => {
+     const keyA = a.phone || a.email;
+     const keyB = b.phone || b.email;
+     const statsA = patientStats.get(keyA) || { unread: 0, lastTime: 0 };
+     const statsB = patientStats.get(keyB) || { unread: 0, lastTime: 0 };
+
+     // 1. Pin unread conversations to the top
+     if (statsA.unread > 0 && statsB.unread === 0) return -1;
+     if (statsB.unread > 0 && statsA.unread === 0) return 1;
+
+     // 2. Otherwise, sort by the most recent message
+     return statsB.lastTime - statsA.lastTime;
+  });
 
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
@@ -659,8 +711,13 @@ export default function AdminDashboard() {
             <button onClick={() => setView('diary')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <LayoutDashboard size={18} /> Diary
             </button>
-            <button onClick={() => setView('messages')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'messages' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+            <button onClick={() => setView('messages')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'messages' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <MessageSquare size={18} /> Messages
+              {totalUnreadMessages > 0 && (
+                 <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-md border-2 border-white animate-in zoom-in">
+                    {totalUnreadMessages}
+                 </span>
+              )}
             </button>
             <button onClick={() => setView('logs')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'logs' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <FileText size={18} /> Logs
@@ -803,21 +860,33 @@ export default function AdminDashboard() {
                       (p.email || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
                       (p.phone || '').toLowerCase().includes(patientSearch.toLowerCase())
                     )
-                    .map((patient: any) => (
-                      <button 
-                        key={patient.phone || patient.email} 
-                        onClick={() => setSelectedChatPatient(patient)}
-                        className={`w-full text-left p-4 border-b border-slate-100 hover:bg-white transition-colors flex items-center gap-3 ${selectedChatPatient?.id === patient.id ? 'bg-white border-l-4 border-l-[#3F9185]' : ''}`}
-                      >
-                        <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold shrink-0">
-                          <User size={20} />
-                        </div>
-                        <div className="overflow-hidden">
-                          <p className="font-bold text-slate-800 text-sm truncate">{patient.patientName}</p>
-                          <p className="text-xs text-slate-500 truncate">{patient.phone || patient.email}</p>
-                        </div>
-                      </button>
-                    ))
+                    .map((patient: any) => {
+                      const pKey = patient.phone || patient.email;
+                      const pStats = patientStats.get(pKey) || { unread: 0 };
+                      const isUnread = pStats.unread > 0;
+
+                      return (
+                        <button 
+                          key={pKey} 
+                          onClick={() => setSelectedChatPatient(patient)}
+                          className={`w-full text-left p-4 border-b border-slate-100 hover:bg-white transition-colors flex items-center gap-3 ${selectedChatPatient?.id === patient.id ? 'bg-white border-l-4 border-l-[#3F9185]' : ''} ${isUnread ? 'bg-teal-50/30' : ''}`}
+                        >
+                          <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold shrink-0 relative">
+                            <User size={20} />
+                            {isUnread && <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>}
+                          </div>
+                          <div className="overflow-hidden flex-1">
+                            <p className={`text-sm truncate ${isUnread ? 'font-black text-slate-900' : 'font-bold text-slate-800'}`}>{patient.patientName}</p>
+                            <p className={`text-xs truncate ${isUnread ? 'font-bold text-[#3F9185]' : 'text-slate-500'}`}>{patient.phone || patient.email}</p>
+                          </div>
+                          {isUnread && (
+                            <div className="bg-[#3F9185] text-white text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 shadow-sm animate-in zoom-in">
+                              {pStats.unread}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })
                 )}
 
                 {/* Empty States */}
