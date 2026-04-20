@@ -2,7 +2,9 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
+// @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
+import { jsPDF } from 'jspdf';
 
 interface ClinicConfig {
   times: { eyeCheck: number; contactLens: number };
@@ -1046,10 +1048,10 @@ export default function AdminDashboard() {
 
                                      setIsCompressing(true);
 
-                                     // --- PDF COMPRESSION LOGIC ---
+                                     // --- FULL MULTI-PAGE PDF COMPRESSION ---
                                      if (file.type === 'application/pdf') {
                                        try {
-                                         // Dynamically load the worker via CDN to prevent Vite build errors
+                                         // Use the reliable jsdelivr CDN for the worker
                                          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
                                          const fileReader = new FileReader();
@@ -1057,37 +1059,53 @@ export default function AdminDashboard() {
                                            try {
                                              const typedarray = new Uint8Array(this.result as ArrayBuffer);
                                              const pdf = await pdfjsLib.getDocument(typedarray).promise;
-
-                                             // Render the first page of the PDF (standard for clinical document scans)
-                                             const page = await pdf.getPage(1);
-                                             const viewport = page.getViewport({ scale: 1.5 }); // 1.5x scale maintains legibility
-
-                                             const canvas = document.createElement('canvas');
-                                             const ctx = canvas.getContext('2d');
-                                             if (!ctx) throw new Error("Canvas context failed");
                                              
-                                             canvas.height = viewport.height;
-                                             canvas.width = viewport.width;
+                                             // Create a new blank A4 PDF
+                                             const newPdf = new jsPDF('p', 'pt', 'a4'); 
 
-                                             // @ts-ignore
-                                             await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                                             // Loop through EVERY page in the original PDF
+                                             for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                                               const page = await pdf.getPage(pageNum);
+                                               const viewport = page.getViewport({ scale: 1.5 }); // 1.5x scale maintains good reading quality
+                                               
+                                               const canvas = document.createElement('canvas');
+                                               const ctx = canvas.getContext('2d');
+                                               if (!ctx) continue;
+                                               
+                                               canvas.height = viewport.height;
+                                               canvas.width = viewport.width;
 
-                                             // Export as a lightweight JPEG
-                                             canvas.toBlob((blob) => {
-                                               if (blob) {
-                                                 const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_scan.jpg", {
-                                                   type: 'image/jpeg',
-                                                   lastModified: Date.now(),
-                                                 });
+                                               // @ts-ignore
+                                               await page.render({ canvasContext: ctx, viewport: viewport }).promise;
 
-                                                 if (compressedFile.size > 900 * 1024) {
-                                                   alert("PDF scan is still too large even after compression. Please try a smaller scan.");
-                                                 } else {
-                                                   setEmailData({...emailData, attachment: compressedFile});
-                                                 }
-                                               }
-                                               setIsCompressing(false);
-                                             }, 'image/jpeg', 0.6); 
+                                               // Compress the page to a lightweight JPEG (60% quality)
+                                               const imgData = canvas.toDataURL('image/jpeg', 0.6); 
+
+                                               // Add a new page to our PDF if it's not the first page
+                                               if (pageNum > 1) newPdf.addPage();
+
+                                               // Calculate dimensions to fit the A4 page
+                                               const pdfWidth = newPdf.internal.pageSize.getWidth();
+                                               const pdfHeight = (viewport.height * pdfWidth) / viewport.width;
+
+                                               // Paste the compressed image onto the PDF page
+                                               newPdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+                                             }
+
+                                             // Export the finished, compressed multi-page PDF
+                                             const pdfBlob = newPdf.output('blob');
+                                             const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
+                                               type: 'application/pdf',
+                                               lastModified: Date.now(),
+                                             });
+
+                                             if (compressedFile.size > 900 * 1024) {
+                                               alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
+                                             } else {
+                                               setEmailData({...emailData, attachment: compressedFile});
+                                             }
+                                             setIsCompressing(false);
+
                                            } catch (err) {
                                               console.error(err);
                                               alert("Could not process the PDF. It may be encrypted or corrupted.");
