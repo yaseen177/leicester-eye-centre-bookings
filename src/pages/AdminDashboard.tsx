@@ -181,14 +181,14 @@ export default function AdminDashboard() {
     return slots;
   };
 
-  // --- NEW: SEND CUSTOM SMS ---
   const handleSendSMS = async () => {
     if (!outboundSMS.trim() || !selectedChatPatient?.phone) return;
     setIsSendingComms(true);
     try {
       const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: selectedChatPatient.phone, body: outboundSMS })
+        // NEW: We added `isCustomChat: true` so the worker knows to use the real phone number
+        body: JSON.stringify({ to: selectedChatPatient.phone, body: outboundSMS, isCustomChat: true })
       });
       if (res.ok) {
         await addDoc(collection(db, "messages"), {
@@ -227,24 +227,25 @@ export default function AdminDashboard() {
        }
 
        const payload: any = {
-          type: "send_email",
-          templateId: 7, // Custom Clinic Message Template
-          to_email: selectedChatPatient.email,
+        type: "send_email",
+        templateId: 7, 
+        to_email: selectedChatPatient.email,
+        patient_name: selectedChatPatient.patientName.split(' ')[0],
+        params: {
           patient_name: selectedChatPatient.patientName.split(' ')[0],
-          params: {
-            patient_name: selectedChatPatient.patientName.split(' ')[0],
-            custom_message: emailData.body
-          }
-       };
-       
-       if (attachmentBase64) {
-          payload.attachments = [{ name: attachmentName, content: attachmentBase64 }];
-       }
+          custom_message: emailData.body
+        }
+     };
+     
+     // Change "attachments" to "attachment" so Brevo recognises it
+     if (attachmentBase64) {
+        payload.attachment = [{ name: attachmentName, content: attachmentBase64 }];
+     }
 
-       const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-         method: "POST", headers: { "Content-Type": "application/json" },
-         body: JSON.stringify(payload)
-       });
+     const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+       method: "POST", headers: { "Content-Type": "application/json" },
+       body: JSON.stringify(payload)
+     });
 
        if (res.ok) {
          await writeLog('Email', selectedChatPatient.patientName, selectedChatPatient.email, 'Sent', `Direct Email: ${emailData.subject}`, new Date().toISOString().split('T')[0], '');
