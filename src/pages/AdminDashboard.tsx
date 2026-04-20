@@ -1051,7 +1051,6 @@ export default function AdminDashboard() {
                                      // --- FULL MULTI-PAGE PDF COMPRESSION ---
                                      if (file.type === 'application/pdf') {
                                        try {
-                                         // Use the reliable jsdelivr CDN for the worker
                                          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
                                          const fileReader = new FileReader();
@@ -1060,13 +1059,12 @@ export default function AdminDashboard() {
                                              const typedarray = new Uint8Array(this.result as ArrayBuffer);
                                              const pdf = await pdfjsLib.getDocument(typedarray).promise;
                                              
-                                             // Create a new blank A4 PDF
                                              const newPdf = new jsPDF('p', 'pt', 'a4'); 
 
-                                             // Loop through EVERY page in the original PDF
                                              for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                                                const page = await pdf.getPage(pageNum);
-                                               const viewport = page.getViewport({ scale: 1.5 }); // 1.5x scale maintains good reading quality
+                                               // Lowered scale to 1.2 to safely fit within database limits
+                                               const viewport = page.getViewport({ scale: 1.2 }); 
                                                
                                                const canvas = document.createElement('canvas');
                                                const ctx = canvas.getContext('2d');
@@ -1078,28 +1076,25 @@ export default function AdminDashboard() {
                                                // @ts-ignore
                                                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
 
-                                               // Compress the page to a lightweight JPEG (60% quality)
-                                               const imgData = canvas.toDataURL('image/jpeg', 0.6); 
+                                               // Lowered quality to 0.5 to reduce file bloat
+                                               const imgData = canvas.toDataURL('image/jpeg', 0.5); 
 
-                                               // Add a new page to our PDF if it's not the first page
                                                if (pageNum > 1) newPdf.addPage();
 
-                                               // Calculate dimensions to fit the A4 page
                                                const pdfWidth = newPdf.internal.pageSize.getWidth();
                                                const pdfHeight = (viewport.height * pdfWidth) / viewport.width;
 
-                                               // Paste the compressed image onto the PDF page
                                                newPdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
                                              }
 
-                                             // Export the finished, compressed multi-page PDF
                                              const pdfBlob = newPdf.output('blob');
                                              const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
                                                type: 'application/pdf',
                                                lastModified: Date.now(),
                                              });
 
-                                             if (compressedFile.size > 900 * 1024) {
+                                             // NEW LIMIT: 700KB (Allows for 33% Base64 inflation)
+                                             if (compressedFile.size > 700 * 1024) {
                                                alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
                                              } else {
                                                setEmailData({...emailData, attachment: compressedFile});
@@ -1117,7 +1112,7 @@ export default function AdminDashboard() {
                                           alert("Failed to initialise PDF compressor.");
                                           setIsCompressing(false);
                                        }
-                                       return; // Exit here so it doesn't run the image logic below
+                                       return;
                                      }
 
                                      // --- STANDARD IMAGE COMPRESSION LOGIC ---
@@ -1132,7 +1127,8 @@ export default function AdminDashboard() {
                                             let width = img.width;
                                             let height = img.height;
 
-                                            const MAX_DIMENSION = 1200;
+                                            // Lowered dimension limit to 1000px
+                                            const MAX_DIMENSION = 1000;
                                             if (width > height && width > MAX_DIMENSION) {
                                               height *= MAX_DIMENSION / width;
                                               width = MAX_DIMENSION;
@@ -1153,14 +1149,14 @@ export default function AdminDashboard() {
                                                   lastModified: Date.now(),
                                                 });
 
-                                                if (compressedFile.size > 900 * 1024) {
+                                                if (compressedFile.size > 700 * 1024) {
                                                   alert("Image is still too large even after compression. Please try a smaller scan.");
                                                 } else {
                                                   setEmailData({...emailData, attachment: compressedFile});
                                                 }
                                               }
                                               setIsCompressing(false);
-                                            }, 'image/jpeg', 0.6); 
+                                            }, 'image/jpeg', 0.5); // Dropped quality to 0.5
                                           };
                                         };
                                      } catch (err) {
