@@ -985,6 +985,7 @@ export default function AdminDashboard() {
                                              canvas.height = viewport.height;
                                              canvas.width = viewport.width;
 
+                                             // @ts-ignore
                                              await page.render({ canvasContext: ctx, viewport: viewport }).promise;
 
                                              // Export as a lightweight JPEG
