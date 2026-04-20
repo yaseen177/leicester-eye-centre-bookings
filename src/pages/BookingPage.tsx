@@ -46,6 +46,23 @@ export default function BookingPage() {
     familyGlaucoma: false
   });
 
+  // --- NEW: HEARINGCARE STATE ---
+  const [hearingForm, setHearingForm] = useState({
+    fullName: '',
+    email: '',
+    phone: '',
+    preferences: {
+      Monday: { am: false, pm: false },
+      Tuesday: { am: false, pm: false },
+      Wednesday: { am: false, pm: false },
+      Thursday: { am: false, pm: false },
+      Friday: { am: false, pm: false },
+      Saturday: { am: false, pm: false },
+    } as Record<string, { am: boolean, pm: boolean }>,
+    notes: ''
+  });
+  const [formErrors, setFormErrors] = useState({ email: '', phone: '' });
+
   useEffect(() => {
     const unsubBookings = onSnapshot(collection(db, "appointments"), (snap) => {
       setExistingBookings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -75,7 +92,7 @@ export default function BookingPage() {
   }, []);
 
   useEffect(() => {
-    if (existingBookings.length >= 0 && booking.service) {
+    if (existingBookings.length >= 0 && booking.service && booking.service !== 'Hearingcare') {
       const firstAvailable = findFirstAvailableDate();
       if (firstAvailable !== booking.date) {
         setBooking(prev => ({ ...prev, date: firstAvailable }));
@@ -140,6 +157,7 @@ export default function BookingPage() {
     
     return Array.from(new Set(slots)).sort();
 };
+
   const findFirstAvailableDate = () => {
     let checkDate = new Date();
     for (let i = 0; i < 30; i++) {
@@ -173,6 +191,82 @@ export default function BookingPage() {
     return age;
   };
 
+  // --- NEW: VALIDATION & SUBMIT FOR HEARINGCARE ---
+  const handleHearingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    let valid = true;
+    let errors = { email: '', phone: '' };
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(hearingForm.email)) {
+      errors.email = 'Please enter a valid email address';
+      valid = false;
+    }
+
+    const cleanPhone = hearingForm.phone.replace(/[\s-]/g, '');
+    const phoneRegex = /^((\+44)|(0))[1-9]\d{8,9}$/;
+    if (!phoneRegex.test(cleanPhone)) {
+      errors.phone = 'Please enter a valid UK mobile or landline number';
+      valid = false;
+    }
+
+    setFormErrors(errors);
+    if (!valid) return;
+
+    setLoading(true);
+    try {
+      // Format preferences into a readable string
+      const prefs: string[] = [];
+      Object.entries(hearingForm.preferences).forEach(([day, times]) => {
+        if (times.am && times.pm) prefs.push(`${day} (AM & PM)`);
+        else if (times.am) prefs.push(`${day} (AM)`);
+        else if (times.pm) prefs.push(`${day} (PM)`);
+      });
+      const formattedPrefs = prefs.length > 0 ? prefs.join(', ') : 'No specific preference';
+
+      // 1. Send Email to Clinic (e.g. Template 5)
+      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "send_email",
+          templateId: 5, // <-- UPDATE THIS to your Clinic Notification Template ID
+          to_email: "enquiries@theeyecentre.com",
+          patient_name: "Clinic Team",
+          params: {
+            patient_name: hearingForm.fullName,
+            email: hearingForm.email,
+            phone: hearingForm.phone,
+            preferences: formattedPrefs,
+            notes: hearingForm.notes || 'None'
+          }
+        })
+      });
+
+      // 2. Send Auto-Reply to Customer (e.g. Template 6)
+      await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "send_email",
+          templateId: 6, // <-- UPDATE THIS to your Customer Auto-Reply Template ID
+          to_email: hearingForm.email.toLowerCase(),
+          patient_name: hearingForm.fullName,
+          params: {
+            patient_name: hearingForm.fullName
+          }
+        })
+      });
+
+      setStep(6); // Go to Hearingcare Success Screen
+    } catch (e) {
+      console.error("Error:", e);
+      alert("Something went wrong sending your enquiry. Please try calling us instead.");
+    }
+    setLoading(false);
+  };
+
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
@@ -181,7 +275,6 @@ export default function BookingPage() {
         ? (cleanPhone.startsWith('0') ? `+44${cleanPhone.substring(1)}` : (cleanPhone.startsWith('+') ? cleanPhone : `+44${cleanPhone}`)) 
         : '';
 
-      // NEW: Automatically generate notes from the checkboxes
       const generatedNotes = [
         booking.inFullTimeEducation ? "In full-time education" : "",
         booking.onBenefits ? "Receiving income-related benefits" : "",
@@ -197,7 +290,7 @@ export default function BookingPage() {
         appointmentType: getCategory(),
         appointmentDate: booking.date,
         appointmentTime: booking.time,
-        notes: generatedNotes, // <-- NEW: Save notes to database
+        notes: generatedNotes,
         createdAt: serverTimestamp(),
         source: 'Online',
       });
@@ -230,7 +323,6 @@ export default function BookingPage() {
         const now = new Date();
 
         try {
-          // 1. Immediate Confirmation SMS
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -240,8 +332,6 @@ export default function BookingPage() {
             })
           });
 
-          // 2. Schedule 24h Reminder ONLY if appointment is more than 24 hours away
-          // We include a 15 min buffer as Twilio requires scheduling to be at least 15 mins in the future
           if (reminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
             const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
               method: "POST",
@@ -291,11 +381,24 @@ export default function BookingPage() {
       </header>
 
       <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5 border border-white/50 bg-white/80 backdrop-blur-xl">
+        
+        {/* STEP 1: SERVICE SELECTION */}
         {step === 1 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
             <h2 className="text-xl font-bold text-slate-800 mb-4">How can we help?</h2>
-            {['Eye Check', 'Contact Lens Check'].map(s => (
-              <button key={s} onClick={() => { setBooking({...booking, service: s}); setStep(2); }} className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] bg-white flex justify-between items-center group shadow-sm transition-all hover:shadow-md">
+            {['Eye Check', 'Contact Lens Check', 'Hearingcare'].map(s => (
+              <button 
+                key={s} 
+                onClick={() => { 
+                  setBooking({...booking, service: s}); 
+                  if (s === 'Hearingcare') {
+                    setStep(5); // Bypass calendar
+                  } else {
+                    setStep(2); // Normal flow
+                  }
+                }} 
+                className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] bg-white flex justify-between items-center group shadow-sm transition-all hover:shadow-md"
+              >
                 <span className="font-bold text-lg text-slate-700">{s}</span>
                 <ChevronRight className="text-slate-300 group-hover:text-[#3F9185]" />
               </button>
@@ -303,7 +406,8 @@ export default function BookingPage() {
           </div>
         )}
 
-        {step === 2 && (
+        {/* STEP 2: STANDARD CALENDAR */}
+        {step === 2 && booking.service !== 'Hearingcare' && (
           <div className="space-y-6 animate-in fade-in">
              <div className="flex items-center gap-2">
                 <button onClick={() => setStep(1)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><ArrowLeft size={20} className="text-slate-600" /></button>
@@ -358,7 +462,8 @@ export default function BookingPage() {
           </div>
         )}
 
-        {step === 3 && (
+        {/* STEP 3: STANDARD PATIENT DETAILS */}
+        {step === 3 && booking.service !== 'Hearingcare' && (
           <div className="space-y-5 animate-in fade-in">
             <h2 className="text-xl font-bold text-slate-800">Patient Details</h2>
             <div className="grid grid-cols-2 gap-3">
@@ -416,6 +521,7 @@ export default function BookingPage() {
           </div>
         )}
 
+        {/* STEP 4: STANDARD SUCCESS */}
         {step === 4 && (
           <div className="text-center py-10 space-y-4 animate-in zoom-in-95">
             <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto">
@@ -427,6 +533,84 @@ export default function BookingPage() {
             <button onClick={() => window.location.reload()} className="text-[#3F9185] font-black hover:underline underline-offset-4 pt-4">Start Again</button>
           </div>
         )}
+
+        {/* --- STEP 5: NEW HEARINGCARE FORM --- */}
+        {step === 5 && (
+          <form onSubmit={handleHearingSubmit} className="space-y-6 animate-in fade-in slide-in-from-right">
+            <div className="flex items-center gap-2 mb-2">
+              <button type="button" onClick={() => setStep(1)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><ArrowLeft size={20} className="text-slate-600" /></button>
+              <h2 className="text-xl font-bold text-slate-800">Hearingcare Enquiry</h2>
+            </div>
+            
+            <p className="text-sm text-slate-500 px-1 pb-2">
+              Our hearingcare diary is not currently live for direct bookings. Please provide your details and availability below, and our team will contact you to arrange an appointment.
+            </p>
+
+            <div className="space-y-4">
+              <input required placeholder="Full Name" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" value={hearingForm.fullName} onChange={e => setHearingForm({...hearingForm, fullName: e.target.value})} />
+              
+              <div>
+                <input required type="email" placeholder="Email Address" className={`w-full p-4 rounded-xl bg-slate-50 border outline-none focus:ring-2 focus:ring-[#3F9185] font-medium ${formErrors.email ? 'border-red-300' : 'border-transparent'}`} value={hearingForm.email} onChange={e => {setHearingForm({...hearingForm, email: e.target.value}); setFormErrors({...formErrors, email: ''});}} />
+                {formErrors.email && <p className="text-xs text-red-500 font-bold mt-1 px-1">{formErrors.email}</p>}
+              </div>
+
+              <div>
+                <input required type="tel" placeholder="Phone Number" className={`w-full p-4 rounded-xl bg-slate-50 border outline-none focus:ring-2 focus:ring-[#3F9185] font-medium ${formErrors.phone ? 'border-red-300' : 'border-transparent'}`} value={hearingForm.phone} onChange={e => {setHearingForm({...hearingForm, phone: e.target.value}); setFormErrors({...formErrors, phone: ''});}} />
+                {formErrors.phone && <p className="text-xs text-red-500 font-bold mt-1 px-1">{formErrors.phone}</p>}
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-3">Which days and times work best for you?</label>
+              <div className="space-y-2">
+                {Object.keys(hearingForm.preferences).map((day) => (
+                  <div key={day} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+                    <span className="font-bold text-slate-600 text-sm w-24">{day}</span>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setHearingForm({
+                        ...hearingForm, 
+                        preferences: { ...hearingForm.preferences, [day]: { ...hearingForm.preferences[day], am: !hearingForm.preferences[day].am } }
+                      })} className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all border-2 ${hearingForm.preferences[day].am ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'}`}>AM</button>
+                      
+                      <button type="button" onClick={() => setHearingForm({
+                        ...hearingForm, 
+                        preferences: { ...hearingForm.preferences, [day]: { ...hearingForm.preferences[day], pm: !hearingForm.preferences[day].pm } }
+                      })} className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all border-2 ${hearingForm.preferences[day].pm ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'}`}>PM</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-1">Additional Information (Optional)</label>
+              <textarea 
+                className="w-full p-4 bg-slate-50 rounded-xl outline-none resize-none h-24 text-sm focus:ring-2 focus:ring-[#3F9185]" 
+                placeholder="Any specific concerns or details we should know?"
+                value={hearingForm.notes}
+                onChange={e => setHearingForm({...hearingForm, notes: e.target.value})}
+              />
+            </div>
+
+            <button type="submit" disabled={loading || !hearingForm.fullName || !hearingForm.email || !hearingForm.phone} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 transition-all flex items-center justify-center gap-2" style={{ backgroundColor: '#3F9185' }}>
+              {loading ? <Loader2 className="animate-spin" /> : 'Send Enquiry'}
+            </button>
+          </form>
+        )}
+
+        {/* STEP 6: HEARINGCARE SUCCESS */}
+        {step === 6 && (
+          <div className="text-center py-10 space-y-4 animate-in zoom-in-95">
+            <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mx-auto">
+              <CheckCircle2 size={40} style={{ color: '#3F9185' }} />
+            </div>
+            <h2 className="text-3xl font-black text-slate-900">Enquiry Sent!</h2>
+            <p className="text-slate-500 font-medium italic">Thank you for your interest in Hearingcare.</p>
+            <p className="text-slate-500 text-sm">We have sent a confirmation to your email. Our team will be in touch shortly to arrange your appointment.</p>
+            <button onClick={() => window.location.reload()} className="text-[#3F9185] font-black hover:underline underline-offset-4 pt-4">Return Home</button>
+          </div>
+        )}
+
       </div>
     </div>
   );
