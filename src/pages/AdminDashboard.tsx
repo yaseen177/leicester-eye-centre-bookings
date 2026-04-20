@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Pencil } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 
@@ -14,7 +14,6 @@ interface ClinicConfig {
 }
 
 export default function AdminDashboard() {
-  // --- EXISTING STATE ---
   const [view, setView] = useState<'diary' | 'settings' | 'logs' | 'messages'>('diary');
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
@@ -42,13 +41,17 @@ export default function AdminDashboard() {
   const [logTypeFilter, setLogTypeFilter] = useState("All");
   const [logStatusFilter, setLogStatusFilter] = useState("All");
 
-  // --- NEW: MESSAGES STATE ---
+  // --- MESSAGES STATE ---
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
   const [outboundSMS, setOutboundSMS] = useState('');
   const [emailData, setEmailData] = useState({ subject: '', body: '', attachment: null as File | null });
   const [isSendingComms, setIsSendingComms] = useState(false);
+
+  // --- NEW: SEARCH STATES ---
+  const [patientSearch, setPatientSearch] = useState('');
+  const [globalMessageSearch, setGlobalMessageSearch] = useState('');
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -82,7 +85,6 @@ export default function AdminDashboard() {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // NEW: Listen for Two-Way SMS Messages
     const qMessages = query(collection(db, "messages"), orderBy("timestamp", "asc"));
     const unsubMessages = onSnapshot(qMessages, (snap) => {
       setChatMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -187,7 +189,6 @@ export default function AdminDashboard() {
     try {
       const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        // NEW: We added `isCustomChat: true` so the worker knows to use the real phone number
         body: JSON.stringify({ to: selectedChatPatient.phone, body: outboundSMS, isCustomChat: true })
       });
       if (res.ok) {
@@ -196,6 +197,7 @@ export default function AdminDashboard() {
           patientName: selectedChatPatient.patientName,
           text: outboundSMS,
           direction: 'outbound',
+          type: 'sms',
           timestamp: serverTimestamp()
         });
         await writeLog('SMS', selectedChatPatient.patientName, selectedChatPatient.phone, 'Sent', 'Direct Chat Message', new Date().toISOString().split('T')[0], '');
@@ -207,7 +209,6 @@ export default function AdminDashboard() {
     setIsSendingComms(false);
   };
 
-  // --- NEW: SEND CUSTOM EMAIL W/ ATTACHMENT ---
   const handleSendEmail = async () => {
     if (!emailData.body.trim() || !selectedChatPatient?.email) return;
     setIsSendingComms(true);
@@ -227,28 +228,39 @@ export default function AdminDashboard() {
        }
 
        const payload: any = {
-        type: "send_email",
-        templateId: 7, 
-        to_email: selectedChatPatient.email,
-        patient_name: selectedChatPatient.patientName.split(' ')[0],
-        params: {
+          type: "send_email",
+          templateId: 7, 
+          to_email: selectedChatPatient.email,
           patient_name: selectedChatPatient.patientName.split(' ')[0],
-          custom_message: emailData.body
-        }
-     };
-     
-     // Change "attachments" to "attachment" so Brevo recognises it
-     if (attachmentBase64) {
-        payload.attachment = [{ name: attachmentName, content: attachmentBase64 }];
-     }
+          params: {
+            patient_name: selectedChatPatient.patientName.split(' ')[0],
+            custom_message: emailData.body
+          }
+       };
+       
+       if (attachmentBase64) {
+          payload.attachment = [{ name: attachmentName, content: attachmentBase64 }];
+       }
 
-     const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-       method: "POST", headers: { "Content-Type": "application/json" },
-       body: JSON.stringify(payload)
-     });
+       const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+         method: "POST", headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(payload)
+       });
 
        if (res.ok) {
          await writeLog('Email', selectedChatPatient.patientName, selectedChatPatient.email, 'Sent', `Direct Email: ${emailData.subject}`, new Date().toISOString().split('T')[0], '');
+         
+         // NEW: Save the email payload directly into the messages collection so it appears in chat & is searchable!
+         await addDoc(collection(db, "messages"), {
+            phone: selectedChatPatient.phone || '',
+            email: selectedChatPatient.email || '',
+            patientName: selectedChatPatient.patientName,
+            text: `Subject: ${emailData.subject}\n\n${emailData.body}`,
+            direction: 'outbound',
+            type: 'email',
+            timestamp: serverTimestamp()
+         });
+
          setEmailData({ subject: '', body: '', attachment: null });
          alert("Email sent successfully!");
        } else {
@@ -332,35 +344,9 @@ export default function AdminDashboard() {
           });
           if (smsRes.ok) {
             await writeLog('SMS', newBooking.firstName, formattedPhone, 'Sent', 'Booking Confirmation', selectedDate, newBooking.time);
-            await addDoc(collection(db, "messages"), {
-              phone: formattedPhone, patientName: `${newBooking.firstName} ${newBooking.lastName}`, text: smsMessage, direction: 'outbound', timestamp: serverTimestamp()
-            });
           }
-          else await writeLog('SMS', newBooking.firstName, formattedPhone, 'Failed', 'Booking Confirmation', selectedDate, newBooking.time, 'Twilio Error');
         } catch(e) {
           await writeLog('SMS', newBooking.firstName, formattedPhone, 'Failed', 'Booking Confirmation', selectedDate, newBooking.time, 'Network Error');
-        }
-
-        const apptDateObj = new Date(`${selectedDate}T${newBooking.time}`);
-        const newReminderDate = new Date(apptDateObj.getTime() - (24 * 60 * 60 * 1000));
-        const now = new Date();
-        
-        if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
-          const remRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              to: formattedPhone,
-              body: `Reminder: ${newBooking.firstName}, your ${newBooking.service} is tomorrow @ ${newBooking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
-              reminderTime: newReminderDate.toISOString() 
-            })
-          });
-          if (remRes.ok) {
-            const smsData = await remRes.json();
-            if (smsData.sid || smsData.reminderSid) {
-              await setDoc(docRef, { reminderSid: smsData.sid || smsData.reminderSid }, { merge: true });
-              await writeLog('SMS', newBooking.firstName, formattedPhone, 'Sent', '24h Reminder Scheduled', selectedDate, newBooking.time);
-            }
-          }
         }
       }
   
@@ -420,9 +406,6 @@ export default function AdminDashboard() {
           });
           if (res.ok) {
             await writeLog('SMS', bookingData.patientName, bookingData.phone, 'Sent', 'Cancellation', bookingData.appointmentDate, bookingData.appointmentTime);
-            await addDoc(collection(db, "messages"), {
-              phone: bookingData.phone, patientName: bookingData.patientName, text: cancelMsg, direction: 'outbound', timestamp: serverTimestamp()
-            });
           }
         }
 
@@ -437,24 +420,6 @@ export default function AdminDashboard() {
     try {
       const appRef = doc(db, "appointments", id);
       await setDoc(appRef, { status: newStatus }, { merge: true });
-      
-      if (newStatus === 'Visit Complete') {
-        const booking = appointments.find(a => a.id === id);
-        if (booking && booking.email) {
-          const confirmSend = window.confirm(`Status updated to 'Visit Complete'.\n\n(Re)Schedule the 10-minute automated Google Review email for ${booking.patientName}?`);
-          if (!confirmSend) return; 
-
-          const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "schedule_review", email: booking.email, patientName: booking.patientName, reviewLink: "https://www.google.com/search?q=the+eye+centre+leicester+reviews" })
-          });
-          if (res.ok) {
-            await writeLog('Email', booking.patientName, booking.email, 'Sent', 'Review Request Queued', booking.appointmentDate, booking.appointmentTime);
-            alert(`Email scheduled!`);
-            await setDoc(appRef, { reviewEmailSent: true, reviewEmailLastSent: new Date().toISOString() }, { merge: true });
-          }
-        }
-      }
     } catch (err) {
       alert("Failed to update status");
     }
@@ -628,7 +593,7 @@ export default function AdminDashboard() {
                       setSelectedChatPatient(booking);
                       setView('messages');
                     }} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Message Patient"><MessageSquare size={18} /></button>
-                    <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit"><Pencil size={18} /></button>
+                    <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit"><Settings size={18} /></button>
                     <button onClick={() => deleteApp(booking)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete"><Trash2 size={18} /></button>
                     <button onClick={() => window.open(`/manage/${booking.id}`, '_blank')} className="text-slate-300 hover:text-blue-500 p-2 hover:bg-blue-50 rounded-full transition-colors" title="Manage Booking"><ExternalLink size={18} /></button>
                   </div>
@@ -664,8 +629,15 @@ export default function AdminDashboard() {
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
 
-  // Get unique patients for the chat sidebar based on existing appointments
-  const uniquePatients = Array.from(new Map(appointments.map(app => [app.phone, app])).values()).filter(app => app.phone);
+  // NEW: Refined Unique Patients to allow those with only emails
+  const uniquePatientsMap = new Map();
+  appointments.forEach(app => {
+    const key = app.phone || app.email;
+    if (key && !uniquePatientsMap.has(key)) {
+      uniquePatientsMap.set(key, app);
+    }
+  });
+  const uniquePatients = Array.from(uniquePatientsMap.values());
 
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
@@ -755,28 +727,97 @@ export default function AdminDashboard() {
         {/* --- NEW MESSAGES VIEW --- */}
         {view === 'messages' && (
           <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[800px] border border-slate-100">
-            {/* Left Sidebar - Patient List */}
+            
+            {/* LEFT SIDEBAR: Search and Patient List */}
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
-              <div className="p-6 bg-white border-b border-slate-200">
+              
+              {/* NEW: Dual Search Area */}
+              <div className="p-4 bg-white border-b border-slate-200 space-y-3">
                 <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><MessageSquare className="text-[#3F9185]"/> Conversations</h2>
+                
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Search customers (Name, Email, Phone)..." 
+                    className="w-full pl-9 pr-4 py-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-xs font-bold text-slate-600"
+                    value={patientSearch}
+                    onChange={e => { setPatientSearch(e.target.value); setGlobalMessageSearch(''); }}
+                  />
+                </div>
+
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Search all messages & emails..." 
+                    className="w-full pl-9 pr-4 py-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-xs font-bold text-slate-600"
+                    value={globalMessageSearch}
+                    onChange={e => { setGlobalMessageSearch(e.target.value); setPatientSearch(''); }}
+                  />
+                </div>
               </div>
+
+              {/* Patient / Message List Rendering */}
               <div className="flex-1 overflow-y-auto">
-                {uniquePatients.map((patient: any) => (
-                  <button 
-                    key={patient.phone} 
-                    onClick={() => setSelectedChatPatient(patient)}
-                    className={`w-full text-left p-4 border-b border-slate-100 hover:bg-white transition-colors flex items-center gap-3 ${selectedChatPatient?.phone === patient.phone ? 'bg-white border-l-4 border-l-[#3F9185]' : ''}`}
-                  >
-                    <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold">
-                      <User size={20} />
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-800 text-sm">{patient.patientName}</p>
-                      <p className="text-xs text-slate-500">{patient.phone}</p>
-                    </div>
-                  </button>
-                ))}
-                {uniquePatients.length === 0 && <p className="p-6 text-center text-slate-400 font-bold text-sm">No patients available to message.</p>}
+                {globalMessageSearch.trim() ? (
+                  /* Display Global Message Search Results */
+                  chatMessages
+                    .filter(m => (m.text || '').toLowerCase().includes(globalMessageSearch.toLowerCase()))
+                    .map(msg => (
+                      <button 
+                        key={msg.id}
+                        onClick={() => {
+                          const patient = uniquePatients.find(p => (p.phone && p.phone === msg.phone) || (p.email && p.email === msg.email));
+                          if (patient) {
+                            setSelectedChatPatient(patient);
+                            setGlobalMessageSearch(''); 
+                          }
+                        }}
+                        className="w-full text-left p-4 border-b border-slate-100 hover:bg-slate-100 transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs font-black text-[#3F9185] truncate">{msg.patientName || msg.phone || msg.email}</p>
+                          {msg.type === 'email' && <Mail size={12} className="text-slate-400" />}
+                        </div>
+                        <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{msg.text}</p>
+                        <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase tracking-wider">
+                          {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleString('en-GB') : ''}
+                        </p>
+                      </button>
+                    ))
+                ) : (
+                  /* Display Filtered Patient List */
+                  uniquePatients
+                    .filter(p => 
+                      (p.patientName || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
+                      (p.email || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
+                      (p.phone || '').toLowerCase().includes(patientSearch.toLowerCase())
+                    )
+                    .map((patient: any) => (
+                      <button 
+                        key={patient.phone || patient.email} 
+                        onClick={() => setSelectedChatPatient(patient)}
+                        className={`w-full text-left p-4 border-b border-slate-100 hover:bg-white transition-colors flex items-center gap-3 ${selectedChatPatient?.id === patient.id ? 'bg-white border-l-4 border-l-[#3F9185]' : ''}`}
+                      >
+                        <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold shrink-0">
+                          <User size={20} />
+                        </div>
+                        <div className="overflow-hidden">
+                          <p className="font-bold text-slate-800 text-sm truncate">{patient.patientName}</p>
+                          <p className="text-xs text-slate-500 truncate">{patient.phone || patient.email}</p>
+                        </div>
+                      </button>
+                    ))
+                )}
+
+                {/* Empty States */}
+                {!globalMessageSearch.trim() && uniquePatients.length === 0 && (
+                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No patients available.</p>
+                )}
+                {globalMessageSearch.trim() && chatMessages.filter(m => (m.text || '').toLowerCase().includes(globalMessageSearch.toLowerCase())).length === 0 && (
+                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No messages found.</p>
+                )}
               </div>
             </div>
 
@@ -790,19 +831,30 @@ export default function AdminDashboard() {
                       <p className="text-xs font-bold text-slate-400">{selectedChatPatient.phone} | {selectedChatPatient.email || 'No email'}</p>
                     </div>
                     <div className="flex bg-slate-100 rounded-lg p-1">
-                      <button onClick={() => setCommsType('SMS')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'SMS' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>SMS Chat</button>
-                      <button onClick={() => setCommsType('Email')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'Email' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>Send Email</button>
+                      <button onClick={() => setCommsType('SMS')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'SMS' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>SMS / Timeline</button>
+                      <button onClick={() => setCommsType('Email')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'Email' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>New Email</button>
                     </div>
                   </div>
 
                   {commsType === 'SMS' && (
                     <div className="flex-1 flex flex-col bg-[#f8fafc]">
                       <div className="flex-1 p-6 overflow-y-auto space-y-4">
-                        <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto">This is a two-way SMS channel.</p>
+                        <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto">This timeline includes two-way SMS and outbound emails.</p>
                         
-                        {chatMessages.filter(m => m.phone === selectedChatPatient.phone).map(msg => (
+                        {/* NEW: Displays both SMS and Emails in the timeline! */}
+                        {chatMessages
+                          .filter(m => (m.phone && m.phone === selectedChatPatient.phone) || (m.email && m.email === selectedChatPatient.email))
+                          .map(msg => (
                           <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[70%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
+                            <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
+                              
+                              {/* Visual Indicator for Emails */}
+                              {msg.type === 'email' && (
+                                <div className="flex items-center gap-1.5 mb-2 pb-2 border-b border-teal-500/30 text-xs font-black uppercase tracking-wider">
+                                  <Mail size={14} /> Email Sent
+                                </div>
+                              )}
+                              
                               <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
                               <p className={`text-[9px] mt-2 text-right ${msg.direction === 'outbound' ? 'text-teal-100' : 'text-slate-400'}`}>
                                 {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Sending...'}
