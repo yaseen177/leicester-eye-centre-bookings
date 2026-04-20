@@ -234,7 +234,8 @@ export default function AdminDashboard() {
           patient_name: selectedChatPatient.patientName.split(' ')[0],
           params: {
             patient_name: selectedChatPatient.patientName.split(' ')[0],
-            custom_message: emailData.body
+            custom_message: emailData.body,
+            subject: emailData.subject
           }
        };
        
