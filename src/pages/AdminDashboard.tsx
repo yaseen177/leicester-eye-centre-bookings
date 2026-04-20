@@ -257,6 +257,7 @@ export default function AdminDashboard() {
             email: selectedChatPatient.email || '',
             patientName: selectedChatPatient.patientName,
             text: `Subject: ${emailData.subject}\n\n${emailData.body}`,
+            attachmentName: attachmentName || null,
             direction: 'outbound',
             type: 'email',
             timestamp: serverTimestamp()
@@ -727,8 +728,7 @@ export default function AdminDashboard() {
 
         {/* --- NEW MESSAGES VIEW --- */}
         {view === 'messages' && (
-          <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[800px] border border-slate-100">
-            
+          <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[calc(100vh-10rem)] min-h-[500px] border border-slate-100">
             {/* LEFT SIDEBAR: Search and Patient List */}
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
               
@@ -849,9 +849,20 @@ export default function AdminDashboard() {
                           <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                             <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
                               
+                              {/* Visual Indicator for Emails + Attachments */}
                               {msg.type === 'email' && (
-                                <div className="flex items-center gap-1.5 mb-2 pb-2 border-b border-teal-500/30 text-xs font-black uppercase tracking-wider">
-                                  <Mail size={14} /> Email Sent
+                                <div className="flex items-center justify-between gap-4 mb-2 pb-2 border-b border-teal-500/30">
+                                  <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider">
+                                    <Mail size={14} /> Email Sent
+                                  </div>
+                                  
+                                  {/* NEW: Displays the attachment name if it exists */}
+                                  {msg.attachmentName && (
+                                    <div className="flex items-center gap-1 bg-black/10 px-2 py-1 rounded-md text-[10px] font-bold truncate max-w-[150px]" title={msg.attachmentName}>
+                                      <Paperclip size={12} className="shrink-0" />
+                                      <span className="truncate">{msg.attachmentName}</span>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                               
