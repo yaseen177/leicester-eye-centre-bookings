@@ -46,19 +46,19 @@ export default function BookingPage() {
     familyGlaucoma: false
   });
 
-  // --- NEW: HEARINGCARE STATE ---
   const [hearingForm, setHearingForm] = useState({
     fullName: '',
     email: '',
     phone: '',
+    anyTime: false,
     preferences: {
-      Monday: { am: false, pm: false },
-      Tuesday: { am: false, pm: false },
-      Wednesday: { am: false, pm: false },
-      Thursday: { am: false, pm: false },
-      Friday: { am: false, pm: false },
-      Saturday: { am: false, pm: false },
-    } as Record<string, { am: boolean, pm: boolean }>,
+      Monday: { am: false, pm: false, all: false },
+      Tuesday: { am: false, pm: false, all: false },
+      Wednesday: { am: false, pm: false, all: false },
+      Thursday: { am: false, pm: false, all: false },
+      Friday: { am: false, pm: false, all: false },
+      Saturday: { am: false, pm: false, all: false },
+    } as Record<string, { am: boolean, pm: boolean, all: boolean }>,
     notes: ''
   });
   const [formErrors, setFormErrors] = useState({ email: '', phone: '' });
@@ -191,7 +191,26 @@ export default function BookingPage() {
     return age;
   };
 
-  // --- NEW: VALIDATION & SUBMIT FOR HEARINGCARE ---
+  const handleDayToggle = (day: string, time: 'am' | 'pm' | 'all') => {
+    setHearingForm(prev => {
+        const current = prev.preferences[day];
+        let newVal = { ...current };
+
+        if (time === 'all') {
+            newVal.all = !current.all;
+            if (newVal.all) { newVal.am = false; newVal.pm = false; }
+        } else if (time === 'am') {
+            newVal.am = !current.am;
+            if (newVal.am) newVal.all = false;
+        } else if (time === 'pm') {
+            newVal.pm = !current.pm;
+            if (newVal.pm) newVal.all = false;
+        }
+
+        return { ...prev, preferences: { ...prev.preferences, [day]: newVal } };
+    });
+  };
+
   const handleHearingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -216,41 +235,49 @@ export default function BookingPage() {
 
     setLoading(true);
     try {
-      // Format preferences into a readable string
-      const prefs: string[] = [];
-      Object.entries(hearingForm.preferences).forEach(([day, times]) => {
-        if (times.am && times.pm) prefs.push(`${day} (AM & PM)`);
-        else if (times.am) prefs.push(`${day} (AM)`);
-        else if (times.pm) prefs.push(`${day} (PM)`);
-      });
-      const formattedPrefs = prefs.length > 0 ? prefs.join(', ') : 'No specific preference';
+      let prefsHtml = '';
+      
+      if (hearingForm.anyTime) {
+        prefsHtml = '<tr><td colspan="2" style="padding: 12px 10px; text-align: center; font-weight: bold; color: #3F9185; border-bottom: 1px solid #e2e8f0;">Fully Flexible (Any Day, Any Time)</td></tr>';
+      } else {
+        Object.entries(hearingForm.preferences).forEach(([day, times]) => {
+          let timeStr = '-';
+          if (times.all) timeStr = 'All Day';
+          else if (times.am && times.pm) timeStr = 'AM & PM';
+          else if (times.am) timeStr = 'AM';
+          else if (times.pm) timeStr = 'PM';
 
-      // 1. Send Email to Clinic (e.g. Template 5)
+          if (timeStr !== '-') {
+            prefsHtml += `<tr><td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #64748b;">${day}</td><td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #0f172a;">${timeStr}</td></tr>`;
+          }
+        });
+        if (prefsHtml === '') prefsHtml = '<tr><td colspan="2" style="padding: 12px 10px; text-align: center; color: #64748b; border-bottom: 1px solid #e2e8f0;">No specific preference selected</td></tr>';
+      }
+
       await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "send_email",
-          templateId: 5, // <-- UPDATE THIS to your Clinic Notification Template ID
+          templateId: 5, 
           to_email: "enquiries@theeyecentre.com",
           patient_name: "Clinic Team",
           params: {
             patient_name: hearingForm.fullName,
             email: hearingForm.email,
             phone: hearingForm.phone,
-            preferences: formattedPrefs,
+            preferences: prefsHtml,
             notes: hearingForm.notes || 'None'
           }
         })
       });
 
-      // 2. Send Auto-Reply to Customer (e.g. Template 6)
       await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "send_email",
-          templateId: 6, // <-- UPDATE THIS to your Customer Auto-Reply Template ID
+          templateId: 6, 
           to_email: hearingForm.email.toLowerCase(),
           patient_name: hearingForm.fullName,
           params: {
@@ -259,7 +286,7 @@ export default function BookingPage() {
         })
       });
 
-      setStep(6); // Go to Hearingcare Success Screen
+      setStep(6);
     } catch (e) {
       console.error("Error:", e);
       alert("Something went wrong sending your enquiry. Please try calling us instead.");
@@ -392,9 +419,9 @@ export default function BookingPage() {
                 onClick={() => { 
                   setBooking({...booking, service: s}); 
                   if (s === 'Hearingcare') {
-                    setStep(5); // Bypass calendar
+                    setStep(5);
                   } else {
-                    setStep(2); // Normal flow
+                    setStep(2);
                   }
                 }} 
                 className="w-full p-6 text-left border-2 border-slate-50 rounded-2xl hover:border-[#3F9185] bg-white flex justify-between items-center group shadow-sm transition-all hover:shadow-md"
@@ -562,24 +589,30 @@ export default function BookingPage() {
 
             <div className="pt-2">
               <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-3">Which days and times work best for you?</label>
-              <div className="space-y-2">
-                {Object.keys(hearingForm.preferences).map((day) => (
-                  <div key={day} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
-                    <span className="font-bold text-slate-600 text-sm w-24">{day}</span>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={() => setHearingForm({
-                        ...hearingForm, 
-                        preferences: { ...hearingForm.preferences, [day]: { ...hearingForm.preferences[day], am: !hearingForm.preferences[day].am } }
-                      })} className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all border-2 ${hearingForm.preferences[day].am ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'}`}>AM</button>
-                      
-                      <button type="button" onClick={() => setHearingForm({
-                        ...hearingForm, 
-                        preferences: { ...hearingForm.preferences, [day]: { ...hearingForm.preferences[day], pm: !hearingForm.preferences[day].pm } }
-                      })} className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all border-2 ${hearingForm.preferences[day].pm ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'}`}>PM</button>
+              
+              {/* MASTER TOGGLE */}
+              <label className="flex items-center gap-3 p-4 mb-4 bg-teal-50 border border-[#3F9185]/30 rounded-xl cursor-pointer hover:bg-teal-100 transition-all shadow-sm">
+                <input type="checkbox" className="accent-[#3F9185] w-5 h-5" checked={hearingForm.anyTime} onChange={e => setHearingForm({...hearingForm, anyTime: e.target.checked})} />
+                <span className="text-sm font-black text-[#3F9185]">I am flexible (Any Day, Any Time)</span>
+              </label>
+
+              {/* INDIVIDUAL DAY TOGGLES (Hides if Master Toggle is selected) */}
+              {!hearingForm.anyTime && (
+                <div className="space-y-2 animate-in fade-in">
+                  {Object.keys(hearingForm.preferences).map((day) => (
+                    <div key={day} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 gap-2">
+                      <span className="font-bold text-slate-600 text-sm sm:w-24 pl-1">{day}</span>
+                      <div className="flex gap-2 w-full sm:w-auto">
+                        <button type="button" onClick={() => handleDayToggle(day, 'am')} className={`flex-1 sm:flex-none px-4 py-2 sm:py-1.5 rounded-lg text-xs font-black transition-all border-2 ${hearingForm.preferences[day].am ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'}`}>AM</button>
+                        
+                        <button type="button" onClick={() => handleDayToggle(day, 'pm')} className={`flex-1 sm:flex-none px-4 py-2 sm:py-1.5 rounded-lg text-xs font-black transition-all border-2 ${hearingForm.preferences[day].pm ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'}`}>PM</button>
+
+                        <button type="button" onClick={() => handleDayToggle(day, 'all')} className={`flex-1 sm:flex-none px-4 py-2 sm:py-1.5 rounded-lg text-xs font-black transition-all border-2 ${hearingForm.preferences[day].all ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'}`}>All Day</button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="pt-2">
