@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 
@@ -48,6 +48,7 @@ export default function AdminDashboard() {
   const [outboundSMS, setOutboundSMS] = useState('');
   const [emailData, setEmailData] = useState({ subject: '', body: '', attachment: null as File | null });
   const [isSendingComms, setIsSendingComms] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
 
   // --- NEW: SEARCH STATES ---
   const [patientSearch, setPatientSearch] = useState('');
@@ -215,6 +216,8 @@ export default function AdminDashboard() {
     try {
        let attachmentBase64 = null;
        let attachmentName = null;
+       let attachmentType = null;
+       
        if (emailData.attachment) {
           const reader = new FileReader();
           reader.readAsDataURL(emailData.attachment);
@@ -222,22 +225,24 @@ export default function AdminDashboard() {
              reader.onload = () => {
                 attachmentBase64 = (reader.result as string).split(',')[1];
                 attachmentName = emailData.attachment?.name;
+                attachmentType = emailData.attachment?.type;
                 resolve(null);
              };
           });
        }
 
        const payload: any = {
-        type: "send_email",
-        templateId: 7, 
-        to_email: selectedChatPatient.email,
-        patient_name: selectedChatPatient.patientName.split(' ')[0],
-        params: {
+          type: "send_email",
+          templateId: 7, 
+          to_email: selectedChatPatient.email,
           patient_name: selectedChatPatient.patientName.split(' ')[0],
-          custom_message: emailData.body,
-          subject: emailData.subject // <-- MOVED THIS BACK HERE!
-        }
-     };
+          subject: emailData.subject,
+          params: {
+            patient_name: selectedChatPatient.patientName.split(' ')[0],
+            custom_message: emailData.body,
+            subject: emailData.subject 
+          }
+       };
        
        if (attachmentBase64) {
           payload.attachment = [{ name: attachmentName, content: attachmentBase64 }];
@@ -251,13 +256,15 @@ export default function AdminDashboard() {
        if (res.ok) {
          await writeLog('Email', selectedChatPatient.patientName, selectedChatPatient.email, 'Sent', `Direct Email: ${emailData.subject}`, new Date().toISOString().split('T')[0], '');
          
-         // NEW: Save the email payload directly into the messages collection so it appears in chat & is searchable!
+         // NEW: Save the actual file data to Firebase so it can be downloaded later
          await addDoc(collection(db, "messages"), {
             phone: selectedChatPatient.phone || '',
             email: selectedChatPatient.email || '',
             patientName: selectedChatPatient.patientName,
             text: `Subject: ${emailData.subject}\n\n${emailData.body}`,
             attachmentName: attachmentName || null,
+            attachmentBase64: attachmentBase64 || null,
+            attachmentType: attachmentType || null,
             direction: 'outbound',
             type: 'email',
             timestamp: serverTimestamp()
@@ -849,19 +856,29 @@ export default function AdminDashboard() {
                           <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                             <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
                               
-                              {/* Visual Indicator for Emails + Attachments */}
+                              {/* Visual Indicator for Emails + Downloadable Attachments */}
                               {msg.type === 'email' && (
-                                <div className="flex items-center justify-between gap-4 mb-2 pb-2 border-b border-teal-500/30">
+                                <div className="flex items-center justify-between gap-4 mb-3 pb-3 border-b border-teal-500/30">
                                   <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider">
                                     <Mail size={14} /> Email Sent
                                   </div>
                                   
-                                  {/* NEW: Displays the attachment name if it exists */}
                                   {msg.attachmentName && (
-                                    <div className="flex items-center gap-1 bg-black/10 px-2 py-1 rounded-md text-[10px] font-bold truncate max-w-[150px]" title={msg.attachmentName}>
+                                    <button 
+                                      onClick={() => {
+                                        if (!msg.attachmentBase64) return alert('File content not available for older messages.');
+                                        const link = document.createElement('a');
+                                        link.href = `data:${msg.attachmentType || 'application/octet-stream'};base64,${msg.attachmentBase64}`;
+                                        link.download = msg.attachmentName;
+                                        link.click();
+                                      }}
+                                      className="flex items-center gap-1.5 bg-black/10 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm max-w-[200px]" 
+                                      title="Click to download"
+                                    >
                                       <Paperclip size={12} className="shrink-0" />
                                       <span className="truncate">{msg.attachmentName}</span>
-                                    </div>
+                                      <Download size={10} className="shrink-0 ml-1 opacity-70" />
+                                    </button>
                                   )}
                                 </div>
                               )}
@@ -919,11 +936,111 @@ export default function AdminDashboard() {
                           </div>
                           <div>
                             <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-2">Attachments (Optional)</label>
-                            <label className="flex items-center gap-3 p-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-[#3F9185] bg-slate-50 cursor-pointer transition-colors w-max">
-                               <Paperclip size={18} className="text-slate-400" />
-                               <span className="text-sm font-bold text-slate-500">{emailData.attachment ? emailData.attachment.name : 'Select a file to attach'}</span>
-                               <input type="file" className="hidden" onChange={e => setEmailData({...emailData, attachment: e.target.files?.[0] || null})} />
-                            </label>
+                            
+                            {!emailData.attachment ? (
+                              <label className={`flex items-center justify-center gap-3 p-6 rounded-xl border-2 border-dashed transition-all w-full ${isCompressing ? 'border-[#3F9185] bg-teal-50 cursor-wait' : 'border-slate-200 hover:border-[#3F9185] hover:bg-teal-50/50 bg-slate-50 cursor-pointer'}`}>
+                                 {isCompressing ? (
+                                   <div className="w-5 h-5 border-2 border-[#3F9185] border-t-transparent rounded-full animate-spin"></div>
+                                 ) : (
+                                   <Paperclip size={20} className="text-slate-400" />
+                                 )}
+                                 <div className="flex flex-col">
+                                   <span className={`text-sm font-bold ${isCompressing ? 'text-[#3F9185]' : 'text-slate-600'}`}>
+                                     {isCompressing ? 'Compressing scan...' : 'Click to upload a file'}
+                                   </span>
+                                   <span className="text-[10px] text-slate-400 font-medium">Auto-compresses large image scans</span>
+                                 </div>
+                                 <input 
+                                   type="file" 
+                                   className="hidden" 
+                                   disabled={isCompressing}
+                                   accept="image/*,application/pdf"
+                                   onChange={async (e) => {
+                                     const file = e.target.files?.[0];
+                                     if (!file) return;
+
+                                     // PDFs cannot be compressed natively in-browser easily
+                                     if (file.type === 'application/pdf') {
+                                       if (file.size > 900 * 1024) {
+                                         alert("PDFs must be under 900KB. Please compress the PDF or upload an image scan instead.");
+                                         e.target.value = '';
+                                       } else {
+                                         setEmailData({...emailData, attachment: file});
+                                       }
+                                       return;
+                                     }
+
+                                     // Compress Images (PNG, JPG, HEIC, etc.)
+                                     setIsCompressing(true);
+                                     try {
+                                        const reader = new FileReader();
+                                        reader.readAsDataURL(file);
+                                        reader.onload = (event) => {
+                                          const img = new Image();
+                                          img.src = event.target?.result as string;
+                                          img.onload = () => {
+                                            const canvas = document.createElement('canvas');
+                                            let width = img.width;
+                                            let height = img.height;
+
+                                            // Cap dimensions at 1200px (Plenty for document legibility)
+                                            const MAX_DIMENSION = 1200;
+                                            if (width > height && width > MAX_DIMENSION) {
+                                              height *= MAX_DIMENSION / width;
+                                              width = MAX_DIMENSION;
+                                            } else if (height > MAX_DIMENSION) {
+                                              width *= MAX_DIMENSION / height;
+                                              height = MAX_DIMENSION;
+                                            }
+
+                                            canvas.width = width;
+                                            canvas.height = height;
+                                            const ctx = canvas.getContext('2d');
+                                            ctx?.drawImage(img, 0, 0, width, height);
+
+                                            // Export as lightweight JPEG at 60% quality
+                                            canvas.toBlob((blob) => {
+                                              if (blob) {
+                                                const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.jpg", {
+                                                  type: 'image/jpeg',
+                                                  lastModified: Date.now(),
+                                                });
+
+                                                if (compressedFile.size > 900 * 1024) {
+                                                  alert("Image is still too large even after compression. Please try a smaller scan.");
+                                                } else {
+                                                  setEmailData({...emailData, attachment: compressedFile});
+                                                }
+                                              }
+                                              setIsCompressing(false);
+                                            }, 'image/jpeg', 0.6); 
+                                          };
+                                        };
+                                     } catch (err) {
+                                        alert("Failed to compress image.");
+                                        setIsCompressing(false);
+                                     }
+                                   }} 
+                                 />
+                              </label>
+                            ) : (
+                              <div className="flex items-center justify-between p-4 bg-teal-50 border border-teal-200 rounded-xl w-full animate-in fade-in zoom-in-95 shadow-sm">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                  <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-sm">
+                                    <CheckCircle2 size={20} className="text-[#3F9185]" />
+                                  </div>
+                                  <div className="flex flex-col truncate">
+                                    <span className="text-sm font-bold text-slate-700 truncate">{emailData.attachment.name}</span>
+                                    <span className="text-[10px] font-black text-[#3F9185] uppercase tracking-wider">
+                                      Ready to send ({(emailData.attachment.size / 1024).toFixed(1)} KB)
+                                    </span>
+                                  </div>
+                                </div>
+                                <button onClick={() => setEmailData({...emailData, attachment: null})} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors shrink-0" title="Remove attachment">
+                                  <X size={18} />
+                                </button>
+                              </div>
+                            )}
                           </div>
                           <button onClick={handleSendEmail} disabled={isSendingComms || !emailData.body} className="w-full py-4 mt-4 bg-[#3F9185] text-white rounded-xl font-black shadow-lg shadow-teal-900/10 disabled:opacity-50 flex items-center justify-center gap-2 transition-all">
                              {isSendingComms ? 'Sending...' : 'Send Email'} <Send size={18} />
