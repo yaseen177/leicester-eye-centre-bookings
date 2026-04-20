@@ -50,6 +50,8 @@ export default function BookingPage() {
     fullName: '',
     email: '',
     phone: '',
+    wearsHearingAids: '' as 'Yes' | 'No' | '',
+    noticedDecline: '' as 'Yes' | 'No' | '',
     anyTime: false,
     preferences: {
       Monday: { am: false, pm: false, all: false },
@@ -235,6 +237,14 @@ export default function BookingPage() {
 
     setLoading(true);
     try {
+      // Format the new Hearing Status info for Brevo Template
+      let hearingStatusHtml = `<tr><td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #64748b;">Currently wears hearing aids?</td><td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #0f172a;">${hearingForm.wearsHearingAids}</td></tr>`;
+      
+      if (hearingForm.wearsHearingAids === 'No' && hearingForm.noticedDecline) {
+        hearingStatusHtml += `<tr><td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #64748b;">Noticed a decline in hearing?</td><td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #0f172a;">${hearingForm.noticedDecline}</td></tr>`;
+      }
+
+      // Format preferences into a readable string
       let prefsHtml = '';
       
       if (hearingForm.anyTime) {
@@ -254,6 +264,7 @@ export default function BookingPage() {
         if (prefsHtml === '') prefsHtml = '<tr><td colspan="2" style="padding: 12px 10px; text-align: center; color: #64748b; border-bottom: 1px solid #e2e8f0;">No specific preference selected</td></tr>';
       }
 
+      // Send to Clinic
       await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -266,12 +277,14 @@ export default function BookingPage() {
             patient_name: hearingForm.fullName,
             email: hearingForm.email,
             phone: hearingForm.phone,
+            hearing_status: hearingStatusHtml,
             preferences: prefsHtml,
             notes: hearingForm.notes || 'None'
           }
         })
       });
 
+      // Send to Customer
       await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -391,6 +404,12 @@ export default function BookingPage() {
     }
     setLoading(false);
   };
+
+  const isHearingFormValid = hearingForm.fullName && 
+                             hearingForm.email && 
+                             hearingForm.phone && 
+                             hearingForm.wearsHearingAids !== '' && 
+                             (hearingForm.wearsHearingAids === 'Yes' || hearingForm.noticedDecline !== '');
   
   return (
     <div className="max-w-xl mx-auto px-6 py-12">
@@ -587,16 +606,45 @@ export default function BookingPage() {
               </div>
             </div>
 
+            {/* NEW: Hearing Status Questions */}
+            <div className="pt-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-3">Do you currently wear hearing aids?</label>
+              <div className="flex gap-3">
+                <label className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-xl cursor-pointer transition-all border-2 ${hearingForm.wearsHearingAids === 'Yes' ? 'border-[#3F9185] bg-teal-50 text-[#3F9185]' : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-[#3F9185]/30'}`}>
+                  <input type="radio" name="wearsAids" className="hidden" checked={hearingForm.wearsHearingAids === 'Yes'} onChange={() => setHearingForm({...hearingForm, wearsHearingAids: 'Yes'})} />
+                  <span className="font-bold text-sm">Yes</span>
+                </label>
+                <label className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-xl cursor-pointer transition-all border-2 ${hearingForm.wearsHearingAids === 'No' ? 'border-[#3F9185] bg-teal-50 text-[#3F9185]' : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-[#3F9185]/30'}`}>
+                  <input type="radio" name="wearsAids" className="hidden" checked={hearingForm.wearsHearingAids === 'No'} onChange={() => setHearingForm({...hearingForm, wearsHearingAids: 'No', noticedDecline: ''})} />
+                  <span className="font-bold text-sm">No</span>
+                </label>
+              </div>
+            </div>
+
+            {hearingForm.wearsHearingAids === 'No' && (
+              <div className="pt-2 animate-in fade-in slide-in-from-top-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-3">Have you noticed a decline in your hearing or feel you may benefit from hearing aids?</label>
+                <div className="flex gap-3">
+                  <label className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-xl cursor-pointer transition-all border-2 ${hearingForm.noticedDecline === 'Yes' ? 'border-[#3F9185] bg-teal-50 text-[#3F9185]' : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-[#3F9185]/30'}`}>
+                    <input type="radio" name="decline" className="hidden" checked={hearingForm.noticedDecline === 'Yes'} onChange={() => setHearingForm({...hearingForm, noticedDecline: 'Yes'})} />
+                    <span className="font-bold text-sm">Yes</span>
+                  </label>
+                  <label className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-xl cursor-pointer transition-all border-2 ${hearingForm.noticedDecline === 'No' ? 'border-[#3F9185] bg-teal-50 text-[#3F9185]' : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-[#3F9185]/30'}`}>
+                    <input type="radio" name="decline" className="hidden" checked={hearingForm.noticedDecline === 'No'} onChange={() => setHearingForm({...hearingForm, noticedDecline: 'No'})} />
+                    <span className="font-bold text-sm">No</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
             <div className="pt-2">
               <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-3">Which days and times work best for you?</label>
               
-              {/* MASTER TOGGLE */}
               <label className="flex items-center gap-3 p-4 mb-4 bg-teal-50 border border-[#3F9185]/30 rounded-xl cursor-pointer hover:bg-teal-100 transition-all shadow-sm">
                 <input type="checkbox" className="accent-[#3F9185] w-5 h-5" checked={hearingForm.anyTime} onChange={e => setHearingForm({...hearingForm, anyTime: e.target.checked})} />
                 <span className="text-sm font-black text-[#3F9185]">I am flexible (Any Day, Any Time)</span>
               </label>
 
-              {/* INDIVIDUAL DAY TOGGLES (Hides if Master Toggle is selected) */}
               {!hearingForm.anyTime && (
                 <div className="space-y-2 animate-in fade-in">
                   {Object.keys(hearingForm.preferences).map((day) => (
@@ -625,7 +673,7 @@ export default function BookingPage() {
               />
             </div>
 
-            <button type="submit" disabled={loading || !hearingForm.fullName || !hearingForm.email || !hearingForm.phone} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 transition-all flex items-center justify-center gap-2" style={{ backgroundColor: '#3F9185' }}>
+            <button type="submit" disabled={loading || !isHearingFormValid} className="w-full py-4 rounded-2xl text-white font-black shadow-lg shadow-teal-900/10 disabled:opacity-30 transition-all flex items-center justify-center gap-2" style={{ backgroundColor: '#3F9185' }}>
               {loading ? <Loader2 className="animate-spin" /> : 'Send Enquiry'}
             </button>
           </form>
