@@ -960,19 +960,64 @@ export default function AdminDashboard() {
                                      const file = e.target.files?.[0];
                                      if (!file) return;
 
-                                     // PDFs cannot be compressed natively in-browser easily
+                                     setIsCompressing(true);
+
+                                     // --- PDF COMPRESSION LOGIC ---
                                      if (file.type === 'application/pdf') {
-                                       if (file.size > 900 * 1024) {
-                                         alert("PDFs must be under 900KB. Please compress the PDF or upload an image scan instead.");
-                                         e.target.value = '';
-                                       } else {
-                                         setEmailData({...emailData, attachment: file});
+                                       try {
+                                         // Dynamically load the worker via CDN to prevent Vite build errors
+                                         pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+                                         const fileReader = new FileReader();
+                                         fileReader.onload = async function() {
+                                           try {
+                                             const typedarray = new Uint8Array(this.result as ArrayBuffer);
+                                             const pdf = await pdfjsLib.getDocument(typedarray).promise;
+
+                                             // Render the first page of the PDF (standard for clinical document scans)
+                                             const page = await pdf.getPage(1);
+                                             const viewport = page.getViewport({ scale: 1.5 }); // 1.5x scale maintains legibility
+
+                                             const canvas = document.createElement('canvas');
+                                             const ctx = canvas.getContext('2d');
+                                             if (!ctx) throw new Error("Canvas context failed");
+                                             
+                                             canvas.height = viewport.height;
+                                             canvas.width = viewport.width;
+
+                                             await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+                                             // Export as a lightweight JPEG
+                                             canvas.toBlob((blob) => {
+                                               if (blob) {
+                                                 const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_scan.jpg", {
+                                                   type: 'image/jpeg',
+                                                   lastModified: Date.now(),
+                                                 });
+
+                                                 if (compressedFile.size > 900 * 1024) {
+                                                   alert("PDF scan is still too large even after compression. Please try a smaller scan.");
+                                                 } else {
+                                                   setEmailData({...emailData, attachment: compressedFile});
+                                                 }
+                                               }
+                                               setIsCompressing(false);
+                                             }, 'image/jpeg', 0.6); 
+                                           } catch (err) {
+                                              console.error(err);
+                                              alert("Could not process the PDF. It may be encrypted or corrupted.");
+                                              setIsCompressing(false);
+                                           }
+                                         };
+                                         fileReader.readAsArrayBuffer(file);
+                                       } catch (err) {
+                                          alert("Failed to initialise PDF compressor.");
+                                          setIsCompressing(false);
                                        }
-                                       return;
+                                       return; // Exit here so it doesn't run the image logic below
                                      }
 
-                                     // Compress Images (PNG, JPG, HEIC, etc.)
-                                     setIsCompressing(true);
+                                     // --- STANDARD IMAGE COMPRESSION LOGIC ---
                                      try {
                                         const reader = new FileReader();
                                         reader.readAsDataURL(file);
@@ -984,7 +1029,6 @@ export default function AdminDashboard() {
                                             let width = img.width;
                                             let height = img.height;
 
-                                            // Cap dimensions at 1200px (Plenty for document legibility)
                                             const MAX_DIMENSION = 1200;
                                             if (width > height && width > MAX_DIMENSION) {
                                               height *= MAX_DIMENSION / width;
@@ -999,7 +1043,6 @@ export default function AdminDashboard() {
                                             const ctx = canvas.getContext('2d');
                                             ctx?.drawImage(img, 0, 0, width, height);
 
-                                            // Export as lightweight JPEG at 60% quality
                                             canvas.toBlob((blob) => {
                                               if (blob) {
                                                 const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.jpg", {
