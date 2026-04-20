@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, Pencil } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 
@@ -14,8 +14,8 @@ interface ClinicConfig {
 }
 
 export default function AdminDashboard() {
-  // 1. ADDED LOGS VIEW STATE
-  const [view, setView] = useState<'diary' | 'settings' | 'logs'>('diary');
+  // --- EXISTING STATE ---
+  const [view, setView] = useState<'diary' | 'settings' | 'logs' | 'messages'>('diary');
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -38,10 +38,17 @@ export default function AdminDashboard() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [currentResultIndex, setCurrentResultIndex] = useState(0);
 
-  // 2. ADDED LOG FILTER STATES
   const [logSearch, setLogSearch] = useState("");
   const [logTypeFilter, setLogTypeFilter] = useState("All");
   const [logStatusFilter, setLogStatusFilter] = useState("All");
+
+  // --- NEW: MESSAGES STATE ---
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
+  const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
+  const [outboundSMS, setOutboundSMS] = useState('');
+  const [emailData, setEmailData] = useState({ subject: '', body: '', attachment: null as File | null });
+  const [isSendingComms, setIsSendingComms] = useState(false);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -70,10 +77,15 @@ export default function AdminDashboard() {
       setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // 3. RESTORED FIREBASE LOGS SYNC
     const qLogs = query(collection(db, "logs"), orderBy("timestamp", "desc"));
     const unsubLogs = onSnapshot(qLogs, (snap) => {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    // NEW: Listen for Two-Way SMS Messages
+    const qMessages = query(collection(db, "messages"), orderBy("timestamp", "asc"));
+    const unsubMessages = onSnapshot(qMessages, (snap) => {
+      setChatMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
     const loadSettings = async () => {
@@ -98,10 +110,9 @@ export default function AdminDashboard() {
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubLogs(); };
+    return () => { unsubAppts(); unsubLogs(); unsubMessages(); };
   }, []);
 
-  // 4. RESTORED LOG WRITING HELPER
   const writeLog = async (type: 'Email' | 'SMS', patientName: string, contactInfo: string, status: 'Sent' | 'Failed', action: string, apptDate: string, apptTime: string, errorMsg = '') => {
     try {
       await addDoc(collection(db, "logs"), {
@@ -155,7 +166,6 @@ export default function AdminDashboard() {
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
 
-    // CHANGED HERE: Increments by duration instead of 5
     for (let current = startMins; current + duration <= endMins; current += duration) {
       const potentialEnd = current + duration;
       
@@ -169,6 +179,82 @@ export default function AdminDashboard() {
       }
     }
     return slots;
+  };
+
+  // --- NEW: SEND CUSTOM SMS ---
+  const handleSendSMS = async () => {
+    if (!outboundSMS.trim() || !selectedChatPatient?.phone) return;
+    setIsSendingComms(true);
+    try {
+      const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: selectedChatPatient.phone, body: outboundSMS })
+      });
+      if (res.ok) {
+        await addDoc(collection(db, "messages"), {
+          phone: selectedChatPatient.phone,
+          patientName: selectedChatPatient.patientName,
+          text: outboundSMS,
+          direction: 'outbound',
+          timestamp: serverTimestamp()
+        });
+        await writeLog('SMS', selectedChatPatient.patientName, selectedChatPatient.phone, 'Sent', 'Direct Chat Message', new Date().toISOString().split('T')[0], '');
+        setOutboundSMS('');
+      } else {
+         alert("Failed to send SMS via Twilio.");
+      }
+    } catch (e) { console.error(e); alert("Network error sending SMS."); }
+    setIsSendingComms(false);
+  };
+
+  // --- NEW: SEND CUSTOM EMAIL W/ ATTACHMENT ---
+  const handleSendEmail = async () => {
+    if (!emailData.body.trim() || !selectedChatPatient?.email) return;
+    setIsSendingComms(true);
+    try {
+       let attachmentBase64 = null;
+       let attachmentName = null;
+       if (emailData.attachment) {
+          const reader = new FileReader();
+          reader.readAsDataURL(emailData.attachment);
+          await new Promise((resolve) => {
+             reader.onload = () => {
+                attachmentBase64 = (reader.result as string).split(',')[1];
+                attachmentName = emailData.attachment?.name;
+                resolve(null);
+             };
+          });
+       }
+
+       const payload: any = {
+          type: "send_email",
+          templateId: 7, // Custom Clinic Message Template
+          to_email: selectedChatPatient.email,
+          patient_name: selectedChatPatient.patientName.split(' ')[0],
+          params: {
+            patient_name: selectedChatPatient.patientName.split(' ')[0],
+            custom_message: emailData.body
+          }
+       };
+       
+       if (attachmentBase64) {
+          payload.attachments = [{ name: attachmentName, content: attachmentBase64 }];
+       }
+
+       const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+         method: "POST", headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(payload)
+       });
+
+       if (res.ok) {
+         await writeLog('Email', selectedChatPatient.patientName, selectedChatPatient.email, 'Sent', `Direct Email: ${emailData.subject}`, new Date().toISOString().split('T')[0], '');
+         setEmailData({ subject: '', body: '', attachment: null });
+         alert("Email sent successfully!");
+       } else {
+         alert("Failed to send email via Brevo.");
+       }
+    } catch(e) { console.error(e); alert("Network error sending email."); }
+    setIsSendingComms(false);
   };
 
   const handleAdminBooking = async () => {
@@ -188,7 +274,6 @@ export default function AdminDashboard() {
         else if (newBooking.onBenefits || newBooking.isDiabetic || (age >= 40 && newBooking.familyGlaucoma)) category = 'Eye Check NHS';
       }
 
-      // NEW: Automatically generate notes from the checkboxes
       const generatedNotes = [
         newBooking.inFullTimeEducation ? "In full-time education" : "",
         newBooking.onBenefits ? "Receiving income-related benefits" : "",
@@ -209,14 +294,13 @@ export default function AdminDashboard() {
         onBenefits: newBooking.onBenefits,
         familyGlaucoma: newBooking.familyGlaucoma,
         inFullTimeEducation: newBooking.inFullTimeEducation,
-        notes: generatedNotes, // <-- NEW: Save notes to database
+        notes: generatedNotes,
         createdAt: serverTimestamp()
       });
 
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
       const receiptLink = `${window.location.origin}/receipt/${docRef.id}`;
   
-      // Send Email & Write Log
       if (newBooking.email) {
         try {
           const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
@@ -233,9 +317,8 @@ export default function AdminDashboard() {
         }
       }
   
-      // Send SMS & Write Log
       if (formattedPhone && formattedPhone.length > 5) {
-        let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`;
+        let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please reply to this message or call 0116 253 2788.\nThe Eye Centre, Leicester`;
 
         if (!newBooking.email) {
           smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\n\nTo receive your full digital receipt and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
@@ -246,7 +329,12 @@ export default function AdminDashboard() {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ to: formattedPhone, body: smsMessage })
           });
-          if (smsRes.ok) await writeLog('SMS', newBooking.firstName, formattedPhone, 'Sent', 'Booking Confirmation', selectedDate, newBooking.time);
+          if (smsRes.ok) {
+            await writeLog('SMS', newBooking.firstName, formattedPhone, 'Sent', 'Booking Confirmation', selectedDate, newBooking.time);
+            await addDoc(collection(db, "messages"), {
+              phone: formattedPhone, patientName: `${newBooking.firstName} ${newBooking.lastName}`, text: smsMessage, direction: 'outbound', timestamp: serverTimestamp()
+            });
+          }
           else await writeLog('SMS', newBooking.firstName, formattedPhone, 'Failed', 'Booking Confirmation', selectedDate, newBooking.time, 'Twilio Error');
         } catch(e) {
           await writeLog('SMS', newBooking.firstName, formattedPhone, 'Failed', 'Booking Confirmation', selectedDate, newBooking.time, 'Network Error');
@@ -320,15 +408,21 @@ export default function AdminDashboard() {
         }
 
         if (bookingData.phone) {
+          const cancelMsg = `Cancellation: ${bookingData.patientName.split(' ')[0]}, your appointment on ${new Date(bookingData.appointmentDate).toLocaleDateString('en-GB')} @ ${bookingData.appointmentTime} has been cancelled. The Eye Centre.`;
           const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               to: bookingData.phone,
-              body: `Cancellation: ${bookingData.patientName.split(' ')[0]}, your appointment on ${new Date(bookingData.appointmentDate).toLocaleDateString('en-GB')} @ ${bookingData.appointmentTime} has been cancelled. The Eye Centre.`,
+              body: cancelMsg,
               cancelSid: bookingData.reminderSid
             })
           });
-          if (res.ok) await writeLog('SMS', bookingData.patientName, bookingData.phone, 'Sent', 'Cancellation', bookingData.appointmentDate, bookingData.appointmentTime);
+          if (res.ok) {
+            await writeLog('SMS', bookingData.patientName, bookingData.phone, 'Sent', 'Cancellation', bookingData.appointmentDate, bookingData.appointmentTime);
+            await addDoc(collection(db, "messages"), {
+              phone: bookingData.phone, patientName: bookingData.patientName, text: cancelMsg, direction: 'outbound', timestamp: serverTimestamp()
+            });
+          }
         }
 
         await deleteDoc(doc(db, "appointments", bookingData.id));
@@ -383,7 +477,6 @@ export default function AdminDashboard() {
   
       const appRef = doc(db, "appointments", editingApp.id);
       
-      // Simply update the database silently without triggering any webhooks/APIs
       await setDoc(appRef, {
         patientName: editingApp.patientName,
         email: editingApp.email,
@@ -471,10 +564,8 @@ export default function AdminDashboard() {
       const isLunchSlot = isLunchEnabled && (time >= lunchStartMins && time < lunchEndMins);
       const booking = appointments.find((a: any) => a.appointmentDate === selectedDate && a.appointmentTime === timeStr);
   
-      // NEW: Calculate the grid lines dynamically based on the Eye Check duration
       const isGridLine = time % config.times.eyeCheck === 0;
 
-      // Only render if there is an actual booking at this precise time, OR if it aligns with our grid line
       if (booking || isGridLine) {
         const duration = booking 
           ? (booking.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck)
@@ -532,13 +623,16 @@ export default function AdminDashboard() {
                     )}
                   </div>
                   <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
+                    <button onClick={() => {
+                      setSelectedChatPatient(booking);
+                      setView('messages');
+                    }} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Message Patient"><MessageSquare size={18} /></button>
                     <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit"><Pencil size={18} /></button>
                     <button onClick={() => deleteApp(booking)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete"><Trash2 size={18} /></button>
                     <button onClick={() => window.open(`/manage/${booking.id}`, '_blank')} className="text-slate-300 hover:text-blue-500 p-2 hover:bg-blue-50 rounded-full transition-colors" title="Manage Booking"><ExternalLink size={18} /></button>
                   </div>
                 </div>
               ) : (
-                // NEW: Taller empty block visually representing the duration of the slot
                 <div className={`min-h-[5rem] w-full rounded-xl border-2 border-dashed transition-all flex items-center justify-center ${isLunchSlot ? 'border-orange-200/50 bg-orange-50/30' : 'border-slate-200 hover:border-[#3F9185]/30 hover:bg-[#3F9185]/5'}`}>
                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest opacity-0 hover:opacity-100 transition-opacity">Available ({config.times.eyeCheck} min)</span>
                 </div>
@@ -569,20 +663,26 @@ export default function AdminDashboard() {
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
 
+  // Get unique patients for the chat sidebar based on existing appointments
+  const uniquePatients = Array.from(new Map(appointments.map(app => [app.phone, app])).values()).filter(app => app.phone);
+
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
       <div className="max-w-5xl mx-auto space-y-6">
         
         {/* Navigation Bar */}
-        <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100">
+        <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
           <div className="flex gap-2">
-            <button onClick={() => setView('diary')} className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+            <button onClick={() => setView('diary')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <LayoutDashboard size={18} /> Diary
             </button>
-            <button onClick={() => setView('logs')} className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'logs' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+            <button onClick={() => setView('messages')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'messages' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <MessageSquare size={18} /> Messages
+            </button>
+            <button onClick={() => setView('logs')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'logs' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <FileText size={18} /> Logs
             </button>
-            <button onClick={() => setView('settings')} className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'settings' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+            <button onClick={() => setView('settings')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'settings' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Settings size={18} /> Settings
             </button>
           </div>
@@ -651,7 +751,133 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* --- NEW LOGS VIEW --- */}
+        {/* --- NEW MESSAGES VIEW --- */}
+        {view === 'messages' && (
+          <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[800px] border border-slate-100">
+            {/* Left Sidebar - Patient List */}
+            <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
+              <div className="p-6 bg-white border-b border-slate-200">
+                <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><MessageSquare className="text-[#3F9185]"/> Conversations</h2>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {uniquePatients.map((patient: any) => (
+                  <button 
+                    key={patient.phone} 
+                    onClick={() => setSelectedChatPatient(patient)}
+                    className={`w-full text-left p-4 border-b border-slate-100 hover:bg-white transition-colors flex items-center gap-3 ${selectedChatPatient?.phone === patient.phone ? 'bg-white border-l-4 border-l-[#3F9185]' : ''}`}
+                  >
+                    <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold">
+                      <User size={20} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800 text-sm">{patient.patientName}</p>
+                      <p className="text-xs text-slate-500">{patient.phone}</p>
+                    </div>
+                  </button>
+                ))}
+                {uniquePatients.length === 0 && <p className="p-6 text-center text-slate-400 font-bold text-sm">No patients available to message.</p>}
+              </div>
+            </div>
+
+            {/* Right Pane - Chat/Email Area */}
+            <div className="flex-1 bg-white flex flex-col">
+              {selectedChatPatient ? (
+                <>
+                  <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white shadow-sm z-10">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-800">{selectedChatPatient.patientName}</h3>
+                      <p className="text-xs font-bold text-slate-400">{selectedChatPatient.phone} | {selectedChatPatient.email || 'No email'}</p>
+                    </div>
+                    <div className="flex bg-slate-100 rounded-lg p-1">
+                      <button onClick={() => setCommsType('SMS')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'SMS' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>SMS Chat</button>
+                      <button onClick={() => setCommsType('Email')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'Email' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>Send Email</button>
+                    </div>
+                  </div>
+
+                  {commsType === 'SMS' && (
+                    <div className="flex-1 flex flex-col bg-[#f8fafc]">
+                      <div className="flex-1 p-6 overflow-y-auto space-y-4">
+                        <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto">This is a two-way SMS channel.</p>
+                        
+                        {chatMessages.filter(m => m.phone === selectedChatPatient.phone).map(msg => (
+                          <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[70%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
+                              <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                              <p className={`text-[9px] mt-2 text-right ${msg.direction === 'outbound' ? 'text-teal-100' : 'text-slate-400'}`}>
+                                {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Sending...'}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="p-4 bg-white border-t border-slate-200 flex gap-2">
+                        <input 
+                          type="text" 
+                          placeholder="Type an SMS message..." 
+                          className="flex-1 p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-medium"
+                          value={outboundSMS}
+                          onChange={e => setOutboundSMS(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleSendSMS()}
+                        />
+                        <button onClick={handleSendSMS} disabled={isSendingComms || !outboundSMS} className="p-4 bg-[#3F9185] text-white rounded-xl hover:brightness-110 disabled:opacity-50 transition-all flex items-center justify-center">
+                          <Send size={20} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {commsType === 'Email' && (
+                    <div className="flex-1 p-8 overflow-y-auto bg-white">
+                      {!selectedChatPatient.email ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                           <Mail size={48} className="opacity-20" />
+                           <p className="font-bold">No email address on file for this patient.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 max-w-2xl mx-auto">
+                          <div>
+                            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Subject / Header</label>
+                            <input 
+                              type="text" placeholder="e.g. Your requested documentation" 
+                              className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-transparent focus:border-[#3F9185] text-sm font-bold"
+                              value={emailData.subject} onChange={e => setEmailData({...emailData, subject: e.target.value})}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Message Body</label>
+                            <textarea 
+                              placeholder="Dear patient..." 
+                              className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-transparent focus:border-[#3F9185] h-64 text-sm resize-none"
+                              value={emailData.body} onChange={e => setEmailData({...emailData, body: e.target.value})}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-2">Attachments (Optional)</label>
+                            <label className="flex items-center gap-3 p-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-[#3F9185] bg-slate-50 cursor-pointer transition-colors w-max">
+                               <Paperclip size={18} className="text-slate-400" />
+                               <span className="text-sm font-bold text-slate-500">{emailData.attachment ? emailData.attachment.name : 'Select a file to attach'}</span>
+                               <input type="file" className="hidden" onChange={e => setEmailData({...emailData, attachment: e.target.files?.[0] || null})} />
+                            </label>
+                          </div>
+                          <button onClick={handleSendEmail} disabled={isSendingComms || !emailData.body} className="w-full py-4 mt-4 bg-[#3F9185] text-white rounded-xl font-black shadow-lg shadow-teal-900/10 disabled:opacity-50 flex items-center justify-center gap-2 transition-all">
+                             {isSendingComms ? 'Sending...' : 'Send Email'} <Send size={18} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-300">
+                  <MessageSquare size={64} className="opacity-20 mb-4" />
+                  <p className="font-bold text-lg text-slate-400">Select a patient to start messaging</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* --- LOGS VIEW --- */}
         {view === 'logs' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-6">
             <div className="flex justify-between items-center mb-6">
@@ -659,31 +885,17 @@ export default function AdminDashboard() {
                 <FileText className="text-[#3F9185]" /> Communication Logs
               </h2>
             </div>
-
-            {/* Log Filters */}
             <div className="flex gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
               <div className="flex-1">
-                <input 
-                  type="text" 
-                  placeholder="Search by Patient, Phone, or Email..." 
-                  className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-medium"
-                  value={logSearch}
-                  onChange={(e) => setLogSearch(e.target.value)}
-                />
+                <input type="text" placeholder="Search by Patient, Phone, or Email..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-medium" value={logSearch} onChange={(e) => setLogSearch(e.target.value)} />
               </div>
               <select className="p-3 rounded-xl border border-slate-200 outline-none text-sm font-bold text-slate-600 bg-white" value={logTypeFilter} onChange={(e) => setLogTypeFilter(e.target.value)}>
-                <option value="All">All Types (SMS & Email)</option>
-                <option value="SMS">SMS Only</option>
-                <option value="Email">Email Only</option>
+                <option value="All">All Types</option><option value="SMS">SMS</option><option value="Email">Email</option>
               </select>
               <select className="p-3 rounded-xl border border-slate-200 outline-none text-sm font-bold text-slate-600 bg-white" value={logStatusFilter} onChange={(e) => setLogStatusFilter(e.target.value)}>
-                <option value="All">All Statuses</option>
-                <option value="Sent">Successfully Sent</option>
-                <option value="Failed">Failed / Bounced</option>
+                <option value="All">All Statuses</option><option value="Sent">Sent</option><option value="Failed">Failed</option>
               </select>
             </div>
-
-            {/* Logs Table */}
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
               <div className="max-h-[60vh] overflow-y-auto">
                 <table className="w-full text-left border-collapse">
@@ -698,47 +910,19 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {logs
-                      .filter(log => logTypeFilter === "All" || log.type === logTypeFilter)
-                      .filter(log => logStatusFilter === "All" || log.status === logStatusFilter)
-                      .filter(log => 
-                        (log.patientName || '').toLowerCase().includes(logSearch.toLowerCase()) || 
-                        (log.contactInfo || '').toLowerCase().includes(logSearch.toLowerCase())
-                      )
-                      .map((log) => (
+                    {logs.filter(log => logTypeFilter === "All" || log.type === logTypeFilter).filter(log => logStatusFilter === "All" || log.status === logStatusFilter).filter(log => (log.patientName || '').toLowerCase().includes(logSearch.toLowerCase()) || (log.contactInfo || '').toLowerCase().includes(logSearch.toLowerCase())).map((log) => (
                       <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">
-                          {log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Just now'}
-                        </td>
-                        <td className="p-4">
-                          <p className="font-bold text-slate-800 text-sm">{log.patientName}</p>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Appt: {new Date(log.apptDate).toLocaleDateString('en-GB')} @ {log.apptTime}</p>
-                        </td>
-                        <td className="p-4">
-                          <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider ${log.type === 'SMS' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
-                            {log.type}
-                          </span>
-                        </td>
+                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">{log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Just now'}</td>
+                        <td className="p-4"><p className="font-bold text-slate-800 text-sm">{log.patientName}</p><p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Appt: {new Date(log.apptDate).toLocaleDateString('en-GB')} @ {log.apptTime}</p></td>
+                        <td className="p-4"><span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider ${log.type === 'SMS' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>{log.type}</span></td>
                         <td className="p-4 font-medium text-sm text-slate-600">{log.contactInfo}</td>
                         <td className="p-4 font-medium text-sm text-slate-500">{log.action}</td>
                         <td className="p-4 text-right">
-                          {log.status === 'Sent' ? (
-                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-50 text-green-700 border border-green-100">
-                              <CheckCircle2 size={14} /> <span className="text-xs font-bold">Sent</span>
-                            </div>
-                          ) : (
-                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-50 text-red-700 border border-red-100" title={log.errorMsg}>
-                              <XCircle size={14} /> <span className="text-xs font-bold">Failed</span>
-                            </div>
-                          )}
+                          {log.status === 'Sent' ? <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-50 text-green-700 border border-green-100"><CheckCircle2 size={14} /> <span className="text-xs font-bold">Sent</span></div> : <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-50 text-red-700 border border-red-100" title={log.errorMsg}><XCircle size={14} /> <span className="text-xs font-bold">Failed</span></div>}
                         </td>
                       </tr>
                     ))}
-                    {logs.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="p-10 text-center text-slate-400 font-bold italic">No communication logs found.</td>
-                      </tr>
-                    )}
+                    {logs.length === 0 && <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold italic">No communication logs found.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -815,7 +999,6 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* MODAL 1: EDIT APPOINTMENT */}
       {editingApp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
           <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full animate-in zoom-in-95 shadow-2xl">
@@ -824,15 +1007,7 @@ export default function AdminDashboard() {
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.patientName} onChange={e => setEditingApp({...editingApp, patientName: e.target.value})} placeholder="Name" />
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.email} onChange={e => setEditingApp({...editingApp, email: e.target.value})} placeholder="Email" />
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.phone} onChange={e => setEditingApp({...editingApp, phone: e.target.value})} placeholder="Phone" />
-              
-              {/* NEW: Notes Textarea */}
-              <textarea 
-                className="w-full p-4 bg-slate-50 rounded-xl outline-none resize-none h-24 text-sm" 
-                value={editingApp.notes || ''} 
-                onChange={e => setEditingApp({...editingApp, notes: e.target.value})} 
-                placeholder="Admin Notes (Internal only)" 
-              />
-              
+              <textarea className="w-full p-4 bg-slate-50 rounded-xl outline-none resize-none h-24 text-sm" value={editingApp.notes || ''} onChange={e => setEditingApp({...editingApp, notes: e.target.value})} placeholder="Admin Notes (Internal only)" />
             </div>
             <div className="flex gap-3 mt-8">
               <button onClick={() => setEditingApp(null)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
@@ -875,19 +1050,6 @@ export default function AdminDashboard() {
                   value={newBooking.email}
                   onChange={e => setNewBooking({...newBooking, email: e.target.value.toLowerCase()})} 
                 />
-                {newBooking.email && !newBooking.email.includes('@') && (
-                  <div className="flex flex-wrap gap-2 px-1 animate-in fade-in">
-                    {['@gmail.com', '@hotmail.co.uk', '@hotmail.com', '@outlook.com', '@yahoo.co.uk'].map(domain => (
-                      <button 
-                        key={domain}
-                        onClick={() => setNewBooking({...newBooking, email: newBooking.email + domain})}
-                        className="text-[10px] font-bold bg-slate-100 text-slate-500 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-lg transition-colors shadow-sm"
-                      >
-                        {domain}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
               
               <input placeholder="Phone (Optional if Email provided)" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
@@ -931,42 +1093,35 @@ export default function AdminDashboard() {
                 </div>
               )}
 
-      <div className="space-y-2">
-        <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
-        {isDateClosed() || calculateSlotsForDate(selectedDate).length === 0 ? (
-          <div className="w-full p-6 bg-slate-50 rounded-xl border border-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
-            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center">
-              <span className="font-black text-xs">✕</span>
-            </div>
-            <span className="text-xs font-bold uppercase tracking-wider">No slots available</span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-4 gap-2">
-            {calculateSlotsForDate(selectedDate).map((t: string) => (
-              <button 
-                key={t}
-                onClick={() => setNewBooking({...newBooking, time: t})}
-                className={`py-2 rounded-lg text-[11px] font-black transition-all border-2 ${
-                  newBooking.time === t 
-                    ? 'bg-[#3F9185] text-white border-[#3F9185]' 
-                    : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Available Times</label>
+                {isDateClosed() || calculateSlotsForDate(selectedDate).length === 0 ? (
+                  <div className="w-full p-6 bg-slate-50 rounded-xl border border-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
+                    <span className="text-xs font-bold uppercase tracking-wider">No slots available</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-4 gap-2">
+                    {calculateSlotsForDate(selectedDate).map((t: string) => (
+                      <button 
+                        key={t}
+                        onClick={() => setNewBooking({...newBooking, time: t})}
+                        className={`py-2 rounded-lg text-[11px] font-black transition-all border-2 ${
+                          newBooking.time === t 
+                            ? 'bg-[#3F9185] text-white border-[#3F9185]' 
+                            : 'bg-white text-slate-400 border-slate-100 hover:border-[#3F9185]/30'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-3 mt-8">
               <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
-              <button 
-                onClick={handleAdminBooking} 
-                disabled={!newBooking.time || !newBooking.firstName || (!newBooking.email && !newBooking.phone) || isDateClosed()} 
-                className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-              >
+              <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
                 Confirm Booking
               </button>
             </div>
