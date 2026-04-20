@@ -228,16 +228,16 @@ export default function AdminDashboard() {
        }
 
        const payload: any = {
-          type: "send_email",
-          templateId: 7, 
-          to_email: selectedChatPatient.email,
+        type: "send_email",
+        templateId: 7, 
+        to_email: selectedChatPatient.email,
+        patient_name: selectedChatPatient.patientName.split(' ')[0],
+        params: {
           patient_name: selectedChatPatient.patientName.split(' ')[0],
-          params: {
-            patient_name: selectedChatPatient.patientName.split(' ')[0],
-            custom_message: emailData.body,
-            subject: emailData.subject
-          }
-       };
+          custom_message: emailData.body,
+          subject: emailData.subject // <-- MOVED THIS BACK HERE!
+        }
+     };
        
        if (attachmentBase64) {
           payload.attachment = [{ name: attachmentName, content: attachmentBase64 }];
@@ -838,18 +838,17 @@ export default function AdminDashboard() {
                   </div>
 
                   {commsType === 'SMS' && (
-                    <div className="flex-1 flex flex-col bg-[#f8fafc]">
+                    // ADDED: overflow-hidden here
+                    <div className="flex-1 flex flex-col bg-[#f8fafc] overflow-hidden">
                       <div className="flex-1 p-6 overflow-y-auto space-y-4">
                         <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto">This timeline includes two-way SMS and outbound emails.</p>
                         
-                        {/* NEW: Displays both SMS and Emails in the timeline! */}
                         {chatMessages
                           .filter(m => (m.phone && m.phone === selectedChatPatient.phone) || (m.email && m.email === selectedChatPatient.email))
                           .map(msg => (
                           <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                             <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
                               
-                              {/* Visual Indicator for Emails */}
                               {msg.type === 'email' && (
                                 <div className="flex items-center gap-1.5 mb-2 pb-2 border-b border-teal-500/30 text-xs font-black uppercase tracking-wider">
                                   <Mail size={14} /> Email Sent
@@ -864,7 +863,9 @@ export default function AdminDashboard() {
                           </div>
                         ))}
                       </div>
-                      <div className="p-4 bg-white border-t border-slate-200 flex gap-2">
+                      
+                      {/* ADDED: shrink-0 here so it never gets squished off screen */}
+                      <div className="p-4 bg-white border-t border-slate-200 flex gap-2 shrink-0">
                         <input 
                           type="text" 
                           placeholder="Type an SMS message..." 
