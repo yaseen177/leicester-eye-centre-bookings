@@ -104,7 +104,8 @@ export default function ManageBooking() {
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
   
-    for (let current = clinicStart; current + duration <= clinicEnd; current += 5) {
+    // CHANGED HERE: Increments by duration instead of 5
+    for (let current = clinicStart; current + duration <= clinicEnd; current += duration) {
       const potentialEnd = current + duration;
       if (isToday && current <= currentMins) continue;
       if (isLunchEnabled && current < lunchEnd && potentialEnd > lunchStart) continue;

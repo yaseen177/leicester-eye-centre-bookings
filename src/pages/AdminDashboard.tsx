@@ -143,7 +143,6 @@ export default function AdminDashboard() {
     const duration = newBooking.service === 'Eye Check' ? config.times.eyeCheck : config.times.contactLens;
     const slots: string[] = [];
 
-    // 5. FIXED TIME FILTERING (No past slots today)
     const now = new Date();
     const localDateStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
     const isToday = targetDate === localDateStr;
@@ -156,10 +155,10 @@ export default function AdminDashboard() {
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
 
-    for (let current = startMins; current + duration <= endMins; current += 5) {
+    // CHANGED HERE: Increments by duration instead of 5
+    for (let current = startMins; current + duration <= endMins; current += duration) {
       const potentialEnd = current + duration;
       
-      // Blocks past times today
       if (isToday && current <= currentMins) continue;
 
       const overlapsLunch = isLunchEnabled && (current < lunchEndMins && potentialEnd > lunchStartMins);
@@ -472,7 +471,11 @@ export default function AdminDashboard() {
       const isLunchSlot = isLunchEnabled && (time >= lunchStartMins && time < lunchEndMins);
       const booking = appointments.find((a: any) => a.appointmentDate === selectedDate && a.appointmentTime === timeStr);
   
-      if (booking || time % 15 === 0 || isLunchSlot) {
+      // NEW: Calculate the grid lines dynamically based on the Eye Check duration
+      const isGridLine = time % config.times.eyeCheck === 0;
+
+      // Only render if there is an actual booking at this precise time, OR if it aligns with our grid line
+      if (booking || isGridLine) {
         const duration = booking 
           ? (booking.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck)
           : 0;
@@ -481,10 +484,10 @@ export default function AdminDashboard() {
         const isHighlighted = searchResults.length > 0 && booking && searchResults[currentResultIndex]?.id === booking.id;
   
         grid.push(
-          <div key={timeStr} className={`flex items-center border-b border-slate-50 py-3 transition-colors ${isLunchSlot ? 'bg-orange-50/30' : 'hover:bg-slate-50/50'}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, timeStr)}>
-            <div className="w-20 text-xs font-black text-slate-300 tabular-nums">
+          <div key={timeStr} className={`flex items-start py-3 transition-colors border-b-2 border-slate-100 ${isLunchSlot ? 'bg-orange-50/20' : 'hover:bg-slate-50/50'}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, timeStr)}>
+            <div className="w-20 text-xs font-black text-slate-400 tabular-nums mt-3 pl-2">
               {timeStr}
-              {isLunchSlot && <span className="block text-[8px] text-orange-400 uppercase font-bold">Lunch</span>}
+              {isLunchSlot && <span className="block text-[8px] text-orange-400 uppercase font-bold mt-1">Lunch</span>}
             </div>
             <div className="flex-1 px-4">
               {booking ? (
@@ -517,8 +520,6 @@ export default function AdminDashboard() {
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">E:</span> {booking.email ? booking.email : <span className="text-orange-400 italic">No email provided</span>}</span>
                       <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1"><span className="font-black text-[#3F9185]">T:</span> {booking.phone ? booking.phone : <span className="text-orange-400 italic">No phone provided</span>}</span>
                     </div>
-
-                    {/* NEW: Admin Notes Display */}
                     {booking.notes && (
                       <div className="ml-1 pt-2">
                         <div className="bg-yellow-50/70 border border-yellow-100/50 rounded-lg p-2.5 shadow-sm">
@@ -529,16 +530,18 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                     )}
-                    
                   </div>
                   <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
-                    <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit"><Pencil size={18} /></button>
+                    <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit"><Settings size={18} /></button>
                     <button onClick={() => deleteApp(booking)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete"><Trash2 size={18} /></button>
                     <button onClick={() => window.open(`/manage/${booking.id}`, '_blank')} className="text-slate-300 hover:text-blue-500 p-2 hover:bg-blue-50 rounded-full transition-colors" title="Manage Booking"><ExternalLink size={18} /></button>
                   </div>
                 </div>
               ) : (
-                <div className={`h-8 w-full border-b border-dashed ${isLunchSlot ? 'border-orange-100' : 'border-slate-100/50 hover:bg-teal-50/30'}`} />
+                // NEW: Taller empty block visually representing the duration of the slot
+                <div className={`min-h-[5rem] w-full rounded-xl border-2 border-dashed transition-all flex items-center justify-center ${isLunchSlot ? 'border-orange-200/50 bg-orange-50/30' : 'border-slate-200 hover:border-[#3F9185]/30 hover:bg-[#3F9185]/5'}`}>
+                   <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest opacity-0 hover:opacity-100 transition-opacity">Available ({config.times.eyeCheck} min)</span>
+                </div>
               )}
             </div>
           </div>
