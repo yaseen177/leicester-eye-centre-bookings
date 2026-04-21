@@ -18,7 +18,7 @@ interface ClinicConfig {
 }
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'settings' | 'logs' | 'messages'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports'>('diary');
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
