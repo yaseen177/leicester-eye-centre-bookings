@@ -11,30 +11,41 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     let completed = 0, fta = 0, onlineBookings = 0, adminBookings = 0;
     const leadTimes: number[] = [];
     
-    // Appointment Logistics (When is the actual appointment)
     const apptDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const apptHoursCount: Record<string, number> = {};
 
-    // Consumer Behaviour (When did they sit down to book it)
     const creationDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const creationHoursCount: Record<number, number> = {};
 
-    // Booking Window Buckets
     let sameDay = 0, underAWeek = 0, overTwoWeeks = 0;
+
+    // NEW: Universal British Date Decoder
+    // This stops JS from crashing when it reads DD/MM/YYYY
+    const parseDateSafely = (dateStr: string) => {
+      if (!dateStr) return null;
+      const parts = dateStr.split(/[-/]/);
+      if (parts.length === 3) {
+        // If year is first (YYYY-MM-DD)
+        if (parts[0].length === 4) return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        // If year is last (DD/MM/YYYY - UK Format)
+        if (parts[2].length === 4) return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      }
+      return new Date(dateStr);
+    };
 
     appointments.forEach(app => {
       // 1. Core Status
       if (app.status === 'Completed') completed++;
       if (app.status === 'FTA') fta++;
       
-      // 2. Digital Adoption (Online vs Admin)
+      // 2. Digital Adoption
       if (app.source?.toLowerCase() === 'online') onlineBookings++;
-      else adminBookings++; // Default to admin if booked over phone/in-person
+      else adminBookings++;
 
-      // 3. Appointment Logistics (The Clinic Diary)
+      // 3. Appointment Logistics
       if (app.appointmentDate) {
-        const dateObj = new Date(app.appointmentDate);
-        if (!isNaN(dateObj.getTime())) apptDaysCount[dateObj.getDay()]++;
+        const dateObj = parseDateSafely(app.appointmentDate);
+        if (dateObj && !isNaN(dateObj.getTime())) apptDaysCount[dateObj.getDay()]++;
       }
 
       if (app.appointmentTime) {
@@ -42,59 +53,50 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         apptHoursCount[hour] = (apptHoursCount[hour] || 0) + 1;
       }
 
-      // 4. Consumer Behaviour (The Action of Booking)
-      if (app.timestamp) {
-        // Safely extract the date whether it is a Firestore Timestamp or an ISO String
-        let bookedDate: Date;
-        if (typeof app.timestamp.toDate === 'function') {
-           bookedDate = app.timestamp.toDate();
-        } else if (app.timestamp.seconds) {
-           bookedDate = new Date(app.timestamp.seconds * 1000);
-        } else {
-           bookedDate = new Date(app.timestamp);
-        }
-        
-        if (!isNaN(bookedDate.getTime())) {
-           creationDaysCount[bookedDate.getDay()]++;
-           const hour = bookedDate.getHours();
-           creationHoursCount[hour] = (creationHoursCount[hour] || 0) + 1;
+      // 4. Consumer Behaviour & Booking Window
+      if (app.timestamp && app.appointmentDate) {
+         let bDate: Date;
+         
+         // Extract creation time safely
+         if (typeof app.timestamp.toDate === 'function') bDate = app.timestamp.toDate();
+         else if (app.timestamp.seconds) bDate = new Date(app.timestamp.seconds * 1000);
+         else bDate = new Date(app.timestamp);
+         
+         if (!isNaN(bDate.getTime())) {
+            creationDaysCount[bDate.getDay()]++;
+            const hour = bDate.getHours();
+            creationHoursCount[hour] = (creationHoursCount[hour] || 0) + 1;
 
-           // 5. Booking Window Calculation (FIXED: The "Midnight" Bug)
-           if (app.appointmentDate) {
-              // Strip time from both dates so we compare pure calendar days
-              const bDate = new Date(bookedDate.getFullYear(), bookedDate.getMonth(), bookedDate.getDate());
-              
-              // Split "YYYY-MM-DD" safely
-              const aParts = app.appointmentDate.split('-'); 
-              if (aParts.length === 3) {
-                 const aDate = new Date(parseInt(aParts[0]), parseInt(aParts[1]) - 1, parseInt(aParts[2]));
-                 
-                 // Calculate exact full days difference
-                 const diffDays = Math.round((aDate.getTime() - bDate.getTime()) / (1000 * 60 * 60 * 24));
-                 
-                 // Only count valid advance bookings (ignore negative past manual entries)
-                 if (diffDays >= 0 && diffDays < 365) {
-                   leadTimes.push(diffDays);
-                   if (diffDays <= 1) sameDay++;
-                   else if (diffDays <= 7) underAWeek++;
-                   else if (diffDays > 14) overTwoWeeks++;
-                 }
-              }
-           }
-        }
-     }
-   });
+            const aDate = parseDateSafely(app.appointmentDate);
+            
+            if (aDate && !isNaN(aDate.getTime())) {
+               // Strip the hours/minutes away so we are doing pure calendar-day math
+               aDate.setHours(0,0,0,0);
+               const creationDateOnly = new Date(bDate.getTime());
+               creationDateOnly.setHours(0,0,0,0);
+               
+               const diffDays = Math.round((aDate.getTime() - creationDateOnly.getTime()) / (1000 * 60 * 60 * 24));
+               
+               if (diffDays >= 0 && diffDays < 365) {
+                 leadTimes.push(diffDays);
+                 if (diffDays <= 1) sameDay++;
+                 else if (diffDays <= 7) underAWeek++;
+                 else if (diffDays > 14) overTwoWeeks++;
+               }
+            }
+         }
+      }
+    });
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     
-    // Calculating Peak Modes
+    // Safety checks to prevent empty-array crashes
     const busiestApptDay = Object.keys(apptDaysCount).reduce((a, b) => apptDaysCount[parseInt(a)] > apptDaysCount[parseInt(b)] ? a : b);
     const busiestApptHour = Object.keys(apptHoursCount).length > 0 ? Object.keys(apptHoursCount).reduce((a, b) => apptHoursCount[a] > apptHoursCount[b] ? a : b) + ":00" : "N/A";
     
     const peakBrowsingDay = Object.keys(creationDaysCount).reduce((a, b) => creationDaysCount[parseInt(a)] > creationDaysCount[parseInt(b)] ? a : b);
     const peakBrowsingHourIndex = Object.keys(creationHoursCount).length > 0 ? Object.keys(creationHoursCount).reduce((a, b) => creationHoursCount[parseInt(a)] > creationHoursCount[parseInt(b)] ? a : b) : "12";
     
-    // Formatting the browsing hour nicely (e.g., 20 -> 8:00 PM)
     const browseHourNum = parseInt(peakBrowsingHourIndex);
     const peakBrowsingHourFormatted = browseHourNum === 0 ? "12:00 AM" : browseHourNum < 12 ? `${browseHourNum}:00 AM` : browseHourNum === 12 ? "12:00 PM" : `${browseHourNum - 12}:00 PM`;
 
@@ -111,8 +113,8 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       peakBrowsingHour: peakBrowsingHourFormatted,
       
       avgLeadTime: leadTimes.length ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) : 0,
-      sameDayRate: Math.round((sameDay / leadTimes.length) * 100) || 0,
-      plannerRate: Math.round((overTwoWeeks / leadTimes.length) * 100) || 0,
+      sameDayRate: leadTimes.length ? Math.round((sameDay / leadTimes.length) * 100) : 0,
+      plannerRate: leadTimes.length ? Math.round((overTwoWeeks / leadTimes.length) * 100) : 0,
     };
   }, [appointments]);
 
