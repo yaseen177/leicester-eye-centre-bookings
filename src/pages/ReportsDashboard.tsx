@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, Calendar, AlertTriangle, Clock, MousePointerClick, Smartphone, BarChart3, Users, RefreshCcw, TrendingDown, PieChart, Activity } from 'lucide-react';
+import { FileText, Calendar, AlertTriangle, MousePointerClick, Smartphone, Users, RefreshCcw, TrendingDown, PieChart, Activity } from 'lucide-react';
 
 export default function ReportsDashboard({ appointments }: { appointments: any[] }) {
   const stats = useMemo(() => {
