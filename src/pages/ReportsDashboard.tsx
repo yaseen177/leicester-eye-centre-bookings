@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, Calendar, AlertTriangle, Users, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock, Smartphone } from 'lucide-react';
+import { FileText, Calendar, AlertTriangle, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock } from 'lucide-react';
 
 export default function ReportsDashboard({ appointments }: { appointments: any[] }) {
   const [selectedDay, setSelectedDay] = useState<string>('All');
