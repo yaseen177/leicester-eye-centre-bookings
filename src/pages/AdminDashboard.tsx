@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, Plus } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 // @ts-ignore
@@ -54,9 +54,11 @@ export default function AdminDashboard() {
   const [isSendingComms, setIsSendingComms] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
 
-  // --- NEW: SEARCH STATES ---
+  // --- NEW: SEARCH & MODAL STATES ---
   const [patientSearch, setPatientSearch] = useState('');
   const [globalMessageSearch, setGlobalMessageSearch] = useState('');
+  const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false);
+  const [newMessageSearch, setNewMessageSearch] = useState('');
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -120,7 +122,6 @@ export default function AdminDashboard() {
     return () => { unsubAppts(); unsubLogs(); unsubMessages(); };
   }, []);
 
-  // NEW: Auto-mark messages as read when viewing a chat
   useEffect(() => {
     if (selectedChatPatient && view === 'messages') {
       const unreadMsgs = chatMessages.filter(m => 
@@ -279,7 +280,6 @@ export default function AdminDashboard() {
        if (res.ok) {
          await writeLog('Email', selectedChatPatient.patientName, selectedChatPatient.email, 'Sent', `Direct Email: ${emailData.subject}`, new Date().toISOString().split('T')[0], '');
          
-         // NEW: Save the actual file data to Firebase so it can be downloaded later
          await addDoc(collection(db, "messages"), {
             phone: selectedChatPatient.phone || '',
             email: selectedChatPatient.email || '',
@@ -455,7 +455,6 @@ export default function AdminDashboard() {
       const appData = appSnap.data();
 
       if (appData) {
-        // If changed to FTA, send the scheduling request to Cloudflare
         if (newStatus === 'FTA' && appData.status !== 'FTA') {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/schedule-fta", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -470,8 +469,6 @@ export default function AdminDashboard() {
         }
       }
 
-      // Update the database instantly. (If you change it back to 'Arrived' here, 
-      // Cloudflare will automatically see it 30 mins later and abort the message!)
       await setDoc(appRef, { status: newStatus }, { merge: true });
       
     } catch (err) {
@@ -683,30 +680,20 @@ export default function AdminDashboard() {
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
 
-  // NEW: Build the patient list from BOTH Bookings AND Message History
-  const uniquePatientsMap = new Map();
+
+  // --- WHATSAPP-STYLE MESSAGE SORTING ENGINE ---
   
-  // 1. Add all known patients who have booked an appointment
+  // 1. Grab all known contacts from the diary
+  const allContactsMap = new Map();
   appointments.forEach(app => {
     const key = app.phone || app.email;
-    if (key && !uniquePatientsMap.has(key)) {
-      uniquePatientsMap.set(key, app);
+    if (key && !allContactsMap.has(key)) {
+      allContactsMap.set(key, app);
     }
   });
+  const allContacts = Array.from(allContactsMap.values());
 
-  // 2. Add ANYONE who has sent/received a message, even if they've never booked!
-  chatMessages.forEach(msg => {
-    const key = msg.phone || msg.email;
-    if (key && !uniquePatientsMap.has(key)) {
-      uniquePatientsMap.set(key, {
-        id: `unknown-${key}`, // Creates a safe temporary ID
-        patientName: msg.patientName && msg.patientName !== 'Patient Reply' ? msg.patientName : 'Unknown Sender',
-        phone: msg.phone || '',
-        email: msg.email || ''
-      });
-    }
-  });
-
+  // 2. Track message activity
   const patientStats = new Map();
   let totalUnreadMessages = 0;
 
@@ -716,28 +703,57 @@ export default function AdminDashboard() {
      if (!patientStats.has(key)) patientStats.set(key, { unread: 0, lastTime: 0 });
      const stats = patientStats.get(key);
 
-     // Count inbound messages without the isRead flag
      if (msg.direction === 'inbound' && !msg.isRead) {
        stats.unread += 1;
        totalUnreadMessages += 1;
      }
 
-     // Track the latest message time for sorting
      const msgTime = msg.timestamp?.seconds || 0;
      if (msgTime > stats.lastTime) stats.lastTime = msgTime;
   });
 
-  const uniquePatients = Array.from(uniquePatientsMap.values()).sort((a, b) => {
+  // 3. Filter down to ONLY active conversations
+  const activeConversationsMap = new Map();
+  
+  // Include existing patients who have message history
+  allContacts.forEach(contact => {
+    const key = contact.phone || contact.email;
+    if (patientStats.has(key) && patientStats.get(key).lastTime > 0) {
+      activeConversationsMap.set(key, contact);
+    }
+  });
+
+  // Include anyone who messaged us but isn't in the diary
+  chatMessages.forEach(msg => {
+    const key = msg.phone || msg.email;
+    if (key && !activeConversationsMap.has(key)) {
+      activeConversationsMap.set(key, {
+        id: `unknown-${key}`,
+        patientName: msg.patientName && msg.patientName !== 'Patient Reply' ? msg.patientName : 'Unknown Sender',
+        phone: msg.phone || '',
+        email: msg.email || ''
+      });
+    }
+  });
+
+  // Ensure the actively selected patient ALWAYS appears in the list (even if brand new)
+  if (selectedChatPatient) {
+     const selectedKey = selectedChatPatient.phone || selectedChatPatient.email;
+     if (selectedKey && !activeConversationsMap.has(selectedKey)) {
+        activeConversationsMap.set(selectedKey, selectedChatPatient);
+     }
+  }
+
+  // 4. Sort: Unread first, then by most recent message (WhatsApp logic)
+  const activeConversations = Array.from(activeConversationsMap.values()).sort((a, b) => {
      const keyA = a.phone || a.email;
      const keyB = b.phone || b.email;
      const statsA = patientStats.get(keyA) || { unread: 0, lastTime: 0 };
      const statsB = patientStats.get(keyB) || { unread: 0, lastTime: 0 };
 
-     // 1. Pin unread conversations to the top
      if (statsA.unread > 0 && statsB.unread === 0) return -1;
      if (statsB.unread > 0 && statsA.unread === 0) return 1;
 
-     // 2. Otherwise, sort by the most recent message
      return statsB.lastTime - statsA.lastTime;
   });
 
@@ -840,15 +856,21 @@ export default function AdminDashboard() {
             {/* LEFT SIDEBAR: Search and Patient List */}
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
               
-              {/* NEW: Dual Search Area */}
-              <div className="p-4 bg-white border-b border-slate-200 space-y-3">
-                <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><MessageSquare className="text-[#3F9185]"/> Conversations</h2>
+              <div className="p-4 bg-white border-b border-slate-200 space-y-4">
                 
+                {/* NEW MESSAGE BUTTON */}
+                <button 
+                   onClick={() => setIsNewMessageModalOpen(true)}
+                   className="w-full bg-[#3F9185] hover:bg-teal-700 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
+                >
+                   <MessageSquare size={16} /> New Message
+                </button>
+
                 <div className="relative">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input 
                     type="text" 
-                    placeholder="Search customers (Name, Email, Phone)..." 
+                    placeholder="Filter active chats..." 
                     className="w-full pl-9 pr-4 py-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-xs font-bold text-slate-600"
                     value={patientSearch}
                     onChange={e => { setPatientSearch(e.target.value); setGlobalMessageSearch(''); }}
@@ -859,7 +881,7 @@ export default function AdminDashboard() {
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input 
                     type="text" 
-                    placeholder="Search all messages & emails..." 
+                    placeholder="Search inside messages..." 
                     className="w-full pl-9 pr-4 py-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-xs font-bold text-slate-600"
                     value={globalMessageSearch}
                     onChange={e => { setGlobalMessageSearch(e.target.value); setPatientSearch(''); }}
@@ -877,7 +899,7 @@ export default function AdminDashboard() {
                       <button 
                         key={msg.id}
                         onClick={() => {
-                          const patient = uniquePatients.find(p => (p.phone && p.phone === msg.phone) || (p.email && p.email === msg.email));
+                          const patient = activeConversations.find(p => (p.phone && p.phone === msg.phone) || (p.email && p.email === msg.email));
                           if (patient) {
                             setSelectedChatPatient(patient);
                             setGlobalMessageSearch(''); 
@@ -896,8 +918,8 @@ export default function AdminDashboard() {
                       </button>
                     ))
                 ) : (
-                  /* Display Filtered Patient List */
-                  uniquePatients
+                  /* Display Active WhatsApp-Style List */
+                  activeConversations
                     .filter(p => 
                       (p.patientName || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
                       (p.email || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
@@ -905,8 +927,11 @@ export default function AdminDashboard() {
                     )
                     .map((patient: any) => {
                       const pKey = patient.phone || patient.email;
-                      const pStats = patientStats.get(pKey) || { unread: 0 };
+                      const pStats = patientStats.get(pKey) || { unread: 0, lastTime: 0 };
                       const isUnread = pStats.unread > 0;
+
+                      // Find their most recent message snippet to display
+                      const recentMsg = chatMessages.slice().reverse().find(m => (m.phone === patient.phone || m.email === patient.email));
 
                       return (
                         <button 
@@ -920,7 +945,7 @@ export default function AdminDashboard() {
                           </div>
                           <div className="overflow-hidden flex-1">
                             <p className={`text-sm truncate ${isUnread ? 'font-black text-slate-900' : 'font-bold text-slate-800'}`}>{patient.patientName}</p>
-                            <p className={`text-xs truncate ${isUnread ? 'font-bold text-[#3F9185]' : 'text-slate-500'}`}>{patient.phone || patient.email}</p>
+                            <p className={`text-[10px] truncate ${isUnread ? 'font-bold text-[#3F9185]' : 'text-slate-500'}`}>{recentMsg ? recentMsg.text : patient.phone}</p>
                           </div>
                           {isUnread && (
                             <div className="bg-[#3F9185] text-white text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 shadow-sm animate-in zoom-in">
@@ -933,8 +958,8 @@ export default function AdminDashboard() {
                 )}
 
                 {/* Empty States */}
-                {!globalMessageSearch.trim() && uniquePatients.length === 0 && (
-                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No patients available.</p>
+                {!globalMessageSearch.trim() && activeConversations.length === 0 && (
+                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No active conversations. Click 'New Message' to start.</p>
                 )}
                 {globalMessageSearch.trim() && chatMessages.filter(m => (m.text || '').toLowerCase().includes(globalMessageSearch.toLowerCase())).length === 0 && (
                   <p className="p-6 text-center text-slate-400 font-bold text-sm">No messages found.</p>
@@ -958,7 +983,6 @@ export default function AdminDashboard() {
                   </div>
 
                   {commsType === 'SMS' && (
-                    // ADDED: overflow-hidden here
                     <div className="flex-1 flex flex-col bg-[#f8fafc] overflow-hidden">
                       <div className="flex-1 p-6 overflow-y-auto space-y-4">
                         <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto">This timeline includes two-way SMS and outbound emails.</p>
@@ -969,7 +993,6 @@ export default function AdminDashboard() {
                           <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                             <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
                               
-                              {/* Visual Indicator for Emails + Downloadable Attachments */}
                               {msg.type === 'email' && (
                                 <div className="flex items-center justify-between gap-4 mb-3 pb-3 border-b border-teal-500/30">
                                   <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider">
@@ -1005,7 +1028,6 @@ export default function AdminDashboard() {
                         ))}
                       </div>
                       
-                      {/* ADDED: shrink-0 here so it never gets squished off screen */}
                       <div className="p-4 bg-white border-t border-slate-200 flex gap-2 shrink-0">
                         <input 
                           type="text" 
@@ -1074,7 +1096,6 @@ export default function AdminDashboard() {
 
                                      setIsCompressing(true);
 
-                                     // --- FULL MULTI-PAGE PDF COMPRESSION ---
                                      if (file.type === 'application/pdf') {
                                        try {
                                          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -1089,7 +1110,6 @@ export default function AdminDashboard() {
 
                                              for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                                                const page = await pdf.getPage(pageNum);
-                                               // Lowered scale to 1.2 to safely fit within database limits
                                                const viewport = page.getViewport({ scale: 1.2 }); 
                                                
                                                const canvas = document.createElement('canvas');
@@ -1102,7 +1122,6 @@ export default function AdminDashboard() {
                                                // @ts-ignore
                                                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
 
-                                               // Lowered quality to 0.5 to reduce file bloat
                                                const imgData = canvas.toDataURL('image/jpeg', 0.5); 
 
                                                if (pageNum > 1) newPdf.addPage();
@@ -1119,7 +1138,6 @@ export default function AdminDashboard() {
                                                lastModified: Date.now(),
                                              });
 
-                                             // NEW LIMIT: 700KB (Allows for 33% Base64 inflation)
                                              if (compressedFile.size > 700 * 1024) {
                                                alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
                                              } else {
@@ -1141,7 +1159,6 @@ export default function AdminDashboard() {
                                        return;
                                      }
 
-                                     // --- STANDARD IMAGE COMPRESSION LOGIC ---
                                      try {
                                         const reader = new FileReader();
                                         reader.readAsDataURL(file);
@@ -1153,7 +1170,6 @@ export default function AdminDashboard() {
                                             let width = img.width;
                                             let height = img.height;
 
-                                            // Lowered dimension limit to 1000px
                                             const MAX_DIMENSION = 1000;
                                             if (width > height && width > MAX_DIMENSION) {
                                               height *= MAX_DIMENSION / width;
@@ -1182,7 +1198,7 @@ export default function AdminDashboard() {
                                                 }
                                               }
                                               setIsCompressing(false);
-                                            }, 'image/jpeg', 0.5); // Dropped quality to 0.5
+                                            }, 'image/jpeg', 0.5); 
                                           };
                                         };
                                      } catch (err) {
@@ -1350,10 +1366,57 @@ export default function AdminDashboard() {
           </div>
         )}
 
-
         {/* --- REPORTS VIEW --- */}
         {view === 'reports' && <ReportsDashboard appointments={appointments} />}
       </div>
+
+      {/* --- NEW MESSAGE MODAL (ADDRESS BOOK) --- */}
+      {isNewMessageModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full max-h-[80vh] flex flex-col shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6">
+               <h2 className="text-xl font-black text-slate-800">New Message</h2>
+               <button onClick={() => setIsNewMessageModalOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+            <div className="relative mb-4">
+               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+               <input 
+                 type="text" 
+                 placeholder="Search all contacts..." 
+                 className="w-full pl-10 pr-4 py-3 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-700"
+                 value={newMessageSearch}
+                 onChange={e => setNewMessageSearch(e.target.value)}
+               />
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-1 pr-2">
+               {allContacts
+                  .filter(c => 
+                     (c.patientName || '').toLowerCase().includes(newMessageSearch.toLowerCase()) ||
+                     (c.email || '').toLowerCase().includes(newMessageSearch.toLowerCase()) ||
+                     (c.phone || '').toLowerCase().includes(newMessageSearch.toLowerCase())
+                  )
+                  .map(contact => (
+                     <button 
+                       key={contact.phone || contact.email}
+                       onClick={() => {
+                          setSelectedChatPatient(contact);
+                          setIsNewMessageModalOpen(false);
+                          setNewMessageSearch('');
+                       }}
+                       className="w-full text-left p-3 hover:bg-slate-50 rounded-xl transition-colors flex flex-col border border-transparent hover:border-slate-100"
+                     >
+                       <span className="font-bold text-slate-800">{contact.patientName}</span>
+                       <span className="text-xs text-slate-500">{contact.phone || contact.email}</span>
+                     </button>
+                  ))
+               }
+               {allContacts.length === 0 && (
+                 <p className="text-center text-slate-400 font-bold text-sm mt-4">No patients found in your diary.</p>
+               )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {editingApp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
