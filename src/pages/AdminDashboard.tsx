@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 // @ts-ignore
@@ -45,9 +45,12 @@ export default function AdminDashboard() {
   const [logTypeFilter, setLogTypeFilter] = useState("All");
   const [logStatusFilter, setLogStatusFilter] = useState("All");
 
-  // --- MESSAGES STATE ---
+  // --- CRM & MESSAGES STATE ---
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
+  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'profile'>('chat');
+  const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '' });
+  
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
   const [outboundSMS, setOutboundSMS] = useState('');
   const [emailData, setEmailData] = useState({ subject: '', body: '', attachment: null as File | null });
@@ -126,9 +129,22 @@ export default function AdminDashboard() {
     return () => { unsubAppts(); unsubLogs(); unsubMessages(); };
   }, []);
 
+  // Sync profile editor when a new patient is selected
+  useEffect(() => {
+    if (selectedChatPatient) {
+      setEditProfileData({
+        patientName: selectedChatPatient.patientName || '',
+        email: selectedChatPatient.email || '',
+        phone: selectedChatPatient.phone || '',
+        dob: selectedChatPatient.dob || ''
+      });
+      setCrmTab('chat'); // Reset to chat tab when switching patients
+    }
+  }, [selectedChatPatient]);
+
   // --- SMART AUTO-SCROLL & READ RECEIPT ENGINE ---
   useEffect(() => {
-    if (selectedChatPatient && view === 'messages') {
+    if (selectedChatPatient && view === 'messages' && crmTab === 'chat' && commsType === 'SMS') {
       const unreadMsgs = chatMessages.filter(m => 
         m.direction === 'inbound' && 
         !m.isRead && 
@@ -136,43 +152,53 @@ export default function AdminDashboard() {
       );
 
       if (unreadMsgs.length > 0) {
-        // Find the very first unread message to snap to
         setSessionUnreadMessageId(unreadMsgs[0].id);
         setTimeout(() => {
           const divider = document.getElementById(`unread-divider-${unreadMsgs[0].id}`);
           if (divider) divider.scrollIntoView({ behavior: 'instant', block: 'center' });
         }, 100);
 
-        // Mark as read in DB
         unreadMsgs.forEach(async (msg) => {
           try {
             await setDoc(doc(db, "messages", msg.id), { isRead: true }, { merge: true });
           } catch (e) { console.error("Failed to mark read", e); }
         });
       } else {
-        // If no unread, instantly snap to the absolute bottom of chat
         setSessionUnreadMessageId(null);
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
         }, 100);
       }
     }
-  }, [selectedChatPatient?.id, view]);
+  }, [selectedChatPatient?.id, view, crmTab, commsType]);
 
-  // Re-run scroll if they tab back to the SMS view
-  useEffect(() => {
-    if (commsType === 'SMS' && selectedChatPatient && view === 'messages') {
-      setTimeout(() => {
-        if (sessionUnreadMessageId) {
-          const divider = document.getElementById(`unread-divider-${sessionUnreadMessageId}`);
-          if (divider) divider.scrollIntoView({ behavior: 'instant', block: 'center' });
-        } else {
-          messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
-        }
-      }, 50);
+  const handleUpdateMasterProfile = async () => {
+    if (!selectedChatPatient) return;
+    
+    // Find all appointments associated with this patient's email or phone
+    const patientAppts = appointments.filter(a => 
+      (a.phone && a.phone === selectedChatPatient.phone) || 
+      (a.email && a.email === selectedChatPatient.email)
+    );
+
+    try {
+      // Update all historical and future appointments
+      for (const app of patientAppts) {
+        await setDoc(doc(db, "appointments", app.id), {
+          patientName: editProfileData.patientName,
+          email: editProfileData.email,
+          phone: editProfileData.phone,
+          dob: editProfileData.dob
+        }, { merge: true });
+      }
+
+      // Update the active UI state so the name changes instantly
+      setSelectedChatPatient({ ...selectedChatPatient, ...editProfileData });
+      alert("Master patient record and all associated appointments have been successfully updated!");
+    } catch (err) {
+      alert("Failed to update master patient record.");
     }
-  }, [commsType]);
-
+  };
 
   const writeLog = async (type: 'Email' | 'SMS', patientName: string, contactInfo: string, status: 'Sent' | 'Failed', action: string, apptDate: string, apptTime: string, errorMsg = '') => {
     try {
@@ -261,7 +287,6 @@ export default function AdminDashboard() {
         });
         await writeLog('SMS', selectedChatPatient.patientName, selectedChatPatient.phone, 'Sent', 'Direct Chat Message', new Date().toISOString().split('T')[0], '');
         setOutboundSMS('');
-        // Smoothly glide down so they can see what they just sent
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       } else {
          alert("Failed to send SMS via Twilio.");
@@ -331,6 +356,8 @@ export default function AdminDashboard() {
 
          setEmailData({ subject: '', body: '', attachment: null });
          alert("Email sent successfully!");
+         setCrmTab('chat');
+         setCommsType('SMS');
          setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
        } else {
          alert("Failed to send email via Brevo.");
@@ -717,7 +744,6 @@ export default function AdminDashboard() {
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
 
-
   // --- WHATSAPP-STYLE MESSAGE SORTING ENGINE ---
   const allContactsMap = new Map();
   appointments.forEach(app => {
@@ -786,6 +812,13 @@ export default function AdminDashboard() {
      return statsB.lastTime - statsA.lastTime;
   });
 
+  // Calculate specific ledger data for the active patient
+  const activePatientLedger = selectedChatPatient 
+    ? appointments
+        .filter(a => (a.phone && a.phone === selectedChatPatient.phone) || (a.email && a.email === selectedChatPatient.email))
+        .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime())
+    : [];
+
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -797,7 +830,7 @@ export default function AdminDashboard() {
               <LayoutDashboard size={18} /> Diary
             </button>
             <button onClick={() => setView('messages')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'messages' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <MessageSquare size={18} /> Messages
+              <User size={18} /> CRM & Patients
               {totalUnreadMessages > 0 && (
                  <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-md border-2 border-white animate-in zoom-in">
                     {totalUnreadMessages}
@@ -879,9 +912,9 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* --- NEW MESSAGES VIEW --- */}
+        {/* --- CRM & PATIENT HUB VIEW --- */}
         {view === 'messages' && (
-          <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[calc(100vh-10rem)] min-h-[500px] border border-slate-100">
+          <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[calc(100vh-10rem)] min-h-[600px] border border-slate-100">
             {/* LEFT SIDEBAR: Search and Patient List */}
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
               
@@ -890,14 +923,14 @@ export default function AdminDashboard() {
                    onClick={() => setIsNewMessageModalOpen(true)}
                    className="w-full bg-[#3F9185] hover:bg-teal-700 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
                 >
-                   <MessageSquare size={16} /> New Message
+                   <User size={16} /> New Patient Chat
                 </button>
 
                 <div className="relative">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input 
                     type="text" 
-                    placeholder="Filter active chats..." 
+                    placeholder="Search patients..." 
                     className="w-full pl-9 pr-4 py-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-xs font-bold text-slate-600"
                     value={patientSearch}
                     onChange={e => { setPatientSearch(e.target.value); setGlobalMessageSearch(''); }}
@@ -984,297 +1017,437 @@ export default function AdminDashboard() {
                 )}
 
                 {!globalMessageSearch.trim() && activeConversations.length === 0 && (
-                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No active conversations. Click 'New Message' to start.</p>
-                )}
-                {globalMessageSearch.trim() && chatMessages.filter(m => (m.text || '').toLowerCase().includes(globalMessageSearch.toLowerCase())).length === 0 && (
-                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No messages found.</p>
+                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No active patients. Click 'New Patient Chat' to start.</p>
                 )}
               </div>
             </div>
 
-            {/* Right Pane - Chat/Email Area */}
-            <div className="flex-1 bg-white flex flex-col">
+            {/* RIGHT PANE - Master CRM Workspace */}
+            <div className="flex-1 bg-white flex flex-col overflow-hidden">
               {selectedChatPatient ? (
                 <>
-                  <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white shadow-sm z-10">
-                    <div>
-                      <h3 className="text-lg font-black text-slate-800">{selectedChatPatient.patientName}</h3>
-                      <p className="text-xs font-bold text-slate-400">{selectedChatPatient.phone} | {selectedChatPatient.email || 'No email'}</p>
+                  {/* MASTER CRM HEADER */}
+                  <div className="bg-white border-b border-slate-200 z-10 shadow-sm">
+                    <div className="p-6 pb-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 shadow-inner">
+                          <User size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-2xl font-black text-slate-800 tracking-tight">{selectedChatPatient.patientName}</h3>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 flex items-center gap-1.5"><MessageSquare size={12}/> {selectedChatPatient.phone || 'No phone'}</span>
+                            <span className="text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 flex items-center gap-1.5"><Mail size={12}/> {selectedChatPatient.email || 'No email'}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex bg-slate-100 rounded-lg p-1">
-                      <button onClick={() => setCommsType('SMS')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'SMS' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>SMS / Timeline</button>
-                      <button onClick={() => setCommsType('Email')} className={`px-4 py-2 rounded-md text-xs font-black transition-all ${commsType === 'Email' ? 'bg-white shadow text-[#3F9185]' : 'text-slate-500'}`}>New Email</button>
+                    
+                    {/* CRM Tabs */}
+                    <div className="flex gap-6 px-6">
+                       <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Communications</button>
+                       <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointment Ledger</button>
+                       <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Master Profile</button>
                     </div>
                   </div>
 
-                  {commsType === 'SMS' && (
+                  {/* TAB 1: COMMUNICATIONS */}
+                  {crmTab === 'chat' && (
                     <div className="flex-1 flex flex-col bg-[#f8fafc] overflow-hidden">
-                      <div className="flex-1 p-6 overflow-y-auto space-y-4">
-                        <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto mb-6">This timeline includes two-way SMS and outbound emails.</p>
-                        
-                        {chatMessages
-                          .filter(m => (m.phone && m.phone === selectedChatPatient.phone) || (m.email && m.email === selectedChatPatient.email))
-                          .map(msg => (
-                          <Fragment key={msg.id}>
-                            {sessionUnreadMessageId === msg.id && (
-                              <div id={`unread-divider-${msg.id}`} className="flex items-center gap-4 my-6">
-                                <div className="h-px bg-teal-500/30 flex-1"></div>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-teal-600 bg-teal-50 px-3 py-1 rounded-full border border-teal-100">Unread Messages</span>
-                                <div className="h-px bg-teal-500/30 flex-1"></div>
-                              </div>
-                            )}
-                            <div className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
-                              <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
-                                
-                                {msg.type === 'email' && (
-                                  <div className="flex items-center justify-between gap-4 mb-3 pb-3 border-b border-teal-500/30">
-                                    <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider">
-                                      <Mail size={14} /> Email Sent
-                                    </div>
-                                    
-                                    {msg.attachmentName && (
-                                      <button 
-                                        onClick={() => {
-                                          if (!msg.attachmentBase64) return alert('File content not available for older messages.');
-                                          const link = document.createElement('a');
-                                          link.href = `data:${msg.attachmentType || 'application/octet-stream'};base64,${msg.attachmentBase64}`;
-                                          link.download = msg.attachmentName;
-                                          link.click();
-                                        }}
-                                        className="flex items-center gap-1.5 bg-black/10 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm max-w-[200px]" 
-                                        title="Click to download"
-                                      >
-                                        <Paperclip size={12} className="shrink-0" />
-                                        <span className="truncate">{msg.attachmentName}</span>
-                                        <Download size={10} className="shrink-0 ml-1 opacity-70" />
-                                      </button>
-                                    )}
+                      <div className="p-3 bg-white border-b border-slate-100 flex justify-center gap-2 shadow-sm z-10">
+                        <button onClick={() => setCommsType('SMS')} className={`px-6 py-2 rounded-md text-xs font-black transition-all ${commsType === 'SMS' ? 'bg-slate-800 shadow text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>SMS / Timeline</button>
+                        <button onClick={() => setCommsType('Email')} className={`px-6 py-2 rounded-md text-xs font-black transition-all ${commsType === 'Email' ? 'bg-[#3F9185] shadow text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Compose Email</button>
+                      </div>
+
+                      {commsType === 'SMS' && (
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                          <div className="flex-1 p-6 overflow-y-auto space-y-4">
+                            <p className="text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto mb-6">Patient Timeline</p>
+                            
+                            {chatMessages
+                              .filter(m => (m.phone && m.phone === selectedChatPatient.phone) || (m.email && m.email === selectedChatPatient.email))
+                              .map(msg => (
+                              <Fragment key={msg.id}>
+                                {sessionUnreadMessageId === msg.id && (
+                                  <div id={`unread-divider-${msg.id}`} className="flex items-center gap-4 my-6">
+                                    <div className="h-px bg-teal-500/30 flex-1"></div>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-teal-600 bg-teal-50 px-3 py-1 rounded-full border border-teal-100 shadow-sm">Unread Messages</span>
+                                    <div className="h-px bg-teal-500/30 flex-1"></div>
                                   </div>
                                 )}
-                                
-                                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                                <p className={`text-[9px] mt-2 text-right ${msg.direction === 'outbound' ? 'text-teal-100' : 'text-slate-400'}`}>
-                                  {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Sending...'}
-                                </p>
-                              </div>
+                                <div className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
+                                    
+                                    {msg.type === 'email' && (
+                                      <div className="flex items-center justify-between gap-4 mb-3 pb-3 border-b border-teal-500/30">
+                                        <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider">
+                                          <Mail size={14} /> Email {msg.direction === 'outbound' ? 'Sent' : 'Received'}
+                                        </div>
+                                        
+                                        {msg.attachmentName && (
+                                          <button 
+                                            onClick={() => {
+                                              if (!msg.attachmentBase64) return alert('File content not available for older messages.');
+                                              const link = document.createElement('a');
+                                              link.href = `data:${msg.attachmentType || 'application/octet-stream'};base64,${msg.attachmentBase64}`;
+                                              link.download = msg.attachmentName;
+                                              link.click();
+                                            }}
+                                            className="flex items-center gap-1.5 bg-black/10 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm max-w-[200px]" 
+                                            title="Click to download"
+                                          >
+                                            <Paperclip size={12} className="shrink-0" />
+                                            <span className="truncate">{msg.attachmentName}</span>
+                                            <Download size={10} className="shrink-0 ml-1 opacity-70" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                    
+                                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                                    <p className={`text-[9px] mt-2 text-right ${msg.direction === 'outbound' ? 'text-teal-100' : 'text-slate-400'}`}>
+                                      {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Sending...'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </Fragment>
+                            ))}
+                            <div ref={messagesEndRef} className="h-1 shrink-0" />
+                          </div>
+                          
+                          <div className="p-4 bg-white border-t border-slate-200 flex gap-2 shrink-0">
+                            <input 
+                              type="text" 
+                              placeholder="Type an SMS message to patient..." 
+                              className="flex-1 p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-medium border border-slate-100"
+                              value={outboundSMS}
+                              onChange={e => setOutboundSMS(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && handleSendSMS()}
+                            />
+                            <button onClick={handleSendSMS} disabled={isSendingComms || !outboundSMS} className="p-4 bg-[#3F9185] text-white rounded-xl hover:brightness-110 disabled:opacity-50 transition-all flex items-center justify-center shadow-md">
+                              <Send size={20} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {commsType === 'Email' && (
+                        <div className="flex-1 p-8 overflow-y-auto bg-white">
+                          {!selectedChatPatient.email ? (
+                            <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                               <Mail size={48} className="opacity-20" />
+                               <p className="font-bold">No email address on file for this patient.</p>
                             </div>
-                          </Fragment>
-                        ))}
-                        {/* Hidden anchor to snap to bottom */}
-                        <div ref={messagesEndRef} className="h-1 shrink-0" />
-                      </div>
-                      
-                      <div className="p-4 bg-white border-t border-slate-200 flex gap-2 shrink-0">
-                        <input 
-                          type="text" 
-                          placeholder="Type an SMS message..." 
-                          className="flex-1 p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-medium"
-                          value={outboundSMS}
-                          onChange={e => setOutboundSMS(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleSendSMS()}
-                        />
-                        <button onClick={handleSendSMS} disabled={isSendingComms || !outboundSMS} className="p-4 bg-[#3F9185] text-white rounded-xl hover:brightness-110 disabled:opacity-50 transition-all flex items-center justify-center">
-                          <Send size={20} />
-                        </button>
+                          ) : (
+                            <div className="space-y-4 max-w-2xl mx-auto">
+                              <div>
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Subject / Header</label>
+                                <input 
+                                  type="text" placeholder="e.g. Your requested documentation" 
+                                  className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold"
+                                  value={emailData.subject} onChange={e => setEmailData({...emailData, subject: e.target.value})}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Message Body</label>
+                                <textarea 
+                                  placeholder="Dear patient..." 
+                                  className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] h-64 text-sm resize-none"
+                                  value={emailData.body} onChange={e => setEmailData({...emailData, body: e.target.value})}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-2">Attachments (Optional)</label>
+                                
+                                {!emailData.attachment ? (
+                                  <label className={`flex items-center justify-center gap-3 p-6 rounded-xl border-2 border-dashed transition-all w-full ${isCompressing ? 'border-[#3F9185] bg-teal-50 cursor-wait' : 'border-slate-200 hover:border-[#3F9185] hover:bg-teal-50/50 bg-slate-50 cursor-pointer'}`}>
+                                     {isCompressing ? (
+                                       <div className="w-5 h-5 border-2 border-[#3F9185] border-t-transparent rounded-full animate-spin"></div>
+                                     ) : (
+                                       <Paperclip size={20} className="text-slate-400" />
+                                     )}
+                                     <div className="flex flex-col">
+                                       <span className={`text-sm font-bold ${isCompressing ? 'text-[#3F9185]' : 'text-slate-600'}`}>
+                                         {isCompressing ? 'Compressing file...' : 'Click to upload an attachment'}
+                                       </span>
+                                       <span className="text-[10px] text-slate-400 font-medium">Auto-compresses large image scans and PDFs</span>
+                                     </div>
+                                     <input 
+                                       type="file" 
+                                       className="hidden" 
+                                       disabled={isCompressing}
+                                       accept="image/*,application/pdf"
+                                       onChange={async (e) => {
+                                         const file = e.target.files?.[0];
+                                         if (!file) return;
+
+                                         setIsCompressing(true);
+
+                                         if (file.type === 'application/pdf') {
+                                           try {
+                                             pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+                                             const fileReader = new FileReader();
+                                             fileReader.onload = async function() {
+                                               try {
+                                                 const typedarray = new Uint8Array(this.result as ArrayBuffer);
+                                                 const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                                                 
+                                                 const newPdf = new jsPDF('p', 'pt', 'a4'); 
+
+                                                 for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                                                   const page = await pdf.getPage(pageNum);
+                                                   const viewport = page.getViewport({ scale: 1.2 }); 
+                                                   
+                                                   const canvas = document.createElement('canvas');
+                                                   const ctx = canvas.getContext('2d');
+                                                   if (!ctx) continue;
+                                                   
+                                                   canvas.height = viewport.height;
+                                                   canvas.width = viewport.width;
+
+                                                   // @ts-ignore
+                                                   await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+                                                   const imgData = canvas.toDataURL('image/jpeg', 0.5); 
+
+                                                   if (pageNum > 1) newPdf.addPage();
+
+                                                   const pdfWidth = newPdf.internal.pageSize.getWidth();
+                                                   const pdfHeight = (viewport.height * pdfWidth) / viewport.width;
+
+                                                   newPdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+                                                 }
+
+                                                 const pdfBlob = newPdf.output('blob');
+                                                 const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
+                                                   type: 'application/pdf',
+                                                   lastModified: Date.now(),
+                                                 });
+
+                                                 if (compressedFile.size > 700 * 1024) {
+                                                   alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
+                                                 } else {
+                                                   setEmailData({...emailData, attachment: compressedFile});
+                                                 }
+                                                 setIsCompressing(false);
+
+                                               } catch (err) {
+                                                  console.error(err);
+                                                  alert("Could not process the PDF. It may be encrypted or corrupted.");
+                                                  setIsCompressing(false);
+                                               }
+                                             };
+                                             fileReader.readAsArrayBuffer(file);
+                                           } catch (err) {
+                                              alert("Failed to initialise PDF compressor.");
+                                              setIsCompressing(false);
+                                           }
+                                           return;
+                                         }
+
+                                         try {
+                                            const reader = new FileReader();
+                                            reader.readAsDataURL(file);
+                                            reader.onload = (event) => {
+                                              const img = new Image();
+                                              img.src = event.target?.result as string;
+                                              img.onload = () => {
+                                                const canvas = document.createElement('canvas');
+                                                let width = img.width;
+                                                let height = img.height;
+
+                                                const MAX_DIMENSION = 1000;
+                                                if (width > height && width > MAX_DIMENSION) {
+                                                  height *= MAX_DIMENSION / width;
+                                                  width = MAX_DIMENSION;
+                                                } else if (height > MAX_DIMENSION) {
+                                                  width *= MAX_DIMENSION / height;
+                                                  height = MAX_DIMENSION;
+                                                }
+
+                                                canvas.width = width;
+                                                canvas.height = height;
+                                                const ctx = canvas.getContext('2d');
+                                                ctx?.drawImage(img, 0, 0, width, height);
+
+                                                canvas.toBlob((blob) => {
+                                                  if (blob) {
+                                                    const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.jpg", {
+                                                      type: 'image/jpeg',
+                                                      lastModified: Date.now(),
+                                                    });
+
+                                                    if (compressedFile.size > 700 * 1024) {
+                                                      alert("Image is still too large even after compression. Please try a smaller scan.");
+                                                    } else {
+                                                      setEmailData({...emailData, attachment: compressedFile});
+                                                    }
+                                                  }
+                                                  setIsCompressing(false);
+                                                }, 'image/jpeg', 0.5); 
+                                              };
+                                            };
+                                         } catch (err) {
+                                            alert("Failed to compress image.");
+                                            setIsCompressing(false);
+                                         }
+                                       }} 
+                                     />
+                                  </label>
+                                ) : (
+                                  <div className="flex items-center justify-between p-4 bg-teal-50 border border-teal-200 rounded-xl w-full animate-in fade-in zoom-in-95 shadow-sm">
+                                    <div className="flex items-center gap-3 overflow-hidden">
+                                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-sm">
+                                        <CheckCircle2 size={20} className="text-[#3F9185]" />
+                                      </div>
+                                      <div className="flex flex-col truncate">
+                                        <span className="text-sm font-bold text-slate-700 truncate">{emailData.attachment.name}</span>
+                                        <span className="text-[10px] font-black text-[#3F9185] uppercase tracking-wider">
+                                          Ready to send ({(emailData.attachment.size / 1024).toFixed(1)} KB)
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <button onClick={() => setEmailData({...emailData, attachment: null})} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors shrink-0" title="Remove attachment">
+                                      <X size={18} />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <button onClick={handleSendEmail} disabled={isSendingComms || !emailData.body} className="w-full py-4 mt-4 bg-[#3F9185] text-white rounded-xl font-black shadow-lg shadow-teal-900/10 disabled:opacity-50 flex items-center justify-center gap-2 transition-all">
+                                 {isSendingComms ? 'Sending...' : 'Send Secure Email'} <Send size={18} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAB 2: APPOINTMENT LEDGER */}
+                  {crmTab === 'ledger' && (
+                    <div className="flex-1 bg-[#f8fafc] p-6 overflow-y-auto">
+                      <div className="max-w-4xl mx-auto space-y-4">
+                        <div className="flex items-center justify-between mb-4">
+                           <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2"><History size={16}/> Lifetime History</h4>
+                           <span className="text-xs font-bold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200">{activePatientLedger.length} Records Found</span>
+                        </div>
+                        
+                        {activePatientLedger.length === 0 ? (
+                           <div className="p-10 text-center bg-white border border-slate-200 rounded-2xl shadow-sm text-slate-400 font-bold">No appointment history found for this patient.</div>
+                        ) : (
+                          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                            <table className="w-full text-left border-collapse">
+                              <thead className="bg-slate-50">
+                                <tr>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Date & Time</th>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Service Type</th>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Booking Source</th>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {activePatientLedger.map((app) => (
+                                  <tr key={app.id} className="hover:bg-slate-50/50 transition-colors">
+                                    <td className="p-4">
+                                      <p className="font-bold text-slate-800 text-sm">{new Date(app.appointmentDate).toLocaleDateString('en-GB')}</p>
+                                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">@ {app.appointmentTime}</p>
+                                    </td>
+                                    <td className="p-4 text-sm font-bold text-slate-600">{app.appointmentType || 'Eye Check'}</td>
+                                    <td className="p-4">
+                                       <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider ${app.source === 'Admin' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'}`}>
+                                         {app.source || 'Online'}
+                                       </span>
+                                    </td>
+                                    <td className="p-4 text-right">
+                                       <span className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-wider border ${getStatusColor(app.status || 'Booked')}`}>
+                                         {app.status || 'Booked'}
+                                       </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
 
-                  {commsType === 'Email' && (
-                    <div className="flex-1 p-8 overflow-y-auto bg-white">
-                      {!selectedChatPatient.email ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
-                           <Mail size={48} className="opacity-20" />
-                           <p className="font-bold">No email address on file for this patient.</p>
+                  {/* TAB 3: MASTER PROFILE EDITOR */}
+                  {crmTab === 'profile' && (
+                    <div className="flex-1 bg-[#f8fafc] p-6 overflow-y-auto">
+                      <div className="max-w-2xl mx-auto space-y-6">
+                        <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex items-start gap-3">
+                           <UserCog size={24} className="text-indigo-500 shrink-0 mt-0.5" />
+                           <div>
+                              <p className="text-sm font-black text-indigo-900">Master Record Control</p>
+                              <p className="text-xs text-indigo-700 mt-1 leading-relaxed">Updating details here will permanently standardise this patient's information across all of their historical and future appointment records within the database.</p>
+                           </div>
                         </div>
-                      ) : (
-                        <div className="space-y-4 max-w-2xl mx-auto">
-                          <div>
-                            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Subject / Header</label>
-                            <input 
-                              type="text" placeholder="e.g. Your requested documentation" 
-                              className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-transparent focus:border-[#3F9185] text-sm font-bold"
-                              value={emailData.subject} onChange={e => setEmailData({...emailData, subject: e.target.value})}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Message Body</label>
-                            <textarea 
-                              placeholder="Dear patient..." 
-                              className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-transparent focus:border-[#3F9185] h-40 text-sm resize-none"
-                              value={emailData.body} onChange={e => setEmailData({...emailData, body: e.target.value})}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block mb-2">Attachments (Optional)</label>
-                            
-                            {!emailData.attachment ? (
-                              <label className={`flex items-center justify-center gap-3 p-6 rounded-xl border-2 border-dashed transition-all w-full ${isCompressing ? 'border-[#3F9185] bg-teal-50 cursor-wait' : 'border-slate-200 hover:border-[#3F9185] hover:bg-teal-50/50 bg-slate-50 cursor-pointer'}`}>
-                                 {isCompressing ? (
-                                   <div className="w-5 h-5 border-2 border-[#3F9185] border-t-transparent rounded-full animate-spin"></div>
-                                 ) : (
-                                   <Paperclip size={20} className="text-slate-400" />
-                                 )}
-                                 <div className="flex flex-col">
-                                   <span className={`text-sm font-bold ${isCompressing ? 'text-[#3F9185]' : 'text-slate-600'}`}>
-                                     {isCompressing ? 'Compressing scan...' : 'Click to upload a file'}
-                                   </span>
-                                   <span className="text-[10px] text-slate-400 font-medium">Auto-compresses large image scans</span>
-                                 </div>
+
+                        <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 space-y-6">
+                           <div className="space-y-4">
+                             <div>
+                               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Full Legal Name</label>
+                               <input 
+                                 type="text" 
+                                 value={editProfileData.patientName} 
+                                 onChange={e => setEditProfileData({...editProfileData, patientName: e.target.value})}
+                                 className="w-full p-4 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-800"
+                               />
+                             </div>
+                             
+                             <div className="grid grid-cols-2 gap-4">
+                               <div>
+                                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Mobile / Phone</label>
                                  <input 
-                                   type="file" 
-                                   className="hidden" 
-                                   disabled={isCompressing}
-                                   accept="image/*,application/pdf"
-                                   onChange={async (e) => {
-                                     const file = e.target.files?.[0];
-                                     if (!file) return;
-
-                                     setIsCompressing(true);
-
-                                     if (file.type === 'application/pdf') {
-                                       try {
-                                         pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-
-                                         const fileReader = new FileReader();
-                                         fileReader.onload = async function() {
-                                           try {
-                                             const typedarray = new Uint8Array(this.result as ArrayBuffer);
-                                             const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                                             
-                                             const newPdf = new jsPDF('p', 'pt', 'a4'); 
-
-                                             for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-                                               const page = await pdf.getPage(pageNum);
-                                               const viewport = page.getViewport({ scale: 1.2 }); 
-                                               
-                                               const canvas = document.createElement('canvas');
-                                               const ctx = canvas.getContext('2d');
-                                               if (!ctx) continue;
-                                               
-                                               canvas.height = viewport.height;
-                                               canvas.width = viewport.width;
-
-                                               // @ts-ignore
-                                               await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-
-                                               const imgData = canvas.toDataURL('image/jpeg', 0.5); 
-
-                                               if (pageNum > 1) newPdf.addPage();
-
-                                               const pdfWidth = newPdf.internal.pageSize.getWidth();
-                                               const pdfHeight = (viewport.height * pdfWidth) / viewport.width;
-
-                                               newPdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-                                             }
-
-                                             const pdfBlob = newPdf.output('blob');
-                                             const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
-                                               type: 'application/pdf',
-                                               lastModified: Date.now(),
-                                             });
-
-                                             if (compressedFile.size > 700 * 1024) {
-                                               alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
-                                             } else {
-                                               setEmailData({...emailData, attachment: compressedFile});
-                                             }
-                                             setIsCompressing(false);
-
-                                           } catch (err) {
-                                              console.error(err);
-                                              alert("Could not process the PDF. It may be encrypted or corrupted.");
-                                              setIsCompressing(false);
-                                           }
-                                         };
-                                         fileReader.readAsArrayBuffer(file);
-                                       } catch (err) {
-                                          alert("Failed to initialise PDF compressor.");
-                                          setIsCompressing(false);
-                                       }
-                                       return;
-                                     }
-
-                                     try {
-                                        const reader = new FileReader();
-                                        reader.readAsDataURL(file);
-                                        reader.onload = (event) => {
-                                          const img = new Image();
-                                          img.src = event.target?.result as string;
-                                          img.onload = () => {
-                                            const canvas = document.createElement('canvas');
-                                            let width = img.width;
-                                            let height = img.height;
-
-                                            const MAX_DIMENSION = 1000;
-                                            if (width > height && width > MAX_DIMENSION) {
-                                              height *= MAX_DIMENSION / width;
-                                              width = MAX_DIMENSION;
-                                            } else if (height > MAX_DIMENSION) {
-                                              width *= MAX_DIMENSION / height;
-                                              height = MAX_DIMENSION;
-                                            }
-
-                                            canvas.width = width;
-                                            canvas.height = height;
-                                            const ctx = canvas.getContext('2d');
-                                            ctx?.drawImage(img, 0, 0, width, height);
-
-                                            canvas.toBlob((blob) => {
-                                              if (blob) {
-                                                const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.jpg", {
-                                                  type: 'image/jpeg',
-                                                  lastModified: Date.now(),
-                                                });
-
-                                                if (compressedFile.size > 700 * 1024) {
-                                                  alert("Image is still too large even after compression. Please try a smaller scan.");
-                                                } else {
-                                                  setEmailData({...emailData, attachment: compressedFile});
-                                                }
-                                              }
-                                              setIsCompressing(false);
-                                            }, 'image/jpeg', 0.5); 
-                                          };
-                                        };
-                                     } catch (err) {
-                                        alert("Failed to compress image.");
-                                        setIsCompressing(false);
-                                     }
-                                   }} 
+                                   type="text" 
+                                   value={editProfileData.phone} 
+                                   onChange={e => setEditProfileData({...editProfileData, phone: e.target.value})}
+                                   className="w-full p-4 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-800"
                                  />
-                              </label>
-                            ) : (
-                              <div className="flex items-center justify-between p-4 bg-teal-50 border border-teal-200 rounded-xl w-full animate-in fade-in zoom-in-95 shadow-sm">
-                                <div className="flex items-center gap-3 overflow-hidden">
-                                  <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-sm">
-                                    <CheckCircle2 size={20} className="text-[#3F9185]" />
-                                  </div>
-                                  <div className="flex flex-col truncate">
-                                    <span className="text-sm font-bold text-slate-700 truncate">{emailData.attachment.name}</span>
-                                    <span className="text-[10px] font-black text-[#3F9185] uppercase tracking-wider">
-                                      Ready to send ({(emailData.attachment.size / 1024).toFixed(1)} KB)
-                                    </span>
-                                  </div>
-                                </div>
-                                <button onClick={() => setEmailData({...emailData, attachment: null})} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors shrink-0" title="Remove attachment">
-                                  <X size={18} />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                          <button onClick={handleSendEmail} disabled={isSendingComms || !emailData.body} className="w-full py-4 mt-4 bg-[#3F9185] text-white rounded-xl font-black shadow-lg shadow-teal-900/10 disabled:opacity-50 flex items-center justify-center gap-2 transition-all">
-                             {isSendingComms ? 'Sending...' : 'Send Email'} <Send size={18} />
-                          </button>
+                               </div>
+                               <div>
+                                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
+                                 <input 
+                                   type="date" 
+                                   value={editProfileData.dob} 
+                                   onChange={e => setEditProfileData({...editProfileData, dob: e.target.value})}
+                                   className="w-full p-4 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-800"
+                                 />
+                               </div>
+                             </div>
+
+                             <div>
+                               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Email Address</label>
+                               <input 
+                                 type="email" 
+                                 value={editProfileData.email} 
+                                 onChange={e => setEditProfileData({...editProfileData, email: e.target.value.toLowerCase()})}
+                                 className="w-full p-4 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-800"
+                               />
+                             </div>
+                           </div>
+                           
+                           <div className="pt-4 border-t border-slate-100">
+                             <button 
+                               onClick={handleUpdateMasterProfile} 
+                               disabled={!editProfileData.patientName}
+                               className="w-full py-4 bg-slate-900 hover:bg-black text-white rounded-xl font-black shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                             >
+                               <CheckCircle2 size={18} /> Update Master Record
+                             </button>
+                           </div>
                         </div>
-                      )}
+                      </div>
                     </div>
                   )}
                 </>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300">
-                  <MessageSquare size={64} className="opacity-20 mb-4" />
-                  <p className="font-bold text-lg text-slate-400">Select a patient to start messaging</p>
+                  <User size={64} className="opacity-20 mb-4" />
+                  <p className="font-bold text-lg text-slate-400">Select a patient to open their CRM profile</p>
                 </div>
               )}
             </div>
@@ -1411,7 +1584,7 @@ export default function AdminDashboard() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4 backdrop-blur-sm">
           <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full max-h-[80vh] flex flex-col shadow-2xl animate-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
-               <h2 className="text-xl font-black text-slate-800">New Message</h2>
+               <h2 className="text-xl font-black text-slate-800">New Patient Chat</h2>
                <button onClick={() => setIsNewMessageModalOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
             </div>
             <div className="relative mb-4">
