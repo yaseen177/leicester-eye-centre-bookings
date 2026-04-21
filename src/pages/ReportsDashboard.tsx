@@ -59,14 +59,18 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
           else patientIdentifiers.add(identifier);
       }
 
-      // STRICT NHS/PRIVATE FINANCIAL SPLIT
-      const serviceName = (app.service || '').trim();
-      if (serviceName === 'Contact Lens Check') {
-          // Do nothing - exclude from financial pie chart
-      } else if (serviceName === 'Eye Check Private') {
+      // STRICT NHS/PRIVATE FINANCIAL SPLIT (BULLETPROOF VERSION)
+      // 1. Grab the service name, force it to lowercase, and strip all accidental spaces
+      const rawService = app.service || app.appointmentType || app.type || '';
+      const serviceName = rawService.toLowerCase().trim();
+
+      if (serviceName.includes('contact lens')) {
+          // Do nothing - exclude from financial pie chart entirely
+      } else if (serviceName === 'eye check private' || serviceName.includes('private')) {
+          // Catch exact match OR anything that has the word 'private' in it
           privateCount++;
-      } else {
-          // Everything else is NHS
+      } else if (serviceName !== '') {
+          // Everything else (that isn't completely blank) is NHS
           nhsCount++;
       }
 
