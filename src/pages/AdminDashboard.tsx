@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
@@ -54,11 +54,15 @@ export default function AdminDashboard() {
   const [isSendingComms, setIsSendingComms] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
 
-  // --- NEW: SEARCH & MODAL STATES ---
+  // --- SEARCH & MODAL STATES ---
   const [patientSearch, setPatientSearch] = useState('');
   const [globalMessageSearch, setGlobalMessageSearch] = useState('');
   const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false);
   const [newMessageSearch, setNewMessageSearch] = useState('');
+
+  // --- SCROLLING ENGINES ---
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [sessionUnreadMessageId, setSessionUnreadMessageId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -122,6 +126,7 @@ export default function AdminDashboard() {
     return () => { unsubAppts(); unsubLogs(); unsubMessages(); };
   }, []);
 
+  // --- SMART AUTO-SCROLL & READ RECEIPT ENGINE ---
   useEffect(() => {
     if (selectedChatPatient && view === 'messages') {
       const unreadMsgs = chatMessages.filter(m => 
@@ -131,14 +136,43 @@ export default function AdminDashboard() {
       );
 
       if (unreadMsgs.length > 0) {
+        // Find the very first unread message to snap to
+        setSessionUnreadMessageId(unreadMsgs[0].id);
+        setTimeout(() => {
+          const divider = document.getElementById(`unread-divider-${unreadMsgs[0].id}`);
+          if (divider) divider.scrollIntoView({ behavior: 'instant', block: 'center' });
+        }, 100);
+
+        // Mark as read in DB
         unreadMsgs.forEach(async (msg) => {
           try {
             await setDoc(doc(db, "messages", msg.id), { isRead: true }, { merge: true });
           } catch (e) { console.error("Failed to mark read", e); }
         });
+      } else {
+        // If no unread, instantly snap to the absolute bottom of chat
+        setSessionUnreadMessageId(null);
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+        }, 100);
       }
     }
-  }, [chatMessages, selectedChatPatient, view]);
+  }, [selectedChatPatient?.id, view]);
+
+  // Re-run scroll if they tab back to the SMS view
+  useEffect(() => {
+    if (commsType === 'SMS' && selectedChatPatient && view === 'messages') {
+      setTimeout(() => {
+        if (sessionUnreadMessageId) {
+          const divider = document.getElementById(`unread-divider-${sessionUnreadMessageId}`);
+          if (divider) divider.scrollIntoView({ behavior: 'instant', block: 'center' });
+        } else {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+        }
+      }, 50);
+    }
+  }, [commsType]);
+
 
   const writeLog = async (type: 'Email' | 'SMS', patientName: string, contactInfo: string, status: 'Sent' | 'Failed', action: string, apptDate: string, apptTime: string, errorMsg = '') => {
     try {
@@ -227,6 +261,8 @@ export default function AdminDashboard() {
         });
         await writeLog('SMS', selectedChatPatient.patientName, selectedChatPatient.phone, 'Sent', 'Direct Chat Message', new Date().toISOString().split('T')[0], '');
         setOutboundSMS('');
+        // Smoothly glide down so they can see what they just sent
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       } else {
          alert("Failed to send SMS via Twilio.");
       }
@@ -295,6 +331,7 @@ export default function AdminDashboard() {
 
          setEmailData({ subject: '', body: '', attachment: null });
          alert("Email sent successfully!");
+         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
        } else {
          alert("Failed to send email via Brevo.");
        }
@@ -682,8 +719,6 @@ export default function AdminDashboard() {
 
 
   // --- WHATSAPP-STYLE MESSAGE SORTING ENGINE ---
-  
-  // 1. Grab all known contacts from the diary
   const allContactsMap = new Map();
   appointments.forEach(app => {
     const key = app.phone || app.email;
@@ -693,7 +728,6 @@ export default function AdminDashboard() {
   });
   const allContacts = Array.from(allContactsMap.values());
 
-  // 2. Track message activity
   const patientStats = new Map();
   let totalUnreadMessages = 0;
 
@@ -712,10 +746,8 @@ export default function AdminDashboard() {
      if (msgTime > stats.lastTime) stats.lastTime = msgTime;
   });
 
-  // 3. Filter down to ONLY active conversations
   const activeConversationsMap = new Map();
   
-  // Include existing patients who have message history
   allContacts.forEach(contact => {
     const key = contact.phone || contact.email;
     if (patientStats.has(key) && patientStats.get(key).lastTime > 0) {
@@ -723,7 +755,6 @@ export default function AdminDashboard() {
     }
   });
 
-  // Include anyone who messaged us but isn't in the diary
   chatMessages.forEach(msg => {
     const key = msg.phone || msg.email;
     if (key && !activeConversationsMap.has(key)) {
@@ -736,7 +767,6 @@ export default function AdminDashboard() {
     }
   });
 
-  // Ensure the actively selected patient ALWAYS appears in the list (even if brand new)
   if (selectedChatPatient) {
      const selectedKey = selectedChatPatient.phone || selectedChatPatient.email;
      if (selectedKey && !activeConversationsMap.has(selectedKey)) {
@@ -744,7 +774,6 @@ export default function AdminDashboard() {
      }
   }
 
-  // 4. Sort: Unread first, then by most recent message (WhatsApp logic)
   const activeConversations = Array.from(activeConversationsMap.values()).sort((a, b) => {
      const keyA = a.phone || a.email;
      const keyB = b.phone || b.email;
@@ -857,8 +886,6 @@ export default function AdminDashboard() {
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
               
               <div className="p-4 bg-white border-b border-slate-200 space-y-4">
-                
-                {/* NEW MESSAGE BUTTON */}
                 <button 
                    onClick={() => setIsNewMessageModalOpen(true)}
                    className="w-full bg-[#3F9185] hover:bg-teal-700 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
@@ -930,7 +957,6 @@ export default function AdminDashboard() {
                       const pStats = patientStats.get(pKey) || { unread: 0, lastTime: 0 };
                       const isUnread = pStats.unread > 0;
 
-                      // Find their most recent message snippet to display
                       const recentMsg = chatMessages.slice().reverse().find(m => (m.phone === patient.phone || m.email === patient.email));
 
                       return (
@@ -957,7 +983,6 @@ export default function AdminDashboard() {
                     })
                 )}
 
-                {/* Empty States */}
                 {!globalMessageSearch.trim() && activeConversations.length === 0 && (
                   <p className="p-6 text-center text-slate-400 font-bold text-sm">No active conversations. Click 'New Message' to start.</p>
                 )}
@@ -985,47 +1010,58 @@ export default function AdminDashboard() {
                   {commsType === 'SMS' && (
                     <div className="flex-1 flex flex-col bg-[#f8fafc] overflow-hidden">
                       <div className="flex-1 p-6 overflow-y-auto space-y-4">
-                        <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto">This timeline includes two-way SMS and outbound emails.</p>
+                        <p className="text-center text-xs font-bold text-slate-400 bg-slate-200/50 py-1 px-3 rounded-full w-max mx-auto mb-6">This timeline includes two-way SMS and outbound emails.</p>
                         
                         {chatMessages
                           .filter(m => (m.phone && m.phone === selectedChatPatient.phone) || (m.email && m.email === selectedChatPatient.email))
                           .map(msg => (
-                          <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
-                              
-                              {msg.type === 'email' && (
-                                <div className="flex items-center justify-between gap-4 mb-3 pb-3 border-b border-teal-500/30">
-                                  <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider">
-                                    <Mail size={14} /> Email Sent
+                          <Fragment key={msg.id}>
+                            {sessionUnreadMessageId === msg.id && (
+                              <div id={`unread-divider-${msg.id}`} className="flex items-center gap-4 my-6">
+                                <div className="h-px bg-teal-500/30 flex-1"></div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-teal-600 bg-teal-50 px-3 py-1 rounded-full border border-teal-100">Unread Messages</span>
+                                <div className="h-px bg-teal-500/30 flex-1"></div>
+                              </div>
+                            )}
+                            <div className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
+                              <div className={`max-w-[75%] p-4 rounded-2xl shadow-sm ${msg.direction === 'outbound' ? 'bg-[#3F9185] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-100'}`}>
+                                
+                                {msg.type === 'email' && (
+                                  <div className="flex items-center justify-between gap-4 mb-3 pb-3 border-b border-teal-500/30">
+                                    <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider">
+                                      <Mail size={14} /> Email Sent
+                                    </div>
+                                    
+                                    {msg.attachmentName && (
+                                      <button 
+                                        onClick={() => {
+                                          if (!msg.attachmentBase64) return alert('File content not available for older messages.');
+                                          const link = document.createElement('a');
+                                          link.href = `data:${msg.attachmentType || 'application/octet-stream'};base64,${msg.attachmentBase64}`;
+                                          link.download = msg.attachmentName;
+                                          link.click();
+                                        }}
+                                        className="flex items-center gap-1.5 bg-black/10 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm max-w-[200px]" 
+                                        title="Click to download"
+                                      >
+                                        <Paperclip size={12} className="shrink-0" />
+                                        <span className="truncate">{msg.attachmentName}</span>
+                                        <Download size={10} className="shrink-0 ml-1 opacity-70" />
+                                      </button>
+                                    )}
                                   </div>
-                                  
-                                  {msg.attachmentName && (
-                                    <button 
-                                      onClick={() => {
-                                        if (!msg.attachmentBase64) return alert('File content not available for older messages.');
-                                        const link = document.createElement('a');
-                                        link.href = `data:${msg.attachmentType || 'application/octet-stream'};base64,${msg.attachmentBase64}`;
-                                        link.download = msg.attachmentName;
-                                        link.click();
-                                      }}
-                                      className="flex items-center gap-1.5 bg-black/10 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm max-w-[200px]" 
-                                      title="Click to download"
-                                    >
-                                      <Paperclip size={12} className="shrink-0" />
-                                      <span className="truncate">{msg.attachmentName}</span>
-                                      <Download size={10} className="shrink-0 ml-1 opacity-70" />
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                              
-                              <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                              <p className={`text-[9px] mt-2 text-right ${msg.direction === 'outbound' ? 'text-teal-100' : 'text-slate-400'}`}>
-                                {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Sending...'}
-                              </p>
+                                )}
+                                
+                                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                                <p className={`text-[9px] mt-2 text-right ${msg.direction === 'outbound' ? 'text-teal-100' : 'text-slate-400'}`}>
+                                  {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Sending...'}
+                                </p>
+                              </div>
                             </div>
-                          </div>
+                          </Fragment>
                         ))}
+                        {/* Hidden anchor to snap to bottom */}
+                        <div ref={messagesEndRef} className="h-1 shrink-0" />
                       </div>
                       
                       <div className="p-4 bg-white border-t border-slate-200 flex gap-2 shrink-0">
