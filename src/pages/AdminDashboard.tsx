@@ -1101,7 +1101,7 @@ export default function AdminDashboard() {
                             <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Message Body</label>
                             <textarea 
                               placeholder="Dear patient..." 
-                              className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-transparent focus:border-[#3F9185] h-64 text-sm resize-none"
+                              className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-transparent focus:border-[#3F9185] h-40 text-sm resize-none"
                               value={emailData.body} onChange={e => setEmailData({...emailData, body: e.target.value})}
                             />
                           </div>
