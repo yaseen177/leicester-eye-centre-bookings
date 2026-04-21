@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, Calendar, AlertTriangle, MousePointerClick, Smartphone, Users, RefreshCcw, TrendingDown, PieChart, Activity } from 'lucide-react';
+import { FileText, Calendar, AlertTriangle, MousePointerClick, Smartphone, Users, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3 } from 'lucide-react';
 
 export default function ReportsDashboard({ appointments }: { appointments: any[] }) {
   const stats = useMemo(() => {
@@ -18,7 +18,7 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     const apptDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const apptHoursCount: Record<string, number> = {};
     const ftaDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
-    const uniqueClinicDates = new Set(); // To calculate density
+    const uniqueClinicDates = new Set(); 
 
     const creationDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const onlineCreationHoursCount: Record<number, number> = {};
@@ -49,9 +49,13 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
           else patientIdentifiers.add(identifier);
       }
 
-      // 3. Financial & Patient Profiling
-      if (app.nhsEligible) nhsCount++;
-      else privateCount++;
+      // 3. Financial Profiling (NHS Bug Fix: Exact Service Name Matching)
+      const serviceName = app.service || '';
+      if (serviceName !== 'Eye Check Private' && serviceName !== 'Contact Lens Check') {
+          nhsCount++;
+      } else {
+          privateCount++;
+      }
 
       if (app.dob) {
          const birthDate = parseDateSafely(app.dob);
@@ -69,9 +73,9 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       if (isOnline) onlineBookings++;
       else adminBookings++;
 
-      // 5. Appointment Logistics & Density
+      // 5. Appointment Logistics
       if (app.appointmentDate) {
-        uniqueClinicDates.add(app.appointmentDate); // Track unique days open
+        uniqueClinicDates.add(app.appointmentDate); 
         const dateObj = parseDateSafely(app.appointmentDate);
         if (dateObj && !isNaN(dateObj.getTime())) {
             apptDaysCount[dateObj.getDay()]++;
@@ -84,7 +88,7 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         apptHoursCount[hour] = (apptHoursCount[hour] || 0) + 1;
       }
 
-      // 6. Aggressive Timestamp Hunter & Behaviour
+      // 6. Aggressive Timestamp Hunter
       const rawCreationTime = app.timestamp || app.createdAt || app.created_at || app.dateBooked;
       if (rawCreationTime && app.appointmentDate) {
          let bDate: Date | null = null;
@@ -138,6 +142,10 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     };
 
     const totalAgeTracked = minors + adults + seniors;
+    
+    // NEW: Hourly Array for the Bar Graph (0 to 23 hours)
+    const onlineHourlyArray = Array.from({ length: 24 }, (_, i) => onlineCreationHoursCount[i] || 0);
+    const maxOnlineHour = Math.max(...onlineHourlyArray, 1); // Ensures we don't divide by zero if empty
 
     return {
       total,
@@ -149,14 +157,12 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       loyaltyRate: Math.round((repeatBookings / total) * 100) || 0,
       onlineRate: Math.round((onlineBookings / total) * 100) || 0,
       
-      // New Patient Profile Metrics
       nhsRate: Math.round((nhsCount / total) * 100) || 0,
       privateRate: Math.round((privateCount / total) * 100) || 0,
       minorRate: totalAgeTracked ? Math.round((minors / totalAgeTracked) * 100) : 0,
       adultRate: totalAgeTracked ? Math.round((adults / totalAgeTracked) * 100) : 0,
       seniorRate: totalAgeTracked ? Math.round((seniors / totalAgeTracked) * 100) : 0,
       
-      // New Density Metric
       avgPatientsPerDay: uniqueClinicDates.size > 0 ? Math.round(total / uniqueClinicDates.size) : 0,
 
       busiestApptDay: getPeak(apptDaysCount) !== "N/A" ? dayNames[parseInt(getPeak(apptDaysCount))] : "N/A",
@@ -170,6 +176,10 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       avgLeadTime: leadTimes.length ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) : 0,
       sameDayRate: leadTimes.length ? Math.round((sameDay / leadTimes.length) * 100) : 0,
       plannerRate: leadTimes.length ? Math.round((overTwoWeeks / leadTimes.length) * 100) : 0,
+      
+      // For Graph
+      onlineHourlyArray,
+      maxOnlineHour
     };
   }, [appointments]);
 
@@ -205,7 +215,7 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       headStyles: { fillColor: [185, 28, 28] } 
     });
 
-    // SECTION 2: PATIENT DEMOGRAPHICS (NEW)
+    // SECTION 2: PATIENT DEMOGRAPHICS
     doc.setFontSize(14);
     doc.text("2. Patient & Commercial Profiling", 14, (doc as any).lastAutoTable.finalY + 15);
 
@@ -223,35 +233,37 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       headStyles: { fillColor: [63, 145, 133] }
     });
 
-    // SECTION 3: MARKETING
+    // SECTION 3: DIGITAL MARKETING & ACQUISITION (NEW!)
     doc.setFontSize(14);
-    doc.text("3. Consumer Behaviour & Acquisition", 14, (doc as any).lastAutoTable.finalY + 15);
+    doc.text("3. Digital Marketing Strategy & Action Plan", 14, (doc as any).lastAutoTable.finalY + 15);
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 20,
-      head: [['Behaviour Trend', 'Data', 'Actionable Strategy']],
+      head: [['Behaviour Trend', 'Data Target', 'Actionable Marketing Strategy']],
       body: [
-        ['Patient Loyalty Rate', `${stats.loyaltyRate}%`, 'Percentage of bookings made by returning/repeat patients.'],
-        ['Digital Adoption Rate', `${stats.onlineRate}%`, 'Percentage of bookings made self-service online.'],
-        ['Peak Online Booking Time', stats.peakOnlineHour, 'When patients book from home. Best time for digital marketing.'],
-        ['Spontaneous Bookers', `${stats.sameDayRate}%`, 'Percentage of patients booking a same-day or next-day appointment.'],
-        ['Long-Term Planners', `${stats.plannerRate}%`, 'Patients booking 14+ days out (Statistically higher risk of FTA).']
+        ['Digital Ad Schedule Target', `${stats.peakBrowsingDay} at ${stats.peakOnlineHour}`, 'Turn ON heavy Google/Meta Ad budgets during this specific window.'],
+        ['Digital Adoption Rate', `${stats.onlineRate}%`, 'Percentage of bookings made self-service online vs reception calls.'],
+        ['Patient Loyalty Rate', `${stats.loyaltyRate}%`, 'Run retention campaigns if this drops below 60%.'],
+        ['Spontaneous Bookers', `${stats.sameDayRate}%`, 'Percentage of patients booking a same-day or next-day appointment.']
       ],
       theme: 'striped',
-      headStyles: { fillColor: [44, 62, 80] } 
+      headStyles: { fillColor: [79, 70, 229] } // Eye-catching Indigo for Marketing
     });
 
     doc.setFontSize(9);
     doc.setTextColor(150, 150, 150);
     doc.text("CONFIDENTIAL - Internal Practice Owner Use Only", 14, 285);
 
-    doc.save(`Eye_Centre_Comprehensive_Report_${today.replace(/\//g, '-')}.pdf`);
+    // NEW PDF LOGIC: Open directly in a new tab instead of downloading!
+    const pdfBlob = doc.output('blob');
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    window.open(blobUrl, '_blank');
   };
 
   if (!stats) return <div className="p-8 text-center text-slate-500 font-bold">Awaiting Booking Data...</div>;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-8 animate-in fade-in">
+    <div className="p-6 max-w-6xl mx-auto space-y-8 animate-in fade-in pb-20">
       {/* HEADER */}
       <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div>
@@ -260,7 +272,7 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         </div>
         <button onClick={generatePDF} className="bg-[#3F9185] hover:bg-teal-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-sm transition-all">
           <FileText size={18} />
-          Export PDF Report
+          View PDF Report
         </button>
       </div>
       
@@ -298,7 +310,41 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         </div>
       </div>
 
-      {/* ROW 2: PATIENT DEMOGRAPHICS */}
+      {/* ROW 2: DIGITAL MARKETING HEATMAP (NEW GRAPH) */}
+      <div>
+        <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><BarChart3 size={18}/> Digital Marketing: Website Booking Heatmap</h2>
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+           <div className="flex justify-between items-start mb-6">
+              <div>
+                 <p className="font-bold text-slate-800">Online Booking Frequency by Hour (24h)</p>
+                 <p className="text-sm text-slate-500">Focus your Google/Facebook Ad budgets around the highest peaks shown below.</p>
+              </div>
+              <div className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold text-sm">
+                 Target Window: {stats.peakBrowsingDay}s at {stats.peakOnlineHour}
+              </div>
+           </div>
+           
+           <div className="flex items-end h-40 gap-1 md:gap-2 border-b-2 border-slate-100 pb-2 relative">
+              {stats.onlineHourlyArray.map((val, i) => (
+                  <div key={i} className="flex-1 flex flex-col items-center group relative h-full justify-end">
+                     <div 
+                        className={`w-full rounded-t-sm transition-all duration-500 relative cursor-pointer ${val === stats.maxOnlineHour ? 'bg-indigo-500' : 'bg-teal-100 group-hover:bg-teal-400'}`} 
+                        style={{ height: `${(val / stats.maxOnlineHour) * 100}%`, minHeight: val > 0 ? '4px' : '0' }}
+                     >
+                        {/* Tooltip bubble on hover */}
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs font-bold py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                           {val} Bookings
+                           <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
+                        </div>
+                     </div>
+                     <span className="text-[10px] md:text-xs text-slate-400 mt-2 font-bold">{i}h</span>
+                  </div>
+              ))}
+           </div>
+        </div>
+      </div>
+
+      {/* ROW 3: PATIENT DEMOGRAPHICS */}
       <div>
         <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><PieChart size={18}/> Commercial Patient Profiling</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -322,37 +368,6 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
           <div className="bg-white border border-slate-200 p-5 rounded-2xl flex flex-col items-center text-center lg:col-span-1 shadow-sm">
              <p className="text-sm font-bold text-slate-500 mb-1">Seniors (60+)</p>
              <p className="text-3xl font-black text-slate-800">{stats.seniorRate}%</p>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 3: CONSUMER BEHAVIOUR */}
-      <div>
-        <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><MousePointerClick size={18}/> Booking Behaviour & Loyalty</h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          
-          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-            <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mb-3"><RefreshCcw size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.loyaltyRate}%</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">Returning Patients</p>
-          </div>
-          
-          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-            <div className="w-12 h-12 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mb-3"><Smartphone size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.onlineRate}%</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">Digital Adoption</p>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-             <div className="w-12 h-12 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mb-3"><Users size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.peakAdminHour}</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">Peak Phone Rush</p>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-            <div className="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-3"><MousePointerClick size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.peakOnlineHour}</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">Peak Online Rush</p>
           </div>
         </div>
       </div>
