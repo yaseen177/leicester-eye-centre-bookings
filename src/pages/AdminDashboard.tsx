@@ -5,6 +5,7 @@ import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverT
 // @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
+import ReportsDashboard from './ReportsDashboard';
 
 interface ClinicConfig {
   times: { eyeCheck: number; contactLens: number };
@@ -764,6 +765,9 @@ export default function AdminDashboard() {
             <button onClick={() => setView('settings')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'settings' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Settings size={18} /> Settings
             </button>
+            <button onClick={() => setView('reports')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'reports' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <Activity size={18} /> Analytics
+            </button>
           </div>
           <button onClick={() => window.location.href='/admin-login'} className="p-2 text-slate-400 hover:text-red-500">
             <LogOut size={20}/>
@@ -1345,6 +1349,10 @@ export default function AdminDashboard() {
             <button onClick={saveConfig} className="px-10 py-4 bg-[#3F9185] text-white font-black rounded-2xl shadow-lg hover:opacity-90 transition-all">Save Changes</button>
           </div>
         )}
+
+
+        {/* --- REPORTS VIEW --- */}
+        {view === 'reports' && <ReportsDashboard appointments={appointments} />}
       </div>
 
       {editingApp && (
