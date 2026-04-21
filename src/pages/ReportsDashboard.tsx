@@ -44,29 +44,46 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
 
       // 4. Consumer Behaviour (The Action of Booking)
       if (app.timestamp) {
-         // Handle both Firestore Timestamp objects and standard ISO strings
-         const bookedDate = app.timestamp.seconds ? new Date(app.timestamp.seconds * 1000) : new Date(app.timestamp);
-         
-         if (!isNaN(bookedDate.getTime())) {
-            creationDaysCount[bookedDate.getDay()]++;
-            const hour = bookedDate.getHours();
-            creationHoursCount[hour] = (creationHoursCount[hour] || 0) + 1;
+        // Safely extract the date whether it is a Firestore Timestamp or an ISO String
+        let bookedDate: Date;
+        if (typeof app.timestamp.toDate === 'function') {
+           bookedDate = app.timestamp.toDate();
+        } else if (app.timestamp.seconds) {
+           bookedDate = new Date(app.timestamp.seconds * 1000);
+        } else {
+           bookedDate = new Date(app.timestamp);
+        }
+        
+        if (!isNaN(bookedDate.getTime())) {
+           creationDaysCount[bookedDate.getDay()]++;
+           const hour = bookedDate.getHours();
+           creationHoursCount[hour] = (creationHoursCount[hour] || 0) + 1;
 
-            // 5. Booking Window Calculation
-            if (app.appointmentDate) {
-               const apptTime = new Date(app.appointmentDate).getTime();
-               const diffDays = Math.floor((apptTime - bookedDate.getTime()) / (1000 * 60 * 60 * 24));
-               
-               if (diffDays >= 0 && diffDays < 365) {
-                 leadTimes.push(diffDays);
-                 if (diffDays <= 1) sameDay++;
-                 else if (diffDays <= 7) underAWeek++;
-                 else if (diffDays > 14) overTwoWeeks++;
-               }
-            }
-         }
-      }
-    });
+           // 5. Booking Window Calculation (FIXED: The "Midnight" Bug)
+           if (app.appointmentDate) {
+              // Strip time from both dates so we compare pure calendar days
+              const bDate = new Date(bookedDate.getFullYear(), bookedDate.getMonth(), bookedDate.getDate());
+              
+              // Split "YYYY-MM-DD" safely
+              const aParts = app.appointmentDate.split('-'); 
+              if (aParts.length === 3) {
+                 const aDate = new Date(parseInt(aParts[0]), parseInt(aParts[1]) - 1, parseInt(aParts[2]));
+                 
+                 // Calculate exact full days difference
+                 const diffDays = Math.round((aDate.getTime() - bDate.getTime()) / (1000 * 60 * 60 * 24));
+                 
+                 // Only count valid advance bookings (ignore negative past manual entries)
+                 if (diffDays >= 0 && diffDays < 365) {
+                   leadTimes.push(diffDays);
+                   if (diffDays <= 1) sameDay++;
+                   else if (diffDays <= 7) underAWeek++;
+                   else if (diffDays > 14) overTwoWeeks++;
+                 }
+              }
+           }
+        }
+     }
+   });
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     
