@@ -15,8 +15,6 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     const apptHoursCount: Record<string, number> = {};
 
     const creationDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
-    
-    // NEW: Split out creation times by source
     const onlineCreationHoursCount: Record<number, number> = {};
     const adminCreationHoursCount: Record<number, number> = {};
 
@@ -36,7 +34,10 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       if (app.status === 'Completed') completed++;
       if (app.status === 'FTA') fta++;
       
-      const isOnline = app.source?.toLowerCase() === 'online';
+      // Aggressive source hunting
+      const sourceStr = (app.source || app.bookingSource || '').toLowerCase();
+      const isOnline = sourceStr === 'online' || sourceStr === 'website' || sourceStr === 'web';
+      
       if (isOnline) onlineBookings++;
       else adminBookings++;
 
@@ -50,16 +51,24 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         apptHoursCount[hour] = (apptHoursCount[hour] || 0) + 1;
       }
 
-      if (app.timestamp && app.appointmentDate) {
-         let bDate: Date;
-         if (typeof app.timestamp.toDate === 'function') bDate = app.timestamp.toDate();
-         else if (app.timestamp.seconds) bDate = new Date(app.timestamp.seconds * 1000);
-         else bDate = new Date(app.timestamp);
+      // AGGRESSIVE TIMESTAMP HUNTER
+      // Checks all common database field names for when the booking was made
+      const rawCreationTime = app.timestamp || app.createdAt || app.created_at || app.dateBooked;
+
+      if (rawCreationTime && app.appointmentDate) {
+         let bDate: Date | null = null;
          
-         if (!isNaN(bDate.getTime())) {
+         try {
+             if (typeof rawCreationTime.toDate === 'function') bDate = rawCreationTime.toDate();
+             else if (rawCreationTime.seconds) bDate = new Date(rawCreationTime.seconds * 1000);
+             else bDate = new Date(rawCreationTime);
+         } catch(e) {
+             console.error("Failed to parse timestamp", rawCreationTime);
+         }
+         
+         if (bDate && !isNaN(bDate.getTime())) {
             creationDaysCount[bDate.getDay()]++;
             
-            // NEW: Track the specific hour based on the source of the booking
             const hour = bDate.getHours();
             if (isOnline) {
                 onlineCreationHoursCount[hour] = (onlineCreationHoursCount[hour] || 0) + 1;
@@ -88,9 +97,18 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     
-    // Helper function to turn "14" into "2:00 PM"
+    // Bulletproof Peak Calculator
+    const getPeak = (record: Record<string | number, number>): string => {
+       let peak = "N/A";
+       let max = 0;
+       Object.entries(record).forEach(([key, count]) => {
+           if (count > max) { max = count; peak = key; }
+       });
+       return peak;
+    };
+
     const formatHour = (hourIndex: string) => {
-        if (hourIndex === "N/A") return "N/A";
+        if (hourIndex === "N/A") return "Insufficient Data"; // Friendly fallback
         const h = parseInt(hourIndex);
         if (h === 0) return "12:00 AM";
         if (h < 12) return `${h}:00 AM`;
@@ -98,13 +116,12 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         return `${h - 12}:00 PM`;
     };
 
-    const busiestApptDay = Object.keys(apptDaysCount).reduce((a, b) => apptDaysCount[parseInt(a)] > apptDaysCount[parseInt(b)] ? a : b);
-    const busiestApptHour = Object.keys(apptHoursCount).length > 0 ? Object.keys(apptHoursCount).reduce((a, b) => apptHoursCount[a] > apptHoursCount[b] ? a : b) + ":00" : "N/A";
-    const peakBrowsingDay = Object.keys(creationDaysCount).reduce((a, b) => creationDaysCount[parseInt(a)] > creationDaysCount[parseInt(b)] ? a : b);
+    const busiestApptDay = getPeak(apptDaysCount);
+    const busiestApptHour = getPeak(apptHoursCount) !== "N/A" ? getPeak(apptHoursCount) + ":00" : "N/A";
+    const peakBrowsingDay = getPeak(creationDaysCount);
     
-    // Calculate the two split peaks
-    const peakOnlineHourIndex = Object.keys(onlineCreationHoursCount).length > 0 ? Object.keys(onlineCreationHoursCount).reduce((a, b) => onlineCreationHoursCount[parseInt(a)] > onlineCreationHoursCount[parseInt(b)] ? a : b) : "N/A";
-    const peakAdminHourIndex = Object.keys(adminCreationHoursCount).length > 0 ? Object.keys(adminCreationHoursCount).reduce((a, b) => adminCreationHoursCount[parseInt(a)] > adminCreationHoursCount[parseInt(b)] ? a : b) : "N/A";
+    const peakOnlineHourIndex = getPeak(onlineCreationHoursCount);
+    const peakAdminHourIndex = getPeak(adminCreationHoursCount);
 
     return {
       total,
@@ -112,11 +129,10 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       ftaRate: Math.round((fta / total) * 100) || 0,
       onlineRate: Math.round((onlineBookings / total) * 100) || 0,
       
-      busiestApptDay: dayNames[parseInt(busiestApptDay)],
+      busiestApptDay: busiestApptDay !== "N/A" ? dayNames[parseInt(busiestApptDay)] : "N/A",
       busiestApptHour,
-      peakBrowsingDay: dayNames[parseInt(peakBrowsingDay)],
+      peakBrowsingDay: peakBrowsingDay !== "N/A" ? dayNames[parseInt(peakBrowsingDay)] : "Insufficient Data",
       
-      // The new split metrics
       peakOnlineHour: formatHour(peakOnlineHourIndex),
       peakAdminHour: formatHour(peakAdminHourIndex),
       
