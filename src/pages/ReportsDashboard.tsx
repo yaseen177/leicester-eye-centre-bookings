@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, Calendar, AlertTriangle, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock } from 'lucide-react';
+import { FileText, Calendar, AlertTriangle, Users, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock, Smartphone } from 'lucide-react';
 
 export default function ReportsDashboard({ appointments }: { appointments: any[] }) {
   const [selectedDay, setSelectedDay] = useState<string>('All');
@@ -22,7 +22,6 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     const apptHoursCount: Record<string, number> = {};
     const ftaDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
 
-    // Meta-Style Heatmap Engine
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const onlineCreationByDayAndHour: Record<string, number[]> = {
       'All': Array(24).fill(0),
@@ -59,18 +58,15 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
           else patientIdentifiers.add(identifier);
       }
 
-      // STRICT NHS/PRIVATE FINANCIAL SPLIT (BULLETPROOF VERSION)
-      // 1. Grab the service name, force it to lowercase, and strip all accidental spaces
+      // STRICT NHS/PRIVATE FINANCIAL SPLIT
       const rawService = app.service || app.appointmentType || app.type || '';
       const serviceName = rawService.toLowerCase().trim();
 
       if (serviceName.includes('contact lens')) {
           // Do nothing - exclude from financial pie chart entirely
       } else if (serviceName === 'eye check private' || serviceName.includes('private')) {
-          // Catch exact match OR anything that has the word 'private' in it
           privateCount++;
       } else if (serviceName !== '') {
-          // Everything else (that isn't completely blank) is NHS
           nhsCount++;
       }
 
@@ -116,7 +112,6 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
             const hour = bDate.getHours();
             const bookedDayName = dayNames[bDate.getDay()];
 
-            // Feed the Meta Heatmap Engine
             if (isOnline) {
                 onlineCreationByDayAndHour['All'][hour]++;
                 onlineCreationByDayAndHour[bookedDayName][hour]++;
@@ -194,7 +189,7 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     };
   }, [appointments]);
 
-  // Derive active chart data
+  // Derive active chart data and exact strings
   const chartData = stats ? stats.onlineCreationByDayAndHour[selectedDay] : Array(24).fill(0);
   const maxChartVal = Math.max(...chartData, 1);
   
@@ -205,6 +200,8 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       if (val > popVal) { popVal = val; popHour = i; }
       if (val < quietVal) { quietVal = val; quietHour = i; }
   });
+
+  const displayDayStr = selectedDay === 'All' ? 'Overall' : selectedDay;
 
   const generatePDF = () => {
     if (!stats) return;
@@ -237,7 +234,6 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       headStyles: { fillColor: [63, 145, 133] }
     });
 
-    // CUSTOM DRAWN BAR CHART FOR PDF
     doc.setFontSize(14);
     doc.text(`2. Digital Marketing Heatmap (${selectedDay})`, 14, (doc as any).lastAutoTable.finalY + 15);
     
@@ -246,17 +242,15 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     const chartWidth = 180;
     const barWidth = chartWidth / 24;
     
-    // Background plate
     doc.setFillColor(248, 250, 252); 
     doc.rect(14, chartY, chartWidth, chartHeight, 'F');
     
-    // Draw Bars
     for(let i=0; i<24; i++) {
         const val = chartData[i];
         const h = (val / maxChartVal) * chartHeight;
         
-        if (val === popVal && val > 0) doc.setFillColor(79, 70, 229); // Highlight peak in Indigo
-        else doc.setFillColor(45, 212, 191); // Standard Teal
+        if (val === popVal && val > 0) doc.setFillColor(79, 70, 229); 
+        else doc.setFillColor(45, 212, 191); 
         
         doc.rect(14 + (i * barWidth), chartY + chartHeight - h, barWidth - 1, h, 'F');
         
@@ -267,7 +261,7 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
 
     doc.setFontSize(10);
     doc.setTextColor(40, 40, 40);
-    doc.text(`Most Popular Time: ${stats.formatHour(popHour)} (${popVal} bookings)  |  Quietest Time: ${stats.formatHour(quietHour)}`, 14, chartY + chartHeight + 10);
+    doc.text(`Most Popular: ${displayDayStr} at ${stats.formatHour(popHour)} (${popVal} bookings)  |  Quietest: ${displayDayStr} at ${stats.formatHour(quietHour)}`, 14, chartY + chartHeight + 10);
 
     doc.setFontSize(14);
     doc.text("3. Consumer Booking Behaviour", 14, chartY + chartHeight + 25);
@@ -289,7 +283,6 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     doc.setTextColor(150, 150, 150);
     doc.text("CONFIDENTIAL - Internal Practice Owner Use Only", 14, 285);
 
-    // OPEN PDF IN NEW TAB (BLOB)
     const pdfBlob = doc.output('blob');
     const blobUrl = URL.createObjectURL(pdfBlob);
     window.open(blobUrl, '_blank');
@@ -323,7 +316,6 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
                  <p className="text-sm text-slate-500 mt-1">Target your Google/Meta Ad budgets towards your most popular hours.</p>
               </div>
               
-              {/* Day Toggle Buttons */}
               <div className="flex flex-wrap gap-2">
                  {Object.keys(stats.onlineCreationByDayAndHour).map(day => (
                     <button 
@@ -337,25 +329,23 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
               </div>
            </div>
 
-           {/* Popularity Insights */}
            <div className="flex gap-4 mb-6">
               <div className="bg-indigo-50 text-indigo-700 px-4 py-3 rounded-xl flex-1 flex items-center gap-3">
                  <div className="bg-indigo-100 p-2 rounded-lg"><TrendingDown className="rotate-180" size={20}/></div>
                  <div>
                     <p className="text-xs font-bold uppercase tracking-wider opacity-70">Most Popular</p>
-                    <p className="font-black text-lg">{stats.formatHour(popHour)} <span className="text-sm font-medium">({popVal} bookings)</span></p>
+                    <p className="font-black text-lg">{displayDayStr} at {stats.formatHour(popHour)} <span className="text-sm font-medium">({popVal} bookings)</span></p>
                  </div>
               </div>
               <div className="bg-slate-50 text-slate-600 px-4 py-3 rounded-xl flex-1 flex items-center gap-3 border border-slate-100">
                  <div className="bg-slate-200 p-2 rounded-lg"><Clock size={20}/></div>
                  <div>
                     <p className="text-xs font-bold uppercase tracking-wider opacity-70">Quietest Time</p>
-                    <p className="font-black text-lg">{stats.formatHour(quietHour)}</p>
+                    <p className="font-black text-lg">{displayDayStr} at {stats.formatHour(quietHour)}</p>
                  </div>
               </div>
            </div>
            
-           {/* The Dynamic Bar Chart */}
            <div className="flex items-end h-48 gap-1 md:gap-2 border-b-2 border-slate-100 pb-2 relative">
               {chartData.map((val, i) => (
                   <div key={i} className="flex-1 flex flex-col items-center group relative h-full justify-end">
