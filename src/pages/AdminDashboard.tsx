@@ -450,7 +450,29 @@ export default function AdminDashboard() {
   const updateStatus = async (id: string, newStatus: string) => {
     try {
       const appRef = doc(db, "appointments", id);
+      const appSnap = await getDoc(appRef);
+      const appData = appSnap.data();
+
+      if (appData) {
+        // If changed to FTA, send the scheduling request to Cloudflare
+        if (newStatus === 'FTA' && appData.status !== 'FTA') {
+          await fetch("https://twilio.yaseen-hussain18.workers.dev/schedule-fta", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              appointmentId: id,
+              email: appData.email || null,
+              phone: appData.phone || null,
+              patientFirstName: appData.patientName.split(' ')[0],
+              manageLink: `${window.location.origin}/manage/${id}`
+            })
+          });
+        }
+      }
+
+      // Update the database instantly. (If you change it back to 'Arrived' here, 
+      // Cloudflare will automatically see it 30 mins later and abort the message!)
       await setDoc(appRef, { status: newStatus }, { merge: true });
+      
     } catch (err) {
       alert("Failed to update status");
     }
