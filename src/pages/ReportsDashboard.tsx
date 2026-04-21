@@ -1,18 +1,24 @@
 import { useMemo } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, Calendar, AlertTriangle, Clock, MousePointerClick, Smartphone, BarChart3, Users } from 'lucide-react';
+import { FileText, Calendar, AlertTriangle, Clock, MousePointerClick, Smartphone, BarChart3, Users, RefreshCcw, TrendingDown, PieChart, Activity } from 'lucide-react';
 
 export default function ReportsDashboard({ appointments }: { appointments: any[] }) {
   const stats = useMemo(() => {
     const total = appointments.length;
     if (total === 0) return null;
 
-    let completed = 0, fta = 0, onlineBookings = 0, adminBookings = 0;
+    let completed = 0, fta = 0, cancelled = 0, onlineBookings = 0, adminBookings = 0;
+    let repeatBookings = 0, nhsCount = 0, privateCount = 0;
+    let minors = 0, adults = 0, seniors = 0;
+    
     const leadTimes: number[] = [];
+    const patientIdentifiers = new Set();
     
     const apptDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const apptHoursCount: Record<string, number> = {};
+    const ftaDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
+    const uniqueClinicDates = new Set(); // To calculate density
 
     const creationDaysCount: Record<number, number> = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const onlineCreationHoursCount: Record<number, number> = {};
@@ -31,19 +37,46 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     };
 
     appointments.forEach(app => {
+      // 1. Status & Leakage
       if (app.status === 'Completed') completed++;
       if (app.status === 'FTA') fta++;
+      if (app.status === 'Cancelled' || app.status === 'Canceled') cancelled++;
       
-      // Aggressive source hunting
+      // 2. Loyalty Engine
+      const identifier = app.email || app.phone || app.patientName;
+      if (identifier) {
+          if (patientIdentifiers.has(identifier)) repeatBookings++;
+          else patientIdentifiers.add(identifier);
+      }
+
+      // 3. Financial & Patient Profiling
+      if (app.nhsEligible) nhsCount++;
+      else privateCount++;
+
+      if (app.dob) {
+         const birthDate = parseDateSafely(app.dob);
+         if (birthDate && !isNaN(birthDate.getTime())) {
+            const age = Math.floor((new Date().getTime() - birthDate.getTime()) / 31557600000);
+            if (age >= 0 && age < 16) minors++;
+            else if (age >= 16 && age < 60) adults++;
+            else if (age >= 60 && age < 120) seniors++;
+         }
+      }
+
+      // 4. Digital Adoption
       const sourceStr = (app.source || app.bookingSource || '').toLowerCase();
       const isOnline = sourceStr === 'online' || sourceStr === 'website' || sourceStr === 'web';
-      
       if (isOnline) onlineBookings++;
       else adminBookings++;
 
+      // 5. Appointment Logistics & Density
       if (app.appointmentDate) {
+        uniqueClinicDates.add(app.appointmentDate); // Track unique days open
         const dateObj = parseDateSafely(app.appointmentDate);
-        if (dateObj && !isNaN(dateObj.getTime())) apptDaysCount[dateObj.getDay()]++;
+        if (dateObj && !isNaN(dateObj.getTime())) {
+            apptDaysCount[dateObj.getDay()]++;
+            if (app.status === 'FTA') ftaDaysCount[dateObj.getDay()]++;
+        }
       }
 
       if (app.appointmentTime) {
@@ -51,30 +84,22 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         apptHoursCount[hour] = (apptHoursCount[hour] || 0) + 1;
       }
 
-      // AGGRESSIVE TIMESTAMP HUNTER
-      // Checks all common database field names for when the booking was made
+      // 6. Aggressive Timestamp Hunter & Behaviour
       const rawCreationTime = app.timestamp || app.createdAt || app.created_at || app.dateBooked;
-
       if (rawCreationTime && app.appointmentDate) {
          let bDate: Date | null = null;
-         
          try {
              if (typeof rawCreationTime.toDate === 'function') bDate = rawCreationTime.toDate();
              else if (rawCreationTime.seconds) bDate = new Date(rawCreationTime.seconds * 1000);
              else bDate = new Date(rawCreationTime);
-         } catch(e) {
-             console.error("Failed to parse timestamp", rawCreationTime);
-         }
+         } catch(e) {}
          
          if (bDate && !isNaN(bDate.getTime())) {
             creationDaysCount[bDate.getDay()]++;
             
             const hour = bDate.getHours();
-            if (isOnline) {
-                onlineCreationHoursCount[hour] = (onlineCreationHoursCount[hour] || 0) + 1;
-            } else {
-                adminCreationHoursCount[hour] = (adminCreationHoursCount[hour] || 0) + 1;
-            }
+            if (isOnline) onlineCreationHoursCount[hour] = (onlineCreationHoursCount[hour] || 0) + 1;
+            else adminCreationHoursCount[hour] = (adminCreationHoursCount[hour] || 0) + 1;
 
             const aDate = parseDateSafely(app.appointmentDate);
             if (aDate && !isNaN(aDate.getTime())) {
@@ -97,18 +122,14 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     
-    // Bulletproof Peak Calculator
     const getPeak = (record: Record<string | number, number>): string => {
-       let peak = "N/A";
-       let max = 0;
-       Object.entries(record).forEach(([key, count]) => {
-           if (count > max) { max = count; peak = key; }
-       });
-       return peak;
+       let peak = "N/A"; let max = 0;
+       Object.entries(record).forEach(([key, count]) => { if (count > max) { max = count; peak = key; }});
+       return max === 0 ? "N/A" : peak;
     };
 
     const formatHour = (hourIndex: string) => {
-        if (hourIndex === "N/A") return "Insufficient Data"; // Friendly fallback
+        if (hourIndex === "N/A") return "Insufficient Data";
         const h = parseInt(hourIndex);
         if (h === 0) return "12:00 AM";
         if (h < 12) return `${h}:00 AM`;
@@ -116,25 +137,35 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         return `${h - 12}:00 PM`;
     };
 
-    const busiestApptDay = getPeak(apptDaysCount);
-    const busiestApptHour = getPeak(apptHoursCount) !== "N/A" ? getPeak(apptHoursCount) + ":00" : "N/A";
-    const peakBrowsingDay = getPeak(creationDaysCount);
-    
-    const peakOnlineHourIndex = getPeak(onlineCreationHoursCount);
-    const peakAdminHourIndex = getPeak(adminCreationHoursCount);
+    const totalAgeTracked = minors + adults + seniors;
 
     return {
       total,
       completedRate: Math.round((completed / total) * 100) || 0,
       ftaRate: Math.round((fta / total) * 100) || 0,
+      cancelledRate: Math.round((cancelled / total) * 100) || 0,
+      leakageRate: Math.round(((fta + cancelled) / total) * 100) || 0,
+      
+      loyaltyRate: Math.round((repeatBookings / total) * 100) || 0,
       onlineRate: Math.round((onlineBookings / total) * 100) || 0,
       
-      busiestApptDay: busiestApptDay !== "N/A" ? dayNames[parseInt(busiestApptDay)] : "N/A",
-      busiestApptHour,
-      peakBrowsingDay: peakBrowsingDay !== "N/A" ? dayNames[parseInt(peakBrowsingDay)] : "Insufficient Data",
+      // New Patient Profile Metrics
+      nhsRate: Math.round((nhsCount / total) * 100) || 0,
+      privateRate: Math.round((privateCount / total) * 100) || 0,
+      minorRate: totalAgeTracked ? Math.round((minors / totalAgeTracked) * 100) : 0,
+      adultRate: totalAgeTracked ? Math.round((adults / totalAgeTracked) * 100) : 0,
+      seniorRate: totalAgeTracked ? Math.round((seniors / totalAgeTracked) * 100) : 0,
       
-      peakOnlineHour: formatHour(peakOnlineHourIndex),
-      peakAdminHour: formatHour(peakAdminHourIndex),
+      // New Density Metric
+      avgPatientsPerDay: uniqueClinicDates.size > 0 ? Math.round(total / uniqueClinicDates.size) : 0,
+
+      busiestApptDay: getPeak(apptDaysCount) !== "N/A" ? dayNames[parseInt(getPeak(apptDaysCount))] : "N/A",
+      busiestApptHour: getPeak(apptHoursCount) !== "N/A" ? getPeak(apptHoursCount) + ":00" : "N/A",
+      worstFtaDay: getPeak(ftaDaysCount) !== "N/A" ? dayNames[parseInt(getPeak(ftaDaysCount))] : "N/A",
+      
+      peakBrowsingDay: getPeak(creationDaysCount) !== "N/A" ? dayNames[parseInt(getPeak(creationDaysCount))] : "Insufficient Data",
+      peakOnlineHour: formatHour(getPeak(onlineCreationHoursCount)),
+      peakAdminHour: formatHour(getPeak(adminCreationHoursCount)),
       
       avgLeadTime: leadTimes.length ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) : 0,
       sameDayRate: leadTimes.length ? Math.round((sameDay / leadTimes.length) * 100) : 0,
@@ -153,37 +184,56 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
     doc.setFontSize(22);
     doc.text("The Eye Centre", 14, 22);
     doc.setFontSize(11);
-    doc.text(`Commercial Intelligence & Operations Report • Generated: ${today}`, 14, 32);
+    doc.text(`Comprehensive Commercial & Patient Report • Generated: ${today}`, 14, 32);
 
+    // SECTION 1: LEAKAGE & ACQUISITION
     doc.setTextColor(40, 40, 40);
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text("1. Operational KPI Health", 14, 55);
+    doc.text("1. Revenue Integrity & Logistics", 14, 55);
     
     autoTable(doc, {
       startY: 60,
-      head: [['Metric', 'Value', 'Business Impact']],
+      head: [['Metric', 'Value', 'Business Insight']],
       body: [
-        ['Total Bookings Tracked', stats.total.toString(), 'Overall volume in the current dataset.'],
-        ['Completion Rate', `${stats.completedRate}%`, 'Patients who successfully generated clinic revenue.'],
-        ['Fail-To-Attend (FTA)', `${stats.ftaRate}%`, 'Critical metric for unrecoverable lost diary time.'],
-        ['Digital Adoption Rate', `${stats.onlineRate}%`, 'Percentage of bookings made self-service online vs reception phone calls.']
+        ['Total Diary Leakage', `${stats.leakageRate}%`, 'Combined total of all Cancellations and FTAs.'],
+        ['Highest FTA Risk Day', stats.worstFtaDay, 'Patients are most likely to no-show on this day. Consider deposits.'],
+        ['Busiest Day of Week', stats.busiestApptDay, 'Ensure maximum reception cover. Restrict staff annual leave.'],
+        ['Average Daily Density', `${stats.avgPatientsPerDay} Patients`, 'Average number of appointments per working day.']
+      ],
+      theme: 'striped',
+      headStyles: { fillColor: [185, 28, 28] } 
+    });
+
+    // SECTION 2: PATIENT DEMOGRAPHICS (NEW)
+    doc.setFontSize(14);
+    doc.text("2. Patient & Commercial Profiling", 14, (doc as any).lastAutoTable.finalY + 15);
+
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [['Demographic Segment', 'Percentage', 'Commercial Implication']],
+      body: [
+        ['NHS Funded Flow', `${stats.nhsRate}%`, 'Predictable, structured base income via GOS forms.'],
+        ['Private Patient Flow', `${stats.privateRate}%`, 'Higher margin, immediate cash-flow opportunities.'],
+        ['Minors (<16 Years)', `${stats.minorRate}%`, 'Ensure adequate stock of robust, child-friendly frames.'],
+        ['Working Adults (16-59)', `${stats.adultRate}%`, 'Prime demographic for premium contact lenses & designer frames.'],
+        ['Seniors (60+ Years)', `${stats.seniorRate}%`, 'High likelihood for complex dispensing (varifocals) and frequent visits.']
       ],
       theme: 'striped',
       headStyles: { fillColor: [63, 145, 133] }
     });
 
+    // SECTION 3: MARKETING
     doc.setFontSize(14);
-    doc.text("2. Booking Source & Marketing Insights", 14, (doc as any).lastAutoTable.finalY + 15);
+    doc.text("3. Consumer Behaviour & Acquisition", 14, (doc as any).lastAutoTable.finalY + 15);
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 20,
-      head: [['Behaviour Trend', 'Time', 'Operational Insight']],
+      head: [['Behaviour Trend', 'Data', 'Actionable Strategy']],
       body: [
+        ['Patient Loyalty Rate', `${stats.loyaltyRate}%`, 'Percentage of bookings made by returning/repeat patients.'],
+        ['Digital Adoption Rate', `${stats.onlineRate}%`, 'Percentage of bookings made self-service online.'],
         ['Peak Online Booking Time', stats.peakOnlineHour, 'When patients book from home. Best time for digital marketing.'],
-        ['Peak Reception Booking Time', stats.peakAdminHour, 'When your phones are busiest. Ensure maximum reception cover.'],
-        ['Peak Action Day (All)', stats.peakBrowsingDay, 'The busiest overall day for new appointments entering the diary.'],
-        ['Average Booking Window', `${stats.avgLeadTime} Days`, 'How far in advance the average patient plans their visit.'],
         ['Spontaneous Bookers', `${stats.sameDayRate}%`, 'Percentage of patients booking a same-day or next-day appointment.'],
         ['Long-Term Planners', `${stats.plannerRate}%`, 'Patients booking 14+ days out (Statistically higher risk of FTA).']
       ],
@@ -191,31 +241,18 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       headStyles: { fillColor: [44, 62, 80] } 
     });
 
-    doc.setFontSize(14);
-    doc.text("3. Clinic Floor Logistics", 14, (doc as any).lastAutoTable.finalY + 15);
-
-    autoTable(doc, {
-      startY: (doc as any).lastAutoTable.finalY + 20,
-      head: [['Clinic Trend', 'Peak Value', 'Staffing Recommendation']],
-      body: [
-        ['Busiest Day of Week', stats.busiestApptDay, 'Ensure maximum reception and optical floor coverage. Restrict staff annual leave.'],
-        ['Busiest Time of Day', stats.busiestApptHour, 'Avoid scheduling staff lunch breaks or admin blocks during this hour.']
-      ],
-      theme: 'striped',
-      headStyles: { fillColor: [63, 145, 133] }
-    });
-
     doc.setFontSize(9);
     doc.setTextColor(150, 150, 150);
     doc.text("CONFIDENTIAL - Internal Practice Owner Use Only", 14, 285);
 
-    doc.save(`Eye_Centre_Commercial_Report_${today.replace(/\//g, '-')}.pdf`);
+    doc.save(`Eye_Centre_Comprehensive_Report_${today.replace(/\//g, '-')}.pdf`);
   };
 
   if (!stats) return <div className="p-8 text-center text-slate-500 font-bold">Awaiting Booking Data...</div>;
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8 animate-in fade-in">
+      {/* HEADER */}
       <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div>
           <h1 className="text-2xl font-black text-slate-800">Commercial Analytics</h1>
@@ -227,50 +264,95 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
         </button>
       </div>
       
+      {/* ROW 1: REVENUE INTEGRITY & DENSITY */}
       <div>
-        <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><BarChart3 size={18}/> Clinic Operations</h2>
+        <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><TrendingDown size={18}/> Revenue Integrity & Logistics</h2>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
             <div className="w-12 h-12 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-3"><AlertTriangle size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.ftaRate}%</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">FTA Rate</p>
+            <p className="text-3xl font-black text-slate-800">{stats.leakageRate}%</p>
+            <p className="text-sm font-bold text-slate-500 mt-1">Total Diary Leakage</p>
+            <p className="text-xs text-slate-400 mt-1">({stats.ftaRate}% FTA + {stats.cancelledRate}% Cxl)</p>
           </div>
           
-          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-            <div className="w-12 h-12 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mb-3"><Smartphone size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.onlineRate}%</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">Booked Online</p>
+          <div className="bg-slate-800 p-5 rounded-2xl shadow-sm flex flex-col items-center text-center text-white">
+            <div className="w-12 h-12 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mb-3"><AlertTriangle size={24} /></div>
+            <p className="text-3xl font-black">{stats.worstFtaDay}</p>
+            <p className="text-sm font-bold mt-1 text-red-200">Highest FTA Risk Day</p>
+            <p className="text-xs text-slate-400 mt-1">Consider taking deposits</p>
           </div>
 
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
             <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mb-3"><Calendar size={24} /></div>
             <p className="text-3xl font-black text-slate-800">{stats.busiestApptDay}</p>
             <p className="text-sm font-bold text-slate-500 mt-1">Busiest Clinic Day</p>
+            <p className="text-xs text-slate-400 mt-1">Max floor staff required</p>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
-            <div className="w-12 h-12 bg-orange-50 text-orange-500 rounded-full flex items-center justify-center mb-3"><Clock size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.busiestApptHour}</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">Peak Clinic Hour</p>
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center border-b-4 border-b-emerald-500">
+             <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3"><Activity size={24} /></div>
+            <p className="text-3xl font-black text-slate-800">{stats.avgPatientsPerDay}</p>
+            <p className="text-sm font-bold text-slate-500 mt-1">Daily Clinic Density</p>
+            <p className="text-xs text-slate-400 mt-1">Average patients per day</p>
           </div>
         </div>
       </div>
 
+      {/* ROW 2: PATIENT DEMOGRAPHICS */}
       <div>
-        <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><MousePointerClick size={18}/> Booking Source Comparison</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-slate-800 p-6 rounded-2xl shadow-sm flex flex-col items-center text-center text-white relative overflow-hidden">
-            <div className="absolute top-4 right-4 text-slate-600"><Smartphone size={32} /></div>
-            <p className="text-sm font-bold text-teal-400 mb-1 uppercase tracking-wider">Peak Online Bookings</p>
-            <p className="text-4xl font-black mb-2">{stats.peakOnlineHour}</p>
-            <p className="text-sm text-slate-300">When patients browse independently.</p>
+        <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><PieChart size={18}/> Commercial Patient Profiling</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="bg-indigo-50 border border-indigo-100 p-5 rounded-2xl flex flex-col items-center text-center lg:col-span-1">
+             <p className="text-sm font-bold text-indigo-800 mb-1">NHS Split</p>
+             <p className="text-3xl font-black text-indigo-900">{stats.nhsRate}%</p>
+          </div>
+          <div className="bg-indigo-50 border border-indigo-100 p-5 rounded-2xl flex flex-col items-center text-center lg:col-span-1">
+             <p className="text-sm font-bold text-indigo-800 mb-1">Private Split</p>
+             <p className="text-3xl font-black text-indigo-900">{stats.privateRate}%</p>
           </div>
 
-          <div className="bg-slate-800 p-6 rounded-2xl shadow-sm flex flex-col items-center text-center text-white relative overflow-hidden">
-             <div className="absolute top-4 right-4 text-slate-600"><Users size={32} /></div>
-            <p className="text-sm font-bold text-blue-400 mb-1 uppercase tracking-wider">Peak Reception Phone Volume</p>
-            <p className="text-4xl font-black mb-2">{stats.peakAdminHour}</p>
-            <p className="text-sm text-slate-300">When your admin staff are busiest taking bookings.</p>
+          <div className="bg-white border border-slate-200 p-5 rounded-2xl flex flex-col items-center text-center lg:col-span-1 shadow-sm">
+             <p className="text-sm font-bold text-slate-500 mb-1">Minors (&lt;16)</p>
+             <p className="text-3xl font-black text-slate-800">{stats.minorRate}%</p>
+          </div>
+          <div className="bg-white border border-slate-200 p-5 rounded-2xl flex flex-col items-center text-center lg:col-span-1 shadow-sm">
+             <p className="text-sm font-bold text-slate-500 mb-1">Adults (16-59)</p>
+             <p className="text-3xl font-black text-slate-800">{stats.adultRate}%</p>
+          </div>
+          <div className="bg-white border border-slate-200 p-5 rounded-2xl flex flex-col items-center text-center lg:col-span-1 shadow-sm">
+             <p className="text-sm font-bold text-slate-500 mb-1">Seniors (60+)</p>
+             <p className="text-3xl font-black text-slate-800">{stats.seniorRate}%</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 3: CONSUMER BEHAVIOUR */}
+      <div>
+        <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><MousePointerClick size={18}/> Booking Behaviour & Loyalty</h2>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
+            <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mb-3"><RefreshCcw size={24} /></div>
+            <p className="text-3xl font-black text-slate-800">{stats.loyaltyRate}%</p>
+            <p className="text-sm font-bold text-slate-500 mt-1">Returning Patients</p>
+          </div>
+          
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
+            <div className="w-12 h-12 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mb-3"><Smartphone size={24} /></div>
+            <p className="text-3xl font-black text-slate-800">{stats.onlineRate}%</p>
+            <p className="text-sm font-bold text-slate-500 mt-1">Digital Adoption</p>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
+             <div className="w-12 h-12 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mb-3"><Users size={24} /></div>
+            <p className="text-3xl font-black text-slate-800">{stats.peakAdminHour}</p>
+            <p className="text-sm font-bold text-slate-500 mt-1">Peak Phone Rush</p>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
+            <div className="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-3"><MousePointerClick size={24} /></div>
+            <p className="text-3xl font-black text-slate-800">{stats.peakOnlineHour}</p>
+            <p className="text-sm font-bold text-slate-500 mt-1">Peak Online Rush</p>
           </div>
         </div>
       </div>
