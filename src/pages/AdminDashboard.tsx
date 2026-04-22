@@ -138,7 +138,7 @@ export default function AdminDashboard() {
         phone: selectedChatPatient.phone || '',
         dob: selectedChatPatient.dob || ''
       });
-      setCrmTab('chat'); // Reset to chat tab when switching patients
+      setCrmTab('chat'); 
     }
   }, [selectedChatPatient]);
 
@@ -175,14 +175,12 @@ export default function AdminDashboard() {
   const handleUpdateMasterProfile = async () => {
     if (!selectedChatPatient) return;
     
-    // Find all appointments associated with this patient's email or phone
     const patientAppts = appointments.filter(a => 
       (a.phone && a.phone === selectedChatPatient.phone) || 
       (a.email && a.email === selectedChatPatient.email)
     );
 
     try {
-      // Update all historical and future appointments
       for (const app of patientAppts) {
         await setDoc(doc(db, "appointments", app.id), {
           patientName: editProfileData.patientName,
@@ -192,7 +190,6 @@ export default function AdminDashboard() {
         }, { merge: true });
       }
 
-      // Update the active UI state so the name changes instantly
       setSelectedChatPatient({ ...selectedChatPatient, ...editProfileData });
       alert("Master patient record and all associated appointments have been successfully updated!");
     } catch (err) {
@@ -316,6 +313,12 @@ export default function AdminDashboard() {
           });
        }
 
+       // Hunt for the most recent inbound email from this patient to grab the thread ID
+       const recentEmail = chatMessages
+          .slice()
+          .reverse()
+          .find(m => m.email === selectedChatPatient.email && m.direction === 'inbound' && m.messageId);
+
        const payload: any = {
           type: "send_email",
           templateId: 7, 
@@ -328,6 +331,10 @@ export default function AdminDashboard() {
             subject: emailData.subject 
           }
        };
+       
+       if (recentEmail?.messageId) {
+           payload.inReplyTo = recentEmail.messageId;
+       }
        
        if (attachmentBase64) {
           payload.attachment = [{ name: attachmentName, content: attachmentBase64 }];
@@ -351,6 +358,7 @@ export default function AdminDashboard() {
             attachmentType: attachmentType || null,
             direction: 'outbound',
             type: 'email',
+            inReplyTo: payload.inReplyTo || null,
             timestamp: serverTimestamp()
          });
 
