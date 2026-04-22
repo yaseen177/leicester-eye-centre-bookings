@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 // @ts-ignore
@@ -56,6 +56,7 @@ export default function AdminDashboard() {
   const [emailData, setEmailData] = useState({ subject: '', body: '', attachment: null as File | null });
   const [isSendingComms, setIsSendingComms] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
+  const [replyingToMessage, setReplyingToMessage] = useState<any>(null); // NEW: Tracks specific thread
 
   // --- SEARCH & MODAL STATES ---
   const [patientSearch, setPatientSearch] = useState('');
@@ -139,6 +140,7 @@ export default function AdminDashboard() {
         dob: selectedChatPatient.dob || ''
       });
       setCrmTab('chat'); 
+      setReplyingToMessage(null); // Clear active reply thread
     }
   }, [selectedChatPatient]);
 
@@ -313,12 +315,6 @@ export default function AdminDashboard() {
           });
        }
 
-       // Hunt for the most recent inbound email from this patient to grab the thread ID
-       const recentEmail = chatMessages
-          .slice()
-          .reverse()
-          .find(m => m.email === selectedChatPatient.email && m.direction === 'inbound' && m.messageId);
-
        const payload: any = {
           type: "send_email",
           templateId: 7, 
@@ -332,8 +328,9 @@ export default function AdminDashboard() {
           }
        };
        
-       if (recentEmail?.messageId) {
-           payload.inReplyTo = recentEmail.messageId;
+       // NEW: Inject the exact messageId we are replying to
+       if (replyingToMessage?.messageId) {
+           payload.inReplyTo = replyingToMessage.messageId;
        }
        
        if (attachmentBase64) {
@@ -363,6 +360,7 @@ export default function AdminDashboard() {
          });
 
          setEmailData({ subject: '', body: '', attachment: null });
+         setReplyingToMessage(null); // Clear thread lock
          alert("Email sent successfully!");
          setCrmTab('chat');
          setCommsType('SMS');
@@ -1092,23 +1090,47 @@ export default function AdminDashboard() {
                                           <Mail size={14} /> Email {msg.direction === 'outbound' ? 'Sent' : 'Received'}
                                         </div>
                                         
-                                        {msg.attachmentName && (
-                                          <button 
-                                            onClick={() => {
-                                              if (!msg.attachmentBase64) return alert('File content not available for older messages.');
-                                              const link = document.createElement('a');
-                                              link.href = `data:${msg.attachmentType || 'application/octet-stream'};base64,${msg.attachmentBase64}`;
-                                              link.download = msg.attachmentName;
-                                              link.click();
-                                            }}
-                                            className="flex items-center gap-1.5 bg-black/10 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm max-w-[200px]" 
-                                            title="Click to download"
-                                          >
-                                            <Paperclip size={12} className="shrink-0" />
-                                            <span className="truncate">{msg.attachmentName}</span>
-                                            <Download size={10} className="shrink-0 ml-1 opacity-70" />
-                                          </button>
-                                        )}
+                                        <div className="flex items-center gap-2">
+                                          {msg.attachmentName && (
+                                            <button 
+                                              onClick={() => {
+                                                if (!msg.attachmentBase64) return alert('File content not available for older messages.');
+                                                const link = document.createElement('a');
+                                                link.href = `data:${msg.attachmentType || 'application/octet-stream'};base64,${msg.attachmentBase64}`;
+                                                link.download = msg.attachmentName;
+                                                link.click();
+                                              }}
+                                              className="flex items-center gap-1.5 bg-black/10 hover:bg-[#3F9185] hover:text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm max-w-[200px]" 
+                                              title="Click to download"
+                                            >
+                                              <Paperclip size={12} className="shrink-0" />
+                                              <span className="truncate">{msg.attachmentName}</span>
+                                              <Download size={10} className="shrink-0 ml-1 opacity-70" />
+                                            </button>
+                                          )}
+                                          
+                                          {/* DEDICATED REPLY BUTTON */}
+                                          {msg.direction === 'inbound' && msg.messageId && (
+                                            <button 
+                                              onClick={() => {
+                                                setCommsType('Email');
+                                                setReplyingToMessage(msg);
+                                                // Safely extract the subject line from the text body to append "Re:"
+                                                let extractedSubject = "Threaded Reply";
+                                                if (msg.text.startsWith("Subject: ")) {
+                                                  extractedSubject = msg.text.split('\n')[0].replace("Subject: ", "").trim();
+                                                }
+                                                const finalSubject = extractedSubject.toLowerCase().startsWith("re:") ? extractedSubject : `Re: ${extractedSubject}`;
+                                                setEmailData({...emailData, subject: finalSubject});
+                                              }}
+                                              className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-800 text-white px-3 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm" 
+                                              title="Reply directly to this email thread"
+                                            >
+                                              <Reply size={12} className="shrink-0" />
+                                              Reply
+                                            </button>
+                                          )}
+                                        </div>
                                       </div>
                                     )}
                                     
@@ -1148,11 +1170,28 @@ export default function AdminDashboard() {
                             </div>
                           ) : (
                             <div className="space-y-4 max-w-2xl mx-auto">
+                              
+                              {/* NEW: THREADING INDICATOR BANNER */}
+                              {replyingToMessage && (
+                                <div className="flex items-center justify-between bg-indigo-50 border border-indigo-100 p-4 rounded-xl animate-in zoom-in-95 shadow-sm">
+                                  <div className="flex items-center gap-3 text-indigo-700">
+                                    <div className="bg-white p-1.5 rounded-md shadow-sm"><Reply size={16} /></div>
+                                    <div>
+                                      <p className="text-xs font-black uppercase tracking-wider">Thread Locked</p>
+                                      <p className="text-xs font-medium mt-0.5">This reply will securely group with the patient's original email.</p>
+                                    </div>
+                                  </div>
+                                  <button onClick={() => setReplyingToMessage(null)} className="text-indigo-400 hover:text-red-500 transition-colors bg-white p-1.5 rounded-md shadow-sm" title="Cancel Thread Lock">
+                                    <X size={16} />
+                                  </button>
+                                </div>
+                              )}
+
                               <div>
                                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Subject / Header</label>
                                 <input 
                                   type="text" placeholder="e.g. Your requested documentation" 
-                                  className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold"
+                                  className={`w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border focus:border-[#3F9185] text-sm font-bold ${replyingToMessage ? 'border-indigo-200 bg-white' : 'border-slate-200'}`}
                                   value={emailData.subject} onChange={e => setEmailData({...emailData, subject: e.target.value})}
                                 />
                               </div>
