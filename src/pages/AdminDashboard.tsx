@@ -56,7 +56,7 @@ export default function AdminDashboard() {
   const [emailData, setEmailData] = useState({ subject: '', body: '', attachment: null as File | null });
   const [isSendingComms, setIsSendingComms] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
-  const [replyingToMessage, setReplyingToMessage] = useState<any>(null); // NEW: Tracks specific thread
+  const [replyingToMessage, setReplyingToMessage] = useState<any>(null);
 
   // --- SEARCH & MODAL STATES ---
   const [patientSearch, setPatientSearch] = useState('');
@@ -130,7 +130,6 @@ export default function AdminDashboard() {
     return () => { unsubAppts(); unsubLogs(); unsubMessages(); };
   }, []);
 
-  // Sync profile editor when a new patient is selected
   useEffect(() => {
     if (selectedChatPatient) {
       setEditProfileData({
@@ -140,11 +139,10 @@ export default function AdminDashboard() {
         dob: selectedChatPatient.dob || ''
       });
       setCrmTab('chat'); 
-      setReplyingToMessage(null); // Clear active reply thread
+      setReplyingToMessage(null); 
     }
   }, [selectedChatPatient]);
 
-  // --- SMART AUTO-SCROLL & READ RECEIPT ENGINE ---
   useEffect(() => {
     if (selectedChatPatient && view === 'messages' && crmTab === 'chat' && commsType === 'SMS') {
       const unreadMsgs = chatMessages.filter(m => 
@@ -328,7 +326,6 @@ export default function AdminDashboard() {
           }
        };
        
-       // NEW: Inject the exact messageId we are replying to
        if (replyingToMessage?.messageId) {
            payload.inReplyTo = replyingToMessage.messageId;
        }
@@ -360,7 +357,7 @@ export default function AdminDashboard() {
          });
 
          setEmailData({ subject: '', body: '', attachment: null });
-         setReplyingToMessage(null); // Clear thread lock
+         setReplyingToMessage(null); 
          alert("Email sent successfully!");
          setCrmTab('chat');
          setCommsType('SMS');
@@ -720,9 +717,24 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               ) : (
-                <div className={`min-h-[5rem] w-full rounded-xl border-2 border-dashed transition-all flex items-center justify-center ${isLunchSlot ? 'border-orange-200/50 bg-orange-50/30' : 'border-slate-200 hover:border-[#3F9185]/30 hover:bg-[#3F9185]/5'}`}>
-                   <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest opacity-0 hover:opacity-100 transition-opacity">Available ({config.times.eyeCheck} min)</span>
-                </div>
+                <button 
+                  onClick={() => {
+                    if (!isLunchSlot && !isDateClosed()) {
+                      setNewBooking({
+                        firstName: '', lastName: '', email: '', phone: '', dob: '', 
+                        service: 'Eye Check', time: timeStr, 
+                        inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+                      });
+                      setIsBookingModalOpen(true);
+                    }
+                  }}
+                  disabled={isLunchSlot || isDateClosed()}
+                  className={`min-h-[5rem] w-full rounded-xl border-2 border-dashed transition-all flex items-center justify-center group ${isLunchSlot ? 'border-orange-200/50 bg-orange-50/30 cursor-not-allowed' : 'border-slate-200 hover:border-[#3F9185]/50 hover:bg-[#3F9185]/5 cursor-pointer shadow-sm hover:shadow-md'}`}
+                >
+                   <span className={`text-[10px] font-bold uppercase tracking-widest transition-all duration-300 ${isLunchSlot ? 'text-orange-300 opacity-100' : 'text-[#3F9185] opacity-0 group-hover:opacity-100'}`}>
+                     {isLunchSlot ? 'Lunch Break' : `+ Book ${timeStr} Appointment`}
+                   </span>
+                </button>
               )}
             </div>
           </div>
@@ -1115,7 +1127,6 @@ export default function AdminDashboard() {
                                               onClick={() => {
                                                 setCommsType('Email');
                                                 setReplyingToMessage(msg);
-                                                // Safely extract the subject line from the text body to append "Re:"
                                                 let extractedSubject = "Threaded Reply";
                                                 if (msg.text.startsWith("Subject: ")) {
                                                   extractedSubject = msg.text.split('\n')[0].replace("Subject: ", "").trim();
@@ -1171,7 +1182,7 @@ export default function AdminDashboard() {
                           ) : (
                             <div className="space-y-4 max-w-2xl mx-auto">
                               
-                              {/* NEW: THREADING INDICATOR BANNER */}
+                              {/* THREADING INDICATOR BANNER */}
                               {replyingToMessage && (
                                 <div className="flex items-center justify-between bg-indigo-50 border border-indigo-100 p-4 rounded-xl animate-in zoom-in-95 shadow-sm">
                                   <div className="flex items-center gap-3 text-indigo-700">
