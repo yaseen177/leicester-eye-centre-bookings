@@ -100,6 +100,7 @@ export default function AdminDashboard() {
       return;
     }
     try {
+      // 1. CLOUD SEARCH: Ask Firebase for Master CRM Records
       let q;
       if (queryText.startsWith('0') || queryText.startsWith('+')) {
         let phone = queryText.replace(/[\s\-\(\)]/g, '');
@@ -113,7 +114,46 @@ export default function AdminDashboard() {
         q = query(collection(db, "patients"), where("patientName", ">=", nameTitleCase), where("patientName", "<=", nameTitleCase + '\uf8ff'), limit(15));
       }
       const snap = await getDocs(q);
-      setCloudSearchResults(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const cloudMatches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // 2. LOCAL SEARCH: Scan active memory for Online Bookings & Text Messages
+      const queryLower = queryText.toLowerCase();
+      
+      const apptMatches = appointments.filter(a => 
+        (a.patientName || '').toLowerCase().includes(queryLower) ||
+        (a.email || '').toLowerCase().includes(queryLower) ||
+        (a.phone || '').toLowerCase().includes(queryLower)
+      ).map(a => ({ id: `unknown-${a.phone || a.email}`, patientName: a.patientName, phone: a.phone, email: a.email, dob: a.dob }));
+
+      const msgMatches = chatMessages.filter(m => 
+        (m.patientName || '').toLowerCase().includes(queryLower) ||
+        (m.email || '').toLowerCase().includes(queryLower) ||
+        (m.phone || '').toLowerCase().includes(queryLower)
+      ).map(m => ({ id: `unknown-${m.phone || m.email}`, patientName: m.patientName, phone: m.phone, email: m.email }));
+
+      // 3. MERGE & DEDUPLICATE: Combine both lists perfectly
+      const mergedMap = new Map();
+      
+      // Master records take priority
+      cloudMatches.forEach(p => {
+         const key = p.phone || p.email || p.id;
+         mergedMap.set(key, p);
+      });
+
+      // Add online bookings if they don't already exist
+      apptMatches.forEach(p => {
+         const key = p.phone || p.email;
+         if (key && !mergedMap.has(key)) mergedMap.set(key, p);
+      });
+
+      // Add messaged patients if they don't already exist
+      msgMatches.forEach(p => {
+         const key = p.phone || p.email;
+         if (key && !mergedMap.has(key)) mergedMap.set(key, p);
+      });
+
+      // Return the top 20 merged results
+      setCloudSearchResults(Array.from(mergedMap.values()).slice(0, 20));
     } catch (e) {
       console.error("Search error", e);
     }
