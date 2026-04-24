@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 // @ts-ignore
@@ -46,6 +46,7 @@ export default function AdminDashboard() {
   const [logStatusFilter, setLogStatusFilter] = useState("All");
 
   // --- CRM & MESSAGES STATE ---
+  const [crmPatients, setCrmPatients] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
   const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'profile'>('chat');
@@ -69,6 +70,22 @@ export default function AdminDashboard() {
   const [globalMessageSearch, setGlobalMessageSearch] = useState('');
   const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false);
   const [newMessageSearch, setNewMessageSearch] = useState('');
+
+  // --- CSV IMPORT & LINKING STATES ---
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [csvData, setCsvData] = useState<string[][]>([]);
+  const [csvMapping, setCsvMapping] = useState({ name: '', dob: '', phone: '', email: '' });
+  const [isImporting, setIsImporting] = useState(false);
+
+  const [bookingSearchQuery, setBookingSearchQuery] = useState('');
+  const [selectedCrmPatientForBooking, setSelectedCrmPatientForBooking] = useState<any>(null);
+  const [updateCrmOnBook, setUpdateCrmOnBook] = useState(false);
+
+  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [apptToLink, setApptToLink] = useState<any>(null);
+  const [linkSearchQuery, setLinkSearchQuery] = useState('');
 
   // --- SCROLLING ENGINES ---
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -99,6 +116,10 @@ export default function AdminDashboard() {
   useEffect(() => {
     const unsubAppts = onSnapshot(collection(db, "appointments"), (snap) => {
       setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    const unsubPatients = onSnapshot(collection(db, "patients"), (snap) => {
+      setCrmPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
     const qLogs = query(collection(db, "logs"), orderBy("timestamp", "desc"));
@@ -133,7 +154,7 @@ export default function AdminDashboard() {
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubLogs(); unsubMessages(); };
+    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubMessages(); };
   }, []);
 
   useEffect(() => {
@@ -178,17 +199,108 @@ export default function AdminDashboard() {
     }
   }, [selectedChatPatient?.id, view, crmTab, commsType]);
 
+  // --- CSV PARSING ENGINE ---
+  const parseCSV = (str: string) => {
+    const arr: string[][] = [];
+    let quote = false;
+    for (let row = 0, col = 0, c = 0; c < str.length; c++) {
+        let cc = str[c], nc = str[c+1];
+        arr[row] = arr[row] || [];
+        arr[row][col] = arr[row][col] || '';
+        if (cc === '"' && quote && nc === '"') { arr[row][col] += cc; ++c; continue; }
+        if (cc === '"') { quote = !quote; continue; }
+        if (cc === ',' && !quote) { ++col; continue; }
+        if (cc === '\r' && nc === '\n' && !quote) { ++row; col = 0; ++c; continue; }
+        if (cc === '\n' && !quote) { ++row; col = 0; continue; }
+        if (cc === '\r' && !quote) { ++row; col = 0; continue; }
+        arr[row][col] += cc;
+    }
+    return arr;
+  };
+
+  const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCsvFile(file);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      const rows = parseCSV(text).map(r => r.map(c => c.trim()));
+      if (rows.length > 0) {
+        setCsvHeaders(rows[0]);
+        setCsvData(rows.slice(1).filter(r => r.some(c => c))); 
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const processCsvImport = async () => {
+    setIsImporting(true);
+    try {
+      let importedCount = 0;
+      for (const row of csvData) {
+        const nameIdx = csvHeaders.indexOf(csvMapping.name);
+        const dobIdx = csvHeaders.indexOf(csvMapping.dob);
+        const phoneIdx = csvHeaders.indexOf(csvMapping.phone);
+        const emailIdx = csvHeaders.indexOf(csvMapping.email);
+
+        const name = nameIdx !== -1 ? row[nameIdx] : '';
+        const dob = dobIdx !== -1 ? row[dobIdx] : '';
+        const phoneRaw = phoneIdx !== -1 ? row[phoneIdx] : '';
+        const email = emailIdx !== -1 ? row[emailIdx] : '';
+
+        if (name || phoneRaw || email) {
+          const phone = phoneRaw.startsWith('0') ? `+44${phoneRaw.substring(1)}` : phoneRaw;
+          await addDoc(collection(db, "patients"), {
+            patientName: name,
+            dob,
+            phone,
+            email: email.toLowerCase(),
+            createdAt: serverTimestamp(),
+            imported: true
+          });
+          importedCount++;
+        }
+      }
+      alert(`Successfully imported ${importedCount} patients into your CRM!`);
+      setIsCsvModalOpen(false);
+      setCsvFile(null);
+      setCsvHeaders([]);
+      setCsvData([]);
+      setCsvMapping({ name: '', dob: '', phone: '', email: '' });
+    } catch (err) {
+      console.error(err);
+      alert("Error importing CSV data. Please check your file formatting.");
+    }
+    setIsImporting(false);
+  };
+
   const handleUpdateMasterProfile = async () => {
     if (!selectedChatPatient) return;
     
     const patientAppts = appointments.filter(a => 
+      (a.patientId && a.patientId === selectedChatPatient.id) ||
       (a.phone && a.phone === selectedChatPatient.phone) || 
       (a.email && a.email === selectedChatPatient.email)
     );
 
     try {
-      for (const app of patientAppts) {
-        await setDoc(doc(db, "appointments", app.id), {
+      const isKnownCrmId = selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-');
+      let currentMasterId = selectedChatPatient.id;
+
+      // If they don't have a master CRM record yet, create one
+      if (!isKnownCrmId) {
+        const newPatientRef = await addDoc(collection(db, "patients"), {
+          patientName: editProfileData.patientName,
+          email: editProfileData.email,
+          phone: editProfileData.phone,
+          dob: editProfileData.dob,
+          createdAt: serverTimestamp()
+        });
+        currentMasterId = newPatientRef.id;
+      } else {
+        // Update existing master record
+        await setDoc(doc(db, "patients", currentMasterId), {
           patientName: editProfileData.patientName,
           email: editProfileData.email,
           phone: editProfileData.phone,
@@ -196,8 +308,18 @@ export default function AdminDashboard() {
         }, { merge: true });
       }
 
-      setSelectedChatPatient({ ...selectedChatPatient, ...editProfileData });
-      alert("Master patient record and all associated appointments have been successfully updated!");
+      for (const app of patientAppts) {
+        await setDoc(doc(db, "appointments", app.id), {
+          patientName: editProfileData.patientName,
+          email: editProfileData.email,
+          phone: editProfileData.phone,
+          dob: editProfileData.dob,
+          patientId: currentMasterId
+        }, { merge: true });
+      }
+
+      setSelectedChatPatient({ ...selectedChatPatient, ...editProfileData, id: currentMasterId });
+      alert("Master patient record and all associated appointments have been successfully synchronized!");
     } catch (err) {
       alert("Failed to update master patient record.");
     }
@@ -475,6 +597,7 @@ export default function AdminDashboard() {
         appointmentDate: selectedDate,
         appointmentTime: newBooking.time,
         source: 'Admin',
+        patientId: selectedCrmPatientForBooking ? selectedCrmPatientForBooking.id : null,
         isDiabetic: newBooking.isDiabetic,
         onBenefits: newBooking.onBenefits,
         familyGlaucoma: newBooking.familyGlaucoma,
@@ -482,6 +605,16 @@ export default function AdminDashboard() {
         notes: generatedNotes,
         createdAt: serverTimestamp()
       });
+
+      // Update CRM Master Record if selected
+      if (selectedCrmPatientForBooking && updateCrmOnBook) {
+         await setDoc(doc(db, "patients", selectedCrmPatientForBooking.id), {
+            patientName: `${newBooking.firstName} ${newBooking.lastName}`,
+            email: newBooking.email,
+            phone: formattedPhone,
+            dob: newBooking.dob
+         }, { merge: true });
+      }
 
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
       const receiptLink = `${window.location.origin}/receipt/${docRef.id}`;
@@ -523,10 +656,13 @@ export default function AdminDashboard() {
       }
   
       setIsBookingModalOpen(false);
+      setSelectedCrmPatientForBooking(null);
+      setBookingSearchQuery('');
+      setUpdateCrmOnBook(false);
       setNewBooking({
         firstName: '', lastName: '', email: '', phone: '', dob: '', service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
       });
-      alert("Appointment successfully booked.");
+      alert("Appointment successfully booked and linked!");
     } catch (err) {
       console.error("Booking Error:", err);
       alert("Error saving booking.");
@@ -748,6 +884,7 @@ export default function AdminDashboard() {
                       <div className="flex items-baseline gap-3">
                         <span className="text-[11px] font-black text-[#3F9185] bg-teal-50 px-2.5 py-1 rounded-md tabular-nums border border-[#3F9185]/10">{timeStr} — {endTimeStr}</span>
                         <p className="font-bold text-slate-800 text-base">{booking.patientName}</p>
+                        {booking.patientId && <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[9px] font-black rounded uppercase tracking-wider ml-1" title="Linked to CRM Profile">Linked</span>}
                       </div>
                       <div className="flex items-center gap-2">
                          <span className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-wider ${booking.source === 'Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{booking.source === 'Admin' ? 'Admin' : 'Online'}</span>
@@ -780,6 +917,9 @@ export default function AdminDashboard() {
                     )}
                   </div>
                   <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
+                    {!booking.patientId && (
+                       <button onClick={() => { setApptToLink(booking); setIsLinkModalOpen(true); }} className="text-slate-300 hover:text-indigo-500 p-2 hover:bg-indigo-50 rounded-full transition-colors" title="Link to Master CRM Record"><LinkIcon size={18} /></button>
+                    )}
                     <button onClick={() => {
                       setSelectedChatPatient(booking);
                       setView('messages');
@@ -835,7 +975,19 @@ export default function AdminDashboard() {
     setSelectedDate(localDate.toISOString().split('T')[0]);
   };
 
-  // --- WHATSAPP-STYLE MESSAGE SORTING ENGINE ---
+  // --- OMNICHANNEL CRM SORTING ENGINE ---
+  const sidebarPatientsMap = new Map();
+
+  // 1. Seed with ALL Master CRM Patients (including fresh CSV imports)
+  crmPatients.forEach(p => {
+     sidebarPatientsMap.set(p.id, { ...p });
+  });
+
+  const findCrmPatient = (contactInfo: {phone?: string, email?: string}) => {
+     return crmPatients.find(p => (contactInfo.phone && p.phone === contactInfo.phone) || (contactInfo.email && p.email === contactInfo.email));
+  };
+
+  // 2. Add any non-CRM patients from Appointments
   const allContactsMap = new Map();
   appointments.forEach(app => {
     const key = app.phone || app.email;
@@ -845,12 +997,39 @@ export default function AdminDashboard() {
   });
   const allContacts = Array.from(allContactsMap.values());
 
+  allContacts.forEach(contact => {
+    const crmP = findCrmPatient(contact);
+    if (!crmP) {
+       const key = contact.phone || contact.email;
+       if (key && !sidebarPatientsMap.has(key)) sidebarPatientsMap.set(key, { ...contact, id: `unknown-${key}` });
+    }
+  });
+
+  // 3. Add any non-CRM patients strictly from Messages
+  chatMessages.forEach(msg => {
+    const crmP = findCrmPatient(msg);
+    if (!crmP) {
+       const key = msg.phone || msg.email;
+       if (key && !sidebarPatientsMap.has(key)) {
+         sidebarPatientsMap.set(key, {
+           id: `unknown-${key}`,
+           patientName: msg.patientName && msg.patientName !== 'Patient Reply' ? msg.patientName : 'Unknown Sender',
+           phone: msg.phone || '',
+           email: msg.email || ''
+         });
+       }
+    }
+  });
+
+  // Calculate unread statuses using CRM ID if linked
   const patientStats = new Map();
   let totalUnreadMessages = 0;
 
   chatMessages.forEach(msg => {
-     const key = msg.phone || msg.email;
+     const crmP = findCrmPatient(msg);
+     const key = crmP ? crmP.id : (msg.phone || msg.email);
      if (!key) return;
+
      if (!patientStats.has(key)) patientStats.set(key, { unread: 0, lastTime: 0 });
      const stats = patientStats.get(key);
 
@@ -863,54 +1042,30 @@ export default function AdminDashboard() {
      if (msgTime > stats.lastTime) stats.lastTime = msgTime;
   });
 
-  const activeConversationsMap = new Map();
-  
-  allContacts.forEach(contact => {
-    const key = contact.phone || contact.email;
-    if (patientStats.has(key) && patientStats.get(key).lastTime > 0) {
-      activeConversationsMap.set(key, contact);
-    }
-  });
-
-  chatMessages.forEach(msg => {
-    const key = msg.phone || msg.email;
-    if (key && !activeConversationsMap.has(key)) {
-      activeConversationsMap.set(key, {
-        id: `unknown-${key}`,
-        patientName: msg.patientName && msg.patientName !== 'Patient Reply' ? msg.patientName : 'Unknown Sender',
-        phone: msg.phone || '',
-        email: msg.email || ''
-      });
-    }
-  });
-
-  if (selectedChatPatient) {
-     const selectedKey = selectedChatPatient.phone || selectedChatPatient.email;
-     if (selectedKey && !activeConversationsMap.has(selectedKey)) {
-        activeConversationsMap.set(selectedKey, selectedChatPatient);
-     }
-  }
-
-  const activeConversations = Array.from(activeConversationsMap.values()).sort((a, b) => {
-     const keyA = a.phone || a.email;
-     const keyB = b.phone || b.email;
-     const statsA = patientStats.get(keyA) || { unread: 0, lastTime: 0 };
-     const statsB = patientStats.get(keyB) || { unread: 0, lastTime: 0 };
+  const finalSidebarList = Array.from(sidebarPatientsMap.values()).sort((a, b) => {
+     const statsA = patientStats.get(a.id) || patientStats.get(a.phone) || patientStats.get(a.email) || { unread: 0, lastTime: 0 };
+     const statsB = patientStats.get(b.id) || patientStats.get(b.phone) || patientStats.get(b.email) || { unread: 0, lastTime: 0 };
 
      if (statsA.unread > 0 && statsB.unread === 0) return -1;
      if (statsB.unread > 0 && statsA.unread === 0) return 1;
 
-     return statsB.lastTime - statsA.lastTime;
+     if (statsB.lastTime !== statsA.lastTime) {
+        return statsB.lastTime - statsA.lastTime;
+     }
+     return (a.patientName || '').localeCompare(b.patientName || '');
   });
 
   // Calculate specific ledger data for the active patient
   const activePatientLedger = selectedChatPatient 
     ? appointments
-        .filter(a => (a.phone && a.phone === selectedChatPatient.phone) || (a.email && a.email === selectedChatPatient.email))
+        .filter(a => 
+          (a.patientId && a.patientId === selectedChatPatient.id) ||
+          (a.phone && a.phone === selectedChatPatient.phone) || 
+          (a.email && a.email === selectedChatPatient.email)
+        )
         .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime())
     : [];
 
-  // --- MANUAL MESSAGE VALIDATION ---
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(manualMsgData.email);
   const isSmsValid = manualMsgData.phone.length >= 10 && manualMsgData.body.trim().length > 0;
   const isManualValid = manualMsgType === 'SMS' 
@@ -1017,15 +1172,25 @@ export default function AdminDashboard() {
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
               
               <div className="p-4 bg-white border-b border-slate-200 space-y-3">
-                <button 
-                   onClick={() => setIsNewMessageModalOpen(true)}
-                   className="w-full bg-[#3F9185] hover:bg-teal-700 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
-                >
-                   <User size={16} /> New Patient Chat
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                     onClick={() => setIsNewMessageModalOpen(true)}
+                     className="flex-1 bg-[#3F9185] hover:bg-teal-700 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm text-xs"
+                  >
+                     <User size={16} /> New Chat
+                  </button>
+                  <button 
+                     onClick={() => setIsCsvModalOpen(true)}
+                     className="bg-indigo-500 hover:bg-indigo-600 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center transition-all shadow-sm"
+                     title="Import CSV Database"
+                  >
+                     <Upload size={16} />
+                  </button>
+                </div>
+                
                 <button 
                    onClick={() => setIsManualMessageModalOpen(true)}
-                   className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
+                   className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm text-xs"
                 >
                    <Send size={16} /> Send Manual Message
                 </button>
@@ -1034,7 +1199,7 @@ export default function AdminDashboard() {
                   <Search size={14} className="absolute left-3 top-[1.35rem] text-slate-400" />
                   <input 
                     type="text" 
-                    placeholder="Search patients..." 
+                    placeholder="Search master CRM records..." 
                     className="w-full pl-9 pr-4 py-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-xs font-bold text-slate-600"
                     value={patientSearch}
                     onChange={e => { setPatientSearch(e.target.value); setGlobalMessageSearch(''); }}
@@ -1063,7 +1228,7 @@ export default function AdminDashboard() {
                       <button 
                         key={msg.id}
                         onClick={() => {
-                          const patient = activeConversations.find(p => (p.phone && p.phone === msg.phone) || (p.email && p.email === msg.email));
+                          const patient = finalSidebarList.find(p => (p.phone && p.phone === msg.phone) || (p.email && p.email === msg.email));
                           if (patient) {
                             setSelectedChatPatient(patient);
                             setGlobalMessageSearch(''); 
@@ -1083,22 +1248,22 @@ export default function AdminDashboard() {
                     ))
                 ) : (
                   /* Display Active WhatsApp-Style List */
-                  activeConversations
+                  finalSidebarList
                     .filter(p => 
                       (p.patientName || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
                       (p.email || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
                       (p.phone || '').toLowerCase().includes(patientSearch.toLowerCase())
                     )
                     .map((patient: any) => {
-                      const pKey = patient.phone || patient.email;
-                      const pStats = patientStats.get(pKey) || { unread: 0, lastTime: 0 };
+                      const pStats = patientStats.get(patient.id) || patientStats.get(patient.phone) || patientStats.get(patient.email) || { unread: 0, lastTime: 0 };
                       const isUnread = pStats.unread > 0;
+                      const isMasterRecord = patient.id && !patient.id.startsWith('unknown-');
 
                       const recentMsg = chatMessages.slice().reverse().find(m => (m.phone === patient.phone || m.email === patient.email));
 
                       return (
                         <button 
-                          key={pKey} 
+                          key={patient.id || patient.phone || patient.email} 
                           onClick={() => setSelectedChatPatient(patient)}
                           className={`w-full text-left p-4 border-b border-slate-100 hover:bg-white transition-colors flex items-center gap-3 ${selectedChatPatient?.id === patient.id ? 'bg-white border-l-4 border-l-[#3F9185]' : ''} ${isUnread ? 'bg-teal-50/30' : ''}`}
                         >
@@ -1107,8 +1272,12 @@ export default function AdminDashboard() {
                             {isUnread && <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>}
                           </div>
                           <div className="overflow-hidden flex-1">
-                            <p className={`text-sm truncate ${isUnread ? 'font-black text-slate-900' : 'font-bold text-slate-800'}`}>{patient.patientName}</p>
-                            <p className={`text-[10px] truncate ${isUnread ? 'font-bold text-[#3F9185]' : 'text-slate-500'}`}>{recentMsg ? recentMsg.text : patient.phone}</p>
+                            <p className={`text-sm truncate flex items-center gap-2 ${isUnread ? 'font-black text-slate-900' : 'font-bold text-slate-800'}`}>
+                               {patient.patientName}
+                               {isMasterRecord && !patient.imported && <span className="w-2 h-2 bg-indigo-400 rounded-full" title="Master Record"></span>}
+                               {patient.imported && <span className="w-2 h-2 bg-purple-400 rounded-full" title="Imported CSV Record"></span>}
+                            </p>
+                            <p className={`text-[10px] truncate ${isUnread ? 'font-bold text-[#3F9185]' : 'text-slate-500'}`}>{recentMsg ? recentMsg.text : patient.phone || 'No contact info'}</p>
                           </div>
                           {isUnread && (
                             <div className="bg-[#3F9185] text-white text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 shadow-sm animate-in zoom-in">
@@ -1120,8 +1289,8 @@ export default function AdminDashboard() {
                     })
                 )}
 
-                {!globalMessageSearch.trim() && activeConversations.length === 0 && (
-                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No active patients. Click 'New Patient Chat' to start.</p>
+                {!globalMessageSearch.trim() && finalSidebarList.length === 0 && (
+                  <p className="p-6 text-center text-slate-400 font-bold text-sm">No active patients. Import CSV or start a chat.</p>
                 )}
               </div>
             </div>
@@ -1142,6 +1311,9 @@ export default function AdminDashboard() {
                           <div className="flex items-center gap-3 mt-1">
                             <span className="text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 flex items-center gap-1.5"><MessageSquare size={12}/> {selectedChatPatient.phone || 'No phone'}</span>
                             <span className="text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 flex items-center gap-1.5"><Mail size={12}/> {selectedChatPatient.email || 'No email'}</span>
+                            {selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-') && (
+                               <span className="text-[10px] font-black bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md uppercase tracking-wider">CRM Master</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1723,6 +1895,77 @@ export default function AdminDashboard() {
         {view === 'reports' && <ReportsDashboard appointments={appointments} />}
       </div>
 
+      {/* --- CSV IMPORT MODAL --- */}
+      {isCsvModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6">
+               <h2 className="text-xl font-black text-slate-800">Import Master CRM Records</h2>
+               <button onClick={() => { setIsCsvModalOpen(false); setCsvFile(null); setCsvHeaders([]); setCsvData([]); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+            
+            {!csvHeaders.length ? (
+              <div className="space-y-4">
+                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-indigo-200 rounded-xl cursor-pointer hover:bg-indigo-50 transition-colors">
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <Upload className="w-8 h-8 text-indigo-400 mb-2" />
+                    <p className="text-sm font-bold text-slate-600">Click to upload CSV file</p>
+                  </div>
+                  <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
+                </label>
+                <p className="text-xs text-slate-500 text-center font-medium">Your CSV must have headers. Missing details in rows are automatically handled safely.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mb-6">
+                   <p className="text-sm font-bold text-indigo-900 mb-1">Map your columns</p>
+                   <p className="text-xs text-indigo-700">Select which CSV header matches the CRM fields below.</p>
+                </div>
+                
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-xs font-black uppercase text-slate-500 w-1/3">Full Name</label>
+                    <select className="flex-1 p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm font-bold outline-none" value={csvMapping.name} onChange={e => setCsvMapping({...csvMapping, name: e.target.value})}>
+                      <option value="">-- Select Header --</option>
+                      {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-xs font-black uppercase text-slate-500 w-1/3">Phone No.</label>
+                    <select className="flex-1 p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm font-bold outline-none" value={csvMapping.phone} onChange={e => setCsvMapping({...csvMapping, phone: e.target.value})}>
+                      <option value="">-- Select Header --</option>
+                      {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-xs font-black uppercase text-slate-500 w-1/3">Email</label>
+                    <select className="flex-1 p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm font-bold outline-none" value={csvMapping.email} onChange={e => setCsvMapping({...csvMapping, email: e.target.value})}>
+                      <option value="">-- Select Header --</option>
+                      {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-xs font-black uppercase text-slate-500 w-1/3">DOB</label>
+                    <select className="flex-1 p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm font-bold outline-none" value={csvMapping.dob} onChange={e => setCsvMapping({...csvMapping, dob: e.target.value})}>
+                      <option value="">-- Select Header --</option>
+                      {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={processCsvImport} 
+                  disabled={isImporting || (!csvMapping.name && !csvMapping.email && !csvMapping.phone)} 
+                  className="w-full mt-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                >
+                  {isImporting ? 'Importing securely...' : 'Complete Import Process'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* --- MANUAL MESSAGE SEND MODAL --- */}
       {isManualMessageModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
@@ -1763,7 +2006,7 @@ export default function AdminDashboard() {
                         value={manualMsgData.phone}
                         onChange={(e) => {
                           let val = e.target.value.replace(/\D/g, '');
-                          if (val.startsWith('0')) val = val.substring(1); // Auto-strip leading 0
+                          if (val.startsWith('0')) val = val.substring(1); 
                           if (val.length <= 11) setManualMsgData({...manualMsgData, phone: val});
                         }}
                       />
@@ -1857,7 +2100,7 @@ export default function AdminDashboard() {
                />
             </div>
             <div className="flex-1 overflow-y-auto space-y-1 pr-2">
-               {allContacts
+               {finalSidebarList
                   .filter(c => 
                      (c.patientName || '').toLowerCase().includes(newMessageSearch.toLowerCase()) ||
                      (c.email || '').toLowerCase().includes(newMessageSearch.toLowerCase()) ||
@@ -1865,7 +2108,7 @@ export default function AdminDashboard() {
                   )
                   .map(contact => (
                      <button 
-                       key={contact.phone || contact.email}
+                       key={contact.id || contact.phone || contact.email}
                        onClick={() => {
                           setSelectedChatPatient(contact);
                           setIsNewMessageModalOpen(false);
@@ -1878,10 +2121,48 @@ export default function AdminDashboard() {
                      </button>
                   ))
                }
-               {allContacts.length === 0 && (
+               {finalSidebarList.length === 0 && (
                  <p className="text-center text-slate-400 font-bold text-sm mt-4">No patients found in your diary.</p>
                )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- RETROSPECTIVE LINK APPOINTMENT MODAL --- */}
+      {isLinkModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[140] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95">
+             <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-black text-slate-800">Link to CRM Patient</h2>
+                <button onClick={() => { setIsLinkModalOpen(false); setApptToLink(null); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+             </div>
+             <p className="text-sm text-slate-500 mb-4">Link this online booking to an existing master CRM record.</p>
+             <input
+                type="text" placeholder="Search CRM patients..."
+                className="w-full p-4 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-700 mb-4"
+                value={linkSearchQuery} onChange={e => setLinkSearchQuery(e.target.value)}
+             />
+             <div className="max-h-64 overflow-y-auto space-y-2 pr-2">
+                {crmPatients.filter(p => p.patientName?.toLowerCase().includes(linkSearchQuery.toLowerCase()) || p.email?.toLowerCase().includes(linkSearchQuery.toLowerCase()) || p.phone?.includes(linkSearchQuery)).map(p => (
+                   <button
+                     key={p.id}
+                     onClick={async () => {
+                        try {
+                          await setDoc(doc(db, "appointments", apptToLink.id), { patientId: p.id }, { merge: true });
+                          alert("Appointment securely linked to Master Record!");
+                          setIsLinkModalOpen(false);
+                          setApptToLink(null);
+                        } catch (e) { alert("Error linking appointment."); }
+                     }}
+                     className="w-full text-left p-3 hover:bg-indigo-50 border border-transparent hover:border-indigo-200 rounded-xl transition-all"
+                   >
+                      <div className="font-bold text-slate-800">{p.patientName}</div>
+                      <div className="text-xs text-slate-500">{p.phone || 'No phone'} • {p.email || 'No email'}</div>
+                   </button>
+                ))}
+                {crmPatients.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-4">No master CRM records found.</p>}
+             </div>
           </div>
         </div>
       )}
@@ -1910,6 +2191,55 @@ export default function AdminDashboard() {
             <h2 className="text-2xl font-black text-slate-800 mb-6">Direct Admin Booking</h2>
             
             <div className="space-y-4">
+              {/* --- CRM PATIENT SEARCH LINKING --- */}
+              <div className="col-span-full mb-2 p-4 bg-indigo-50 rounded-xl border border-indigo-100 transition-all">
+                 <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Search Master CRM Patient</label>
+                 <input
+                   type="text"
+                   placeholder="Search by name, email or phone..."
+                   className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+                   value={bookingSearchQuery}
+                   onChange={e => setBookingSearchQuery(e.target.value)}
+                 />
+                 {bookingSearchQuery && (
+                   <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+                     {crmPatients.filter(p => p.patientName?.toLowerCase().includes(bookingSearchQuery.toLowerCase()) || p.email?.toLowerCase().includes(bookingSearchQuery.toLowerCase()) || p.phone?.includes(bookingSearchQuery)).map(p => (
+                       <button
+                         key={p.id}
+                         onClick={() => {
+                           setSelectedCrmPatientForBooking(p);
+                           const names = (p.patientName || '').split(' ');
+                           setNewBooking(prev => ({
+                             ...prev,
+                             firstName: names[0] || '',
+                             lastName: names.slice(1).join(' ') || '',
+                             email: p.email || '',
+                             phone: p.phone || '',
+                             dob: p.dob || ''
+                           }));
+                           setBookingSearchQuery('');
+                         }}
+                         className="w-full text-left p-2 text-sm hover:bg-indigo-50 font-medium"
+                       >
+                         {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                       </button>
+                     ))}
+                   </div>
+                 )}
+                 {selectedCrmPatientForBooking && (
+                   <>
+                     <div className="mt-3 flex items-center justify-between bg-white p-3 rounded-lg border border-indigo-200 shadow-sm">
+                        <span className="text-sm font-bold text-indigo-900 flex items-center gap-2"><LinkIcon size={14}/> Linked to: {selectedCrmPatientForBooking.patientName}</span>
+                        <button onClick={() => { setSelectedCrmPatientForBooking(null); }} className="text-xs text-red-500 font-bold hover:underline">Unlink</button>
+                     </div>
+                     <label className="flex items-center gap-2 mt-3 cursor-pointer ml-1">
+                        <input type="checkbox" checked={updateCrmOnBook} onChange={e => setUpdateCrmOnBook(e.target.checked)} className="accent-indigo-500 w-4 h-4" />
+                        <span className="text-xs font-bold text-indigo-700">Update master details on booking</span>
+                     </label>
+                   </>
+                 )}
+              </div>
+
               <div>
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
                 <input 
@@ -1925,8 +2255,8 @@ export default function AdminDashboard() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <input placeholder="First Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, firstName: e.target.value})} />
-                <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
+                <input placeholder="First Name" className="p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.firstName} onChange={e => setNewBooking({...newBooking, firstName: e.target.value})} />
+                <input placeholder="Last Name" className="p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.lastName} onChange={e => setNewBooking({...newBooking, lastName: e.target.value})} />
               </div>
               
               <div className="col-span-full space-y-2">
@@ -1939,11 +2269,11 @@ export default function AdminDashboard() {
                 />
               </div>
               
-              <input placeholder="Phone (Optional if Email provided)" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
+              <input placeholder="Phone (Optional if Email provided)" className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.phone} onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
               
               <div>
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
-                <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
+                <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.dob} onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
               </div>
               
               <select className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={newBooking.service} onChange={e => setNewBooking({...newBooking, service: e.target.value})}>
