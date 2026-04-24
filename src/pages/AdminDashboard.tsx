@@ -113,8 +113,8 @@ export default function AdminDashboard() {
         const nameTitleCase = queryText.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
         q = query(collection(db, "patients"), where("patientName", ">=", nameTitleCase), where("patientName", "<=", nameTitleCase + '\uf8ff'), limit(15));
       }
-      const snap = await getDocs(q);
-      const cloudMatches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const snap = await getDocs(q as any);
+const cloudMatches: any[] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
       // 2. LOCAL SEARCH: Scan active memory for Online Bookings & Text Messages
       const queryLower = queryText.toLowerCase();
