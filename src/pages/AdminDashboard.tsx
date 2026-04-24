@@ -234,6 +234,32 @@ export default function AdminDashboard() {
     reader.readAsText(file);
   };
 
+  // --- DATA SANITISATION HELPERS ---
+  const standardizeDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const parsedDate = new Date(dateStr);
+    if (!isNaN(parsedDate.getTime())) {
+       const yyyy = parsedDate.getFullYear();
+       const mm = String(parsedDate.getMonth() + 1).padStart(2, '0');
+       const dd = String(parsedDate.getDate()).padStart(2, '0');
+       return `${yyyy}-${mm}-${dd}`;
+    }
+    return dateStr;
+  };
+
+  const standardizePhone = (phoneStr: string) => {
+    if (!phoneStr) return '';
+    let clean = phoneStr.replace(/[\s\-\(\)]/g, '');
+    if (clean.startsWith('0')) {
+      clean = `+44${clean.substring(1)}`;
+    } else if (clean.startsWith('44')) {
+      clean = `+44${clean.substring(2)}`;
+    } else if (!clean.startsWith('+44') && clean.length >= 10) {
+      clean = `+44${clean}`;
+    }
+    return clean;
+  };
+
   const processCsvImport = async () => {
     setIsImporting(true);
     try {
@@ -245,16 +271,18 @@ export default function AdminDashboard() {
         const emailIdx = csvHeaders.indexOf(csvMapping.email);
 
         const name = nameIdx !== -1 ? row[nameIdx] : '';
-        const dob = dobIdx !== -1 ? row[dobIdx] : '';
-        const phoneRaw = phoneIdx !== -1 ? row[phoneIdx] : '';
+        const rawDob = dobIdx !== -1 ? row[dobIdx] : '';
+        const rawPhone = phoneIdx !== -1 ? row[phoneIdx] : '';
         const email = emailIdx !== -1 ? row[emailIdx] : '';
 
-        if (name || phoneRaw || email) {
-          const phone = phoneRaw.startsWith('0') ? `+44${phoneRaw.substring(1)}` : phoneRaw;
+        if (name || rawPhone || email) {
+          const formattedPhone = standardizePhone(rawPhone);
+          const formattedDob = standardizeDate(rawDob);
+          
           await addDoc(collection(db, "patients"), {
             patientName: name,
-            dob,
-            phone,
+            dob: formattedDob,
+            phone: formattedPhone,
             email: email.toLowerCase(),
             createdAt: serverTimestamp(),
             imported: true
@@ -1528,7 +1556,7 @@ export default function AdminDashboard() {
                                                  }
 
                                                  const pdfBlob = newPdf.output('blob');
-                                                 const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
+                                                 const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
                                                    type: 'application/pdf',
                                                    lastModified: Date.now(),
                                                  });
