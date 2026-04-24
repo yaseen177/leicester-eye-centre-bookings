@@ -317,7 +317,7 @@ export default function AdminDashboard() {
       }
 
       setSelectedChatPatient({ ...selectedChatPatient, ...editProfileData, id: currentMasterId });
-      alert("Master patient record and all associated appointments have been successfully synchronized!");
+      alert("Master patient record and all associated appointments have been successfully synchronised!");
     } catch (err) {
       alert("Failed to update master patient record.");
     }
@@ -1893,7 +1893,7 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
                <h2 className="text-xl font-black text-slate-800">Import Master CRM Records</h2>
-               <button onClick={() => { setIsCsvModalOpen(false); setCsvHeaders([]); setCsvData([]); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+               <button onClick={() => { setIsCsvModalOpen(false); setCsvFile(null); setCsvHeaders([]); setCsvData([]); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
             </div>
             
             {!csvHeaders.length ? (
@@ -1910,7 +1910,7 @@ export default function AdminDashboard() {
             ) : (
               <div className="space-y-4">
                 <div className="bg-teal-50 p-3 rounded-xl border border-teal-100 flex items-center justify-between">
-                  <span className="text-xs font-bold text-teal-900 flex items-center gap-2"><FileText size={14}/> CSV Loaded</span>
+                  <span className="text-xs font-bold text-teal-900 flex items-center gap-2"><FileText size={14}/> {csvFile ? csvFile.name : 'CSV Loaded'}</span>
                   <span className="text-[10px] font-black text-teal-700 bg-teal-100/50 px-2 py-1 rounded-md">{csvData.length} rows</span>
                 </div>
                 <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mb-6">
