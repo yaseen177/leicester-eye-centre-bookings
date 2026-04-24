@@ -288,7 +288,6 @@ export default function AdminDashboard() {
       const isKnownCrmId = selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-');
       let currentMasterId = selectedChatPatient.id;
 
-      // If they don't have a master CRM record yet, create one
       if (!isKnownCrmId) {
         const newPatientRef = await addDoc(collection(db, "patients"), {
           patientName: editProfileData.patientName,
@@ -299,7 +298,6 @@ export default function AdminDashboard() {
         });
         currentMasterId = newPatientRef.id;
       } else {
-        // Update existing master record
         await setDoc(doc(db, "patients", currentMasterId), {
           patientName: editProfileData.patientName,
           email: editProfileData.email,
@@ -606,7 +604,6 @@ export default function AdminDashboard() {
         createdAt: serverTimestamp()
       });
 
-      // Update CRM Master Record if selected
       if (selectedCrmPatientForBooking && updateCrmOnBook) {
          await setDoc(doc(db, "patients", selectedCrmPatientForBooking.id), {
             patientName: `${newBooking.firstName} ${newBooking.lastName}`,
@@ -978,7 +975,6 @@ export default function AdminDashboard() {
   // --- OMNICHANNEL CRM SORTING ENGINE ---
   const sidebarPatientsMap = new Map();
 
-  // 1. Seed with ALL Master CRM Patients (including fresh CSV imports)
   crmPatients.forEach(p => {
      sidebarPatientsMap.set(p.id, { ...p });
   });
@@ -987,7 +983,6 @@ export default function AdminDashboard() {
      return crmPatients.find(p => (contactInfo.phone && p.phone === contactInfo.phone) || (contactInfo.email && p.email === contactInfo.email));
   };
 
-  // 2. Add any non-CRM patients from Appointments
   const allContactsMap = new Map();
   appointments.forEach(app => {
     const key = app.phone || app.email;
@@ -1005,7 +1000,6 @@ export default function AdminDashboard() {
     }
   });
 
-  // 3. Add any non-CRM patients strictly from Messages
   chatMessages.forEach(msg => {
     const crmP = findCrmPatient(msg);
     if (!crmP) {
@@ -1021,7 +1015,6 @@ export default function AdminDashboard() {
     }
   });
 
-  // Calculate unread statuses using CRM ID if linked
   const patientStats = new Map();
   let totalUnreadMessages = 0;
 
@@ -1055,7 +1048,6 @@ export default function AdminDashboard() {
      return (a.patientName || '').localeCompare(b.patientName || '');
   });
 
-  // Calculate specific ledger data for the active patient
   const activePatientLedger = selectedChatPatient 
     ? appointments
         .filter(a => 
@@ -1901,7 +1893,7 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
                <h2 className="text-xl font-black text-slate-800">Import Master CRM Records</h2>
-               <button onClick={() => { setIsCsvModalOpen(false); setCsvFile(null); setCsvHeaders([]); setCsvData([]); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+               <button onClick={() => { setIsCsvModalOpen(false); setCsvHeaders([]); setCsvData([]); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
             </div>
             
             {!csvHeaders.length ? (
@@ -1917,6 +1909,10 @@ export default function AdminDashboard() {
               </div>
             ) : (
               <div className="space-y-4">
+                <div className="bg-teal-50 p-3 rounded-xl border border-teal-100 flex items-center justify-between">
+                  <span className="text-xs font-bold text-teal-900 flex items-center gap-2"><FileText size={14}/> CSV Loaded</span>
+                  <span className="text-[10px] font-black text-teal-700 bg-teal-100/50 px-2 py-1 rounded-md">{csvData.length} rows</span>
+                </div>
                 <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mb-6">
                    <p className="text-sm font-bold text-indigo-900 mb-1">Map your columns</p>
                    <p className="text-xs text-indigo-700">Select which CSV header matches the CRM fields below.</p>
