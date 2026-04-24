@@ -1556,10 +1556,10 @@ export default function AdminDashboard() {
                                                  }
 
                                                  const pdfBlob = newPdf.output('blob');
-                                                 const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
-                                                   type: 'application/pdf',
-                                                   lastModified: Date.now(),
-                                                 });
+                                                  const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
+                                                    type: 'application/pdf',
+                                                    lastModified: Date.now(),
+                                                  });
 
                                                  if (compressedFile.size > 700 * 1024) {
                                                     alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
