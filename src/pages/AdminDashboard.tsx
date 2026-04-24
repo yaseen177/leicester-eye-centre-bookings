@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch } from 'firebase/firestore';
+// Replace your firestore import line with this:
+import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
 // @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
@@ -91,6 +92,33 @@ export default function AdminDashboard() {
   const [apptToLink, setApptToLink] = useState<any>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState('');
 
+  const [cloudSearchResults, setCloudSearchResults] = useState<any[]>([]);
+
+  const performCloudSearch = async (queryText: string) => {
+    if (!queryText || queryText.length < 3) {
+      setCloudSearchResults([]);
+      return;
+    }
+    try {
+      let q;
+      if (queryText.startsWith('0') || queryText.startsWith('+')) {
+        let phone = queryText.replace(/[\s\-\(\)]/g, '');
+        if (phone.startsWith('0')) phone = `+44${phone.substring(1)}`;
+        q = query(collection(db, "patients"), where("phone", ">=", phone), where("phone", "<=", phone + '\uf8ff'), limit(15));
+      } else if (queryText.includes('@')) {
+        const email = queryText.toLowerCase();
+        q = query(collection(db, "patients"), where("email", ">=", email), where("email", "<=", email + '\uf8ff'), limit(15));
+      } else {
+        const nameTitleCase = queryText.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        q = query(collection(db, "patients"), where("patientName", ">=", nameTitleCase), where("patientName", "<=", nameTitleCase + '\uf8ff'), limit(15));
+      }
+      const snap = await getDocs(q);
+      setCloudSearchResults(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error("Search error", e);
+    }
+  };
+
   // --- SCROLLING ENGINES ---
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [sessionUnreadMessageId, setSessionUnreadMessageId] = useState<string | null>(null);
@@ -122,9 +150,10 @@ export default function AdminDashboard() {
       setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    const unsubPatients = onSnapshot(collection(db, "patients"), (snap) => {
-      setCrmPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    const qPatients = query(collection(db, "patients"), orderBy("createdAt", "desc"), limit(150));
+const unsubPatients = onSnapshot(qPatients, (snap) => {
+  setCrmPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+});
 
     const qLogs = query(collection(db, "logs"), orderBy("timestamp", "desc"));
     const unsubLogs = onSnapshot(qLogs, (snap) => {
@@ -2263,10 +2292,14 @@ export default function AdminDashboard() {
              <input
                 type="text" placeholder="Search CRM patients..."
                 className="w-full p-4 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-700 mb-4"
-                value={linkSearchQuery} onChange={e => setLinkSearchQuery(e.target.value)}
+                value={linkSearchQuery} 
+                onChange={e => {
+                  setLinkSearchQuery(e.target.value);
+                  performCloudSearch(e.target.value);
+                }}
              />
              <div className="max-h-64 overflow-y-auto space-y-2 pr-2">
-                {crmPatients.filter(p => p.patientName?.toLowerCase().includes(linkSearchQuery.toLowerCase()) || p.email?.toLowerCase().includes(linkSearchQuery.toLowerCase()) || p.phone?.includes(linkSearchQuery)).map(p => (
+                {cloudSearchResults.map(p => (
                    <button
                      key={p.id}
                      onClick={async () => {
@@ -2275,6 +2308,7 @@ export default function AdminDashboard() {
                           alert("Appointment securely linked to Master Record!");
                           setIsLinkModalOpen(false);
                           setApptToLink(null);
+                          setLinkSearchQuery('');
                         } catch (e) { alert("Error linking appointment."); }
                      }}
                      className="w-full text-left p-3 hover:bg-indigo-50 border border-transparent hover:border-indigo-200 rounded-xl transition-all"
@@ -2283,7 +2317,8 @@ export default function AdminDashboard() {
                       <div className="text-xs text-slate-500">{p.phone || 'No phone'} • {p.email || 'No email'}</div>
                    </button>
                 ))}
-                {crmPatients.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-4">No master CRM records found.</p>}
+                {linkSearchQuery.length < 3 && <p className="text-xs font-bold text-slate-400 text-center py-4">Type at least 3 characters to search the cloud database...</p>}
+                {linkSearchQuery.length >= 3 && cloudSearchResults.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-4">No master CRM records found.</p>}
              </div>
           </div>
         </div>
@@ -2317,15 +2352,18 @@ export default function AdminDashboard() {
               <div className="col-span-full mb-2 p-4 bg-indigo-50 rounded-xl border border-indigo-100 transition-all">
                  <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Search Master CRM Patient</label>
                  <input
-                   type="text"
-                   placeholder="Search by name, email or phone..."
-                   className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
-                   value={bookingSearchQuery}
-                   onChange={e => setBookingSearchQuery(e.target.value)}
-                 />
-                 {bookingSearchQuery && (
-                   <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
-                     {crmPatients.filter(p => p.patientName?.toLowerCase().includes(bookingSearchQuery.toLowerCase()) || p.email?.toLowerCase().includes(bookingSearchQuery.toLowerCase()) || p.phone?.includes(bookingSearchQuery)).map(p => (
+  type="text"
+  placeholder="Search by name, email or phone..."
+  className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+  value={bookingSearchQuery}
+  onChange={e => {
+    setBookingSearchQuery(e.target.value);
+    performCloudSearch(e.target.value);
+  }}
+/>
+{bookingSearchQuery && (
+  <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+    {cloudSearchResults.map(p => (
                        <button
                          key={p.id}
                          onClick={() => {
