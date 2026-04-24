@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch } from 'firebase/firestore';
 // @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
@@ -77,7 +77,11 @@ export default function AdminDashboard() {
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvData, setCsvData] = useState<string[][]>([]);
   const [csvMapping, setCsvMapping] = useState({ name: '', dob: '', phone: '', email: '' });
+  
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [importAnalysis, setImportAnalysis] = useState<{new: any[], duplicates: any[]} | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState('');
 
   const [bookingSearchQuery, setBookingSearchQuery] = useState('');
   const [selectedCrmPatientForBooking, setSelectedCrmPatientForBooking] = useState<any>(null);
@@ -199,7 +203,7 @@ export default function AdminDashboard() {
     }
   }, [selectedChatPatient?.id, view, crmTab, commsType]);
 
-  // --- CSV PARSING ENGINE ---
+  // --- CSV PARSING & ANALYSIS ENGINE ---
   const parseCSV = (str: string) => {
     const arr: string[][] = [];
     let quote = false;
@@ -234,7 +238,6 @@ export default function AdminDashboard() {
     reader.readAsText(file);
   };
 
-  // --- DATA SANITISATION HELPERS ---
   const standardizeDate = (dateStr: string) => {
     if (!dateStr) return '';
     const parsedDate = new Date(dateStr);
@@ -260,45 +263,116 @@ export default function AdminDashboard() {
     return clean;
   };
 
-  const processCsvImport = async () => {
-    setIsImporting(true);
-    try {
-      let importedCount = 0;
-      for (const row of csvData) {
-        const nameIdx = csvHeaders.indexOf(csvMapping.name);
-        const dobIdx = csvHeaders.indexOf(csvMapping.dob);
-        const phoneIdx = csvHeaders.indexOf(csvMapping.phone);
-        const emailIdx = csvHeaders.indexOf(csvMapping.email);
+  const analyzeCsvData = () => {
+    setIsAnalyzing(true);
+    setTimeout(() => {
+      const newPts: any[] = [];
+      const dupPts: any[] = [];
 
+      const nameIdx = csvHeaders.indexOf(csvMapping.name);
+      const dobIdx = csvHeaders.indexOf(csvMapping.dob);
+      const phoneIdx = csvHeaders.indexOf(csvMapping.phone);
+      const emailIdx = csvHeaders.indexOf(csvMapping.email);
+
+      for (const row of csvData) {
         const name = nameIdx !== -1 ? row[nameIdx] : '';
         const rawDob = dobIdx !== -1 ? row[dobIdx] : '';
         const rawPhone = phoneIdx !== -1 ? row[phoneIdx] : '';
-        const email = emailIdx !== -1 ? row[emailIdx] : '';
+        const rawEmail = emailIdx !== -1 ? row[emailIdx] : '';
 
-        if (name || rawPhone || email) {
-          const formattedPhone = standardizePhone(rawPhone);
-          const formattedDob = standardizeDate(rawDob);
-          
-          await addDoc(collection(db, "patients"), {
-            patientName: name,
-            dob: formattedDob,
-            phone: formattedPhone,
-            email: email.toLowerCase(),
-            createdAt: serverTimestamp(),
-            imported: true
-          });
-          importedCount++;
+        if (!name && !rawPhone && !rawEmail) continue;
+
+        const formattedPhone = standardizePhone(rawPhone);
+        const formattedDob = standardizeDate(rawDob);
+        const formattedEmail = rawEmail.toLowerCase();
+
+        // Check for duplicates in the current CRM
+        const existing = crmPatients.find(p => 
+          (formattedPhone && p.phone === formattedPhone) || 
+          (formattedEmail && p.email === formattedEmail)
+        );
+
+        if (existing) {
+           dupPts.push({
+              existingId: existing.id,
+              name: name || existing.patientName,
+              phone: formattedPhone || existing.phone,
+              email: formattedEmail || existing.email,
+              dob: formattedDob || existing.dob
+           });
+        } else {
+           newPts.push({
+              name,
+              phone: formattedPhone,
+              email: formattedEmail,
+              dob: formattedDob
+           });
         }
       }
-      alert(`Successfully imported ${importedCount} patients into your CRM!`);
+
+      setImportAnalysis({ new: newPts, duplicates: dupPts });
+      setIsAnalyzing(false);
+    }, 500); // Small timeout to allow UI to render spinner for large datasets
+  };
+
+  const processBatchedImport = async () => {
+    if (!importAnalysis) return;
+    setIsImporting(true);
+    setImportProgress('Preparing data...');
+
+    try {
+      const allOperations = [
+        ...importAnalysis.new.map(p => ({ type: 'new', data: p })),
+        ...importAnalysis.duplicates.map(p => ({ type: 'merge', data: p }))
+      ];
+
+      // Firebase limits batches to 500 operations. We use 490 to be safe.
+      const CHUNK_SIZE = 490;
+      
+      for (let i = 0; i < allOperations.length; i += CHUNK_SIZE) {
+        const currentChunk = i + CHUNK_SIZE > allOperations.length ? allOperations.length : i + CHUNK_SIZE;
+        setImportProgress(`Saving ${currentChunk} of ${allOperations.length} records...`);
+        
+        const chunk = allOperations.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+
+        for (const op of chunk) {
+           if (op.type === 'new') {
+              const newRef = doc(collection(db, "patients"));
+              batch.set(newRef, {
+                 patientName: op.data.name,
+                 phone: op.data.phone,
+                 email: op.data.email,
+                 dob: op.data.dob,
+                 createdAt: serverTimestamp(),
+                 imported: true
+              });
+           } else {
+              const existRef = doc(db, "patients", op.data.existingId);
+              // Merge to prevent overwriting existing data with blanks
+              batch.set(existRef, {
+                 ...(op.data.name && { patientName: op.data.name }),
+                 ...(op.data.phone && { phone: op.data.phone }),
+                 ...(op.data.email && { email: op.data.email }),
+                 ...(op.data.dob && { dob: op.data.dob }),
+                 imported: true
+              }, { merge: true });
+           }
+        }
+        await batch.commit();
+      }
+
+      alert(`Success! Imported ${importAnalysis.new.length} new patients and safely merged ${importAnalysis.duplicates.length} duplicate records.`);
       setIsCsvModalOpen(false);
       setCsvFile(null);
       setCsvHeaders([]);
       setCsvData([]);
       setCsvMapping({ name: '', dob: '', phone: '', email: '' });
+      setImportAnalysis(null);
+      setImportProgress('');
     } catch (err) {
       console.error(err);
-      alert("Error importing CSV data. Please check your file formatting.");
+      alert("Error importing CSV data. Please try breaking your file into smaller chunks.");
     }
     setIsImporting(false);
   };
@@ -1556,10 +1630,10 @@ export default function AdminDashboard() {
                                                  }
 
                                                  const pdfBlob = newPdf.output('blob');
-                                                  const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
-                                                    type: 'application/pdf',
-                                                    lastModified: Date.now(),
-                                                  });
+                                                 const compressedFile = new File([pdfBlob], file.name.replace(/\.[^/.]+$/, "") + "_compressed.pdf", {
+                                                   type: 'application/pdf',
+                                                   lastModified: Date.now(),
+                                                 });
 
                                                  if (compressedFile.size > 700 * 1024) {
                                                     alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
@@ -1915,13 +1989,13 @@ export default function AdminDashboard() {
         {view === 'reports' && <ReportsDashboard appointments={appointments} />}
       </div>
 
-      {/* --- CSV IMPORT MODAL --- */}
+      {/* --- CSV IMPORT MODAL WITH BATCHING --- */}
       {isCsvModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
           <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
                <h2 className="text-xl font-black text-slate-800">Import Master CRM Records</h2>
-               <button onClick={() => { setIsCsvModalOpen(false); setCsvFile(null); setCsvHeaders([]); setCsvData([]); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+               <button onClick={() => { setIsCsvModalOpen(false); setCsvFile(null); setCsvHeaders([]); setCsvData([]); setImportAnalysis(null); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
             </div>
             
             {!csvHeaders.length ? (
@@ -1934,6 +2008,30 @@ export default function AdminDashboard() {
                   <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
                 </label>
                 <p className="text-xs text-slate-500 text-center font-medium">Your CSV must have headers. Missing details in rows are automatically handled safely.</p>
+              </div>
+            ) : importAnalysis ? (
+              <div className="space-y-6">
+                <div className="bg-teal-50 p-5 rounded-xl border border-teal-100">
+                   <h3 className="font-black text-teal-900 mb-4">Data Analysis Complete</h3>
+                   <div className="flex justify-between items-center mb-3">
+                      <span className="text-sm font-bold text-teal-800 flex items-center gap-2"><User size={16}/> New Patients to Add</span>
+                      <span className="bg-white text-teal-700 font-black px-3 py-1 rounded-lg shadow-sm border border-teal-100">{importAnalysis.new.length}</span>
+                   </div>
+                   <div className="flex justify-between items-center">
+                      <span className="text-sm font-bold text-teal-800 flex items-center gap-2"><Settings size={16}/> Duplicates to Merge</span>
+                      <span className="bg-white text-teal-700 font-black px-3 py-1 rounded-lg shadow-sm border border-teal-100">{importAnalysis.duplicates.length}</span>
+                   </div>
+                   <p className="text-[10px] text-teal-600 font-medium mt-4 leading-relaxed">Duplicates were matched using exact Phone Number or Email combinations. The system will safely merge new fields into existing records without erasing current data.</p>
+                </div>
+
+                <button 
+                  onClick={processBatchedImport} 
+                  disabled={isImporting} 
+                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black shadow-lg disabled:opacity-50 transition-all flex flex-col items-center justify-center gap-1"
+                >
+                  <span>{isImporting ? 'Running Batch Importer...' : 'Confirm & Execute Import'}</span>
+                  {importProgress && <span className="text-[10px] text-indigo-200 font-medium tracking-wide uppercase">{importProgress}</span>}
+                </button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -1978,11 +2076,11 @@ export default function AdminDashboard() {
                 </div>
 
                 <button 
-                  onClick={processCsvImport} 
-                  disabled={isImporting || (!csvMapping.name && !csvMapping.email && !csvMapping.phone)} 
+                  onClick={analyzeCsvData} 
+                  disabled={isAnalyzing || (!csvMapping.name && !csvMapping.email && !csvMapping.phone)} 
                   className="w-full mt-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-2"
                 >
-                  {isImporting ? 'Importing securely...' : 'Complete Import Process'}
+                  {isAnalyzing ? 'Scanning for Duplicates...' : 'Analyze Data & Find Duplicates'}
                 </button>
               </div>
             )}
