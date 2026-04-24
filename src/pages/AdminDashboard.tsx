@@ -58,6 +58,12 @@ export default function AdminDashboard() {
   const [isCompressing, setIsCompressing] = useState(false);
   const [replyingToMessage, setReplyingToMessage] = useState<any>(null);
 
+  // --- MANUAL MESSAGE STATES ---
+  const [isManualMessageModalOpen, setIsManualMessageModalOpen] = useState(false);
+  const [manualMsgType, setManualMsgType] = useState<'SMS' | 'Email'>('SMS');
+  const [manualMsgData, setManualMsgData] = useState({ phone: '', email: '', name: '', subject: '', body: '' });
+  const [isSendingManual, setIsSendingManual] = useState(false);
+
   // --- SEARCH & MODAL STATES ---
   const [patientSearch, setPatientSearch] = useState('');
   const [globalMessageSearch, setGlobalMessageSearch] = useState('');
@@ -367,6 +373,73 @@ export default function AdminDashboard() {
        }
     } catch(e) { console.error(e); alert("Network error sending email."); }
     setIsSendingComms(false);
+  };
+
+  const handleSendManualMessage = async () => {
+    setIsSendingManual(true);
+    try {
+      if (manualMsgType === 'SMS') {
+        const fullPhone = `+44${manualMsgData.phone}`;
+        const fullSms = `${manualMsgData.body}\n\nThe Eye Centre, Leicester`;
+        const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: fullPhone, body: fullSms, isCustomChat: true })
+        });
+        if (res.ok) {
+          await addDoc(collection(db, "messages"), {
+            phone: fullPhone,
+            patientName: manualMsgData.name || "Unknown Patient",
+            text: fullSms,
+            direction: 'outbound',
+            type: 'sms',
+            timestamp: serverTimestamp()
+          });
+          await writeLog('SMS', manualMsgData.name || 'Manual Recipient', fullPhone, 'Sent', 'Manual Dashboard SMS', new Date().toISOString().split('T')[0], '');
+          alert("SMS Sent Successfully!");
+          setIsManualMessageModalOpen(false);
+          setManualMsgData({ phone: '', email: '', name: '', subject: '', body: '' });
+        } else {
+          alert("Failed to send SMS.");
+        }
+      } else {
+        const payload = {
+          type: "send_email",
+          templateId: 7,
+          to_email: manualMsgData.email,
+          patient_name: manualMsgData.name || "Patient",
+          subject: manualMsgData.subject,
+          params: {
+            patient_name: manualMsgData.name || "Patient",
+            custom_message: manualMsgData.body,
+            subject: manualMsgData.subject
+          }
+        };
+        const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          await writeLog('Email', manualMsgData.name || 'Manual Recipient', manualMsgData.email, 'Sent', `Manual Email: ${manualMsgData.subject}`, new Date().toISOString().split('T')[0], '');
+          await addDoc(collection(db, "messages"), {
+            email: manualMsgData.email,
+            patientName: manualMsgData.name || manualMsgData.email,
+            text: `Subject: ${manualMsgData.subject}\n\n${manualMsgData.body}`,
+            direction: 'outbound',
+            type: 'email',
+            timestamp: serverTimestamp()
+          });
+          alert("Email Sent Successfully!");
+          setIsManualMessageModalOpen(false);
+          setManualMsgData({ phone: '', email: '', name: '', subject: '', body: '' });
+        } else {
+          alert("Failed to send Email.");
+        }
+      }
+    } catch(e) {
+      console.error(e);
+      alert("Network error.");
+    }
+    setIsSendingManual(false);
   };
 
   const handleAdminBooking = async () => {
@@ -837,6 +910,13 @@ export default function AdminDashboard() {
         .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime())
     : [];
 
+  // --- MANUAL MESSAGE VALIDATION ---
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(manualMsgData.email);
+  const isSmsValid = manualMsgData.phone.length >= 10 && manualMsgData.body.trim().length > 0;
+  const isManualValid = manualMsgType === 'SMS' 
+    ? isSmsValid 
+    : (isEmailValid && manualMsgData.body.trim().length > 0 && manualMsgData.subject.trim().length > 0);
+
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -936,16 +1016,22 @@ export default function AdminDashboard() {
             {/* LEFT SIDEBAR: Search and Patient List */}
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
               
-              <div className="p-4 bg-white border-b border-slate-200 space-y-4">
+              <div className="p-4 bg-white border-b border-slate-200 space-y-3">
                 <button 
                    onClick={() => setIsNewMessageModalOpen(true)}
                    className="w-full bg-[#3F9185] hover:bg-teal-700 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
                 >
                    <User size={16} /> New Patient Chat
                 </button>
+                <button 
+                   onClick={() => setIsManualMessageModalOpen(true)}
+                   className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
+                >
+                   <Send size={16} /> Send Manual Message
+                </button>
 
-                <div className="relative">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <div className="relative pt-2">
+                  <Search size={14} className="absolute left-3 top-[1.35rem] text-slate-400" />
                   <input 
                     type="text" 
                     placeholder="Search patients..." 
@@ -955,8 +1041,8 @@ export default function AdminDashboard() {
                   />
                 </div>
 
-                <div className="relative">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <div className="relative pt-1">
+                  <Search size={14} className="absolute left-3 top-[0.85rem] text-slate-400" />
                   <input 
                     type="text" 
                     placeholder="Search inside messages..." 
@@ -1284,7 +1370,7 @@ export default function AdminDashboard() {
                                                  });
 
                                                  if (compressedFile.size > 700 * 1024) {
-                                                   alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
+                                                    alert("Even after heavy compression, this multi-page PDF is too large. Please use a document with fewer pages.");
                                                  } else {
                                                    setEmailData({...emailData, attachment: compressedFile});
                                                  }
@@ -1636,6 +1722,121 @@ export default function AdminDashboard() {
         {/* --- REPORTS VIEW --- */}
         {view === 'reports' && <ReportsDashboard appointments={appointments} />}
       </div>
+
+      {/* --- MANUAL MESSAGE SEND MODAL --- */}
+      {isManualMessageModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6">
+               <h2 className="text-xl font-black text-slate-800">Send Manual Message</h2>
+               <button onClick={() => setIsManualMessageModalOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+            
+            <div className="flex gap-2 mb-6 p-1.5 bg-slate-100 rounded-xl">
+              <button 
+                onClick={() => setManualMsgType('SMS')} 
+                className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${manualMsgType === 'SMS' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+              >
+                Send SMS
+              </button>
+              <button 
+                onClick={() => setManualMsgType('Email')} 
+                className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${manualMsgType === 'Email' ? 'bg-[#3F9185] text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+              >
+                Send Email
+              </button>
+            </div>
+
+            <div className="space-y-4 mb-8">
+              {manualMsgType === 'SMS' ? (
+                <>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">UK Mobile Number</label>
+                    <div className="flex items-center rounded-xl bg-slate-50 border border-slate-200 focus-within:border-[#3F9185] overflow-hidden mt-1 transition-colors">
+                      <div className="px-4 py-4 bg-slate-100 border-r border-slate-200 font-black text-slate-600 select-none">
+                        +44
+                      </div>
+                      <input 
+                        type="tel" 
+                        placeholder="7123456789 (Drop the leading 0)" 
+                        className="w-full p-4 bg-transparent outline-none text-sm font-bold text-slate-800"
+                        value={manualMsgData.phone}
+                        onChange={(e) => {
+                          let val = e.target.value.replace(/\D/g, '');
+                          if (val.startsWith('0')) val = val.substring(1); // Auto-strip leading 0
+                          if (val.length <= 11) setManualMsgData({...manualMsgData, phone: val});
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1 mb-1 block">Message Content</label>
+                    <div className="relative w-full rounded-xl bg-slate-50 border border-slate-200 focus-within:border-[#3F9185] overflow-hidden flex flex-col transition-colors">
+                      <textarea 
+                        className="w-full p-4 pb-0 bg-transparent outline-none resize-none h-32 text-sm font-medium"
+                        value={manualMsgData.body}
+                        onChange={(e) => setManualMsgData({...manualMsgData, body: e.target.value})}
+                        placeholder="Type your message to the patient here..."
+                      />
+                      <div className="px-4 pb-4 pt-2 bg-transparent text-slate-400 text-sm font-medium whitespace-pre-wrap select-none border-t border-slate-100/50 mt-2">
+                        {"\n\nThe Eye Centre, Leicester"}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Recipient Name</label>
+                      <input 
+                        type="text" placeholder="e.g. John Doe" 
+                        className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold"
+                        value={manualMsgData.name} onChange={e => setManualMsgData({...manualMsgData, name: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Email Address</label>
+                      <input 
+                        type="email" placeholder="john@example.com" 
+                        className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold"
+                        value={manualMsgData.email} onChange={e => setManualMsgData({...manualMsgData, email: e.target.value.toLowerCase()})}
+                      />
+                      {manualMsgData.email.length > 0 && !isEmailValid && (
+                        <p className="text-[10px] text-red-500 font-bold mt-1 ml-1">Invalid email format</p>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Subject</label>
+                    <input 
+                      type="text" placeholder="e.g. Important Information" 
+                      className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold"
+                      value={manualMsgData.subject} onChange={e => setManualMsgData({...manualMsgData, subject: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Message Body</label>
+                    <textarea 
+                      placeholder="Dear patient..." 
+                      className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] h-32 text-sm resize-none"
+                      value={manualMsgData.body} onChange={e => setManualMsgData({...manualMsgData, body: e.target.value})}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button 
+              onClick={handleSendManualMessage} 
+              disabled={isSendingManual || !isManualValid} 
+              className={`w-full py-4 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all ${!isManualValid ? 'bg-slate-300 cursor-not-allowed shadow-none' : manualMsgType === 'SMS' ? 'bg-slate-800 hover:bg-slate-900' : 'bg-[#3F9185] hover:opacity-90'}`}
+            >
+               {isSendingManual ? 'Sending...' : `Send Manual ${manualMsgType}`} <Send size={18} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* --- NEW MESSAGE MODAL (ADDRESS BOOK) --- */}
       {isNewMessageModalOpen && (
