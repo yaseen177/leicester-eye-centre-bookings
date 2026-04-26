@@ -96,6 +96,9 @@ export default function AdminDashboard() {
   const [dispensingTab, setDispensingTab] = useState<'walkins' | 'clinic'>('walkins');
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
   const [newQuote, setNewQuote] = useState({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
+  const [quoteSearchQuery, setQuoteSearchQuery] = useState('');
+  const [selectedCrmPatientForQuote, setSelectedCrmPatientForQuote] = useState<any>(null);
+  const [addQuoteToCrm, setAddQuoteToCrm] = useState(false);
 
   // --- SCROLLING ENGINES ---
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -515,14 +518,42 @@ export default function AdminDashboard() {
   // --- DISPENSING & WALK-IN FUNCTIONS ---
   const handleSaveQuote = async () => {
     try {
+      const rawPhone = newQuote.phone.trim();
+      const formattedPhone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
+      let finalPatientId = selectedCrmPatientForQuote ? selectedCrmPatientForQuote.id : null;
+
+      if (addQuoteToCrm) {
+        if (selectedCrmPatientForQuote && !selectedCrmPatientForQuote.id.startsWith('unknown-')) {
+           await setDoc(doc(db, "patients", selectedCrmPatientForQuote.id), {
+              patientName: newQuote.patientName,
+              email: newQuote.email.toLowerCase(),
+              phone: formattedPhone
+           }, { merge: true });
+        } else {
+           const newPatientRef = await addDoc(collection(db, "patients"), {
+              patientName: newQuote.patientName,
+              email: newQuote.email.toLowerCase(),
+              phone: formattedPhone,
+              createdAt: serverTimestamp()
+           });
+           finalPatientId = newPatientRef.id;
+        }
+      }
+
       await addDoc(collection(db, "quotes"), {
         ...newQuote,
+        phone: formattedPhone,
+        email: newQuote.email.toLowerCase(),
+        patientId: finalPatientId,
         timestamp: serverTimestamp(),
         voucherSent: false,
         purchased: false
       });
       setIsQuoteModalOpen(false);
       setNewQuote({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
+      setSelectedCrmPatientForQuote(null);
+      setQuoteSearchQuery('');
+      setAddQuoteToCrm(false);
       alert("Walk-in quote securely logged.");
     } catch(e) {
       alert("Error saving quote.");
@@ -989,7 +1020,6 @@ export default function AdminDashboard() {
           });
         }
         
-        // NEW: Stamp the exact time the patient finished their visit
         if (newStatus === 'Visit Complete' && appData.status !== 'Visit Complete') {
            updatePayload.completedAt = serverTimestamp();
         }
@@ -2305,10 +2335,58 @@ export default function AdminDashboard() {
       {/* --- RECORD WALK-IN QUOTE MODAL --- */}
       {isQuoteModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
                <h2 className="text-xl font-black text-slate-800">Record Walk-In Quote</h2>
-               <button onClick={() => setIsQuoteModalOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+               <button onClick={() => { setIsQuoteModalOpen(false); setSelectedCrmPatientForQuote(null); setQuoteSearchQuery(''); setAddQuoteToCrm(false); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+
+            <div className="mb-6 p-4 bg-indigo-50 rounded-xl border border-indigo-100 transition-all">
+               <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Search Master CRM Patient (Optional)</label>
+               <input
+                 type="text"
+                 placeholder="Search by name, email or phone..."
+                 className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+                 value={quoteSearchQuery}
+                 onChange={e => {
+                   setQuoteSearchQuery(e.target.value);
+                   performCloudSearch(e.target.value);
+                 }}
+               />
+               {quoteSearchQuery && (
+                 <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+                   {cloudSearchResults.map(p => (
+                     <button
+                       key={p.id}
+                       onClick={() => {
+                         setSelectedCrmPatientForQuote(p);
+                         setNewQuote(prev => ({
+                           ...prev,
+                           patientName: p.patientName || '',
+                           email: p.email || '',
+                           phone: p.phone || ''
+                         }));
+                         setQuoteSearchQuery('');
+                       }}
+                       className="w-full text-left p-2 text-sm hover:bg-indigo-50 font-medium"
+                     >
+                       {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                     </button>
+                   ))}
+                 </div>
+               )}
+               {selectedCrmPatientForQuote && (
+                 <div className="mt-3 flex items-center justify-between bg-white p-3 rounded-lg border border-indigo-200 shadow-sm">
+                    <span className="text-sm font-bold text-indigo-900 flex items-center gap-2"><LinkIcon size={14}/> Linked to: {selectedCrmPatientForQuote.patientName}</span>
+                    <button onClick={() => { setSelectedCrmPatientForQuote(null); }} className="text-xs text-red-500 font-bold hover:underline">Unlink</button>
+                 </div>
+               )}
+               <label className="flex items-center gap-2 mt-3 cursor-pointer ml-1">
+                  <input type="checkbox" checked={addQuoteToCrm} onChange={e => setAddQuoteToCrm(e.target.checked)} className="accent-indigo-500 w-4 h-4" />
+                  <span className="text-xs font-bold text-indigo-700">
+                    {selectedCrmPatientForQuote ? 'Update CRM details' : 'Save as new CRM Master Profile'}
+                  </span>
+               </label>
             </div>
 
             <div className="space-y-4 mb-8">
