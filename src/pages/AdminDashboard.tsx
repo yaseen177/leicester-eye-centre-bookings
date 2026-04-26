@@ -594,7 +594,7 @@ export default function AdminDashboard() {
           type: "send_email",
           to_email: email,
           patient_name: name,
-          templateId: 8, // IMPORTANT: Change this number to whatever Template ID Brevo gives your new template!
+          templateId: 10, // Linked to your new Brevo template
           params: {
             patient_name: name.split(' ')[0],
             custom_message: openingText,
@@ -614,7 +614,6 @@ export default function AdminDashboard() {
       alert("Network error while sending voucher.");
     }
   };
-
   const toMins = (t: string) => {
     const [h, m] = t.split(':').map(Number);
     return h * 60 + m;
