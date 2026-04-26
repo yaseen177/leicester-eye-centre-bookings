@@ -973,6 +973,8 @@ export default function AdminDashboard() {
       const appSnap = await getDoc(appRef);
       const appData = appSnap.data();
 
+      const updatePayload: any = { status: newStatus };
+
       if (appData) {
         if (newStatus === 'FTA' && appData.status !== 'FTA') {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/schedule-fta", {
@@ -986,9 +988,14 @@ export default function AdminDashboard() {
             })
           });
         }
+        
+        // NEW: Stamp the exact time the patient finished their visit
+        if (newStatus === 'Visit Complete' && appData.status !== 'Visit Complete') {
+           updatePayload.completedAt = serverTimestamp();
+        }
       }
 
-      await setDoc(appRef, { status: newStatus }, { merge: true });
+      await setDoc(appRef, updatePayload, { merge: true });
       
     } catch (err) {
       alert("Failed to update status");
