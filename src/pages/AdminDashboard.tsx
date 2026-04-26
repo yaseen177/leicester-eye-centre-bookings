@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, AlertTriangle } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, AlertTriangle, ChevronDown } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
 // @ts-ignore
@@ -24,6 +24,8 @@ export default function AdminDashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [editingApp, setEditingApp] = useState<any>(null);
   const [closedDates, setClosedDates] = useState<string[]>([]);
+
+  const [activeGuideSection, setActiveGuideSection] = useState<string | null>('booking');
   
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [newBooking, setNewBooking] = useState({
@@ -1389,163 +1391,205 @@ export default function AdminDashboard() {
 
         {/* --- GUIDE / SOP VIEW --- */}
         {view === 'guide' && (
-           <div className="glass-card rounded-[2.5rem] p-10 space-y-10 animate-in fade-in">
-              <div className="text-center pb-8 border-b-4 border-[#3F9185] max-w-3xl mx-auto">
-                 <h1 className="text-4xl font-black text-slate-800 uppercase tracking-tight">Staff Training & SOP Guide</h1>
-                 <p className="text-slate-500 font-bold mt-2">The Eye Centre Dashboard & Customer Journey Protocol</p>
-                 <p className="text-sm font-medium text-slate-400 mt-4">Every click in this software triggers a real-world communication with the patient. Your accuracy directly drives our practice's revenue and patient retention.</p>
+           <div className="glass-card rounded-[2.5rem] p-10 space-y-6 animate-in fade-in zoom-in-95">
+              <div className="text-center pb-6 border-b-2 border-slate-100 max-w-3xl mx-auto mb-8">
+                 <h1 className="text-4xl font-black text-slate-800 uppercase tracking-tight">Staff SOP Guide</h1>
+                 <p className="text-[#3F9185] font-black tracking-widest uppercase text-sm mt-2">The Customer Journey Protocol</p>
+                 <p className="text-sm font-medium text-slate-500 mt-4 leading-relaxed">Every action you take in this dashboard triggers real-world communications with our patients. Use this guide to navigate the complete end-to-end customer journey.</p>
               </div>
 
-              <div className="space-y-8 max-w-4xl mx-auto">
-                 {/* STAGE 1 */}
-                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 1: Pre-Arrival & Booking</h2>
-                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
-                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
-                       <p className="text-slate-600 text-sm">To ensure the patient receives immediate, professional confirmation of their appointment and that their contact details are perfectly accurate for future marketing and clinical reminders.</p>
-                    </div>
-
-                    <div className="space-y-4">
-                       <div>
-                          <h4 className="font-bold text-slate-800">When a Patient Books Online</h4>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1 marker:text-slate-300">
-                             <li>The system automatically captures their details and places them in the <strong>Diary Grid</strong>.</li>
-                             <li>They instantly receive an SMS and Email confirmation via our cloud servers.</li>
-                             <li><strong>Your Task:</strong> Look at the Diary. If the booking has a teal <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider mx-1">LINKED</span> badge, they are an existing patient. If not, click the <strong>Link Icon (🔗)</strong> next to their name, search the database, and link them to their Master CRM profile.</li>
-                          </ul>
+              <div className="max-w-4xl mx-auto space-y-4 pb-10">
+                 
+                 {/* SECTION 1: BOOKING */}
+                 <div className={`bg-white rounded-[2rem] border transition-all duration-300 shadow-sm overflow-hidden ${activeGuideSection === 'booking' ? 'border-blue-400 ring-4 ring-blue-50' : 'border-slate-100 hover:border-slate-300 hover:shadow-md'}`}>
+                    <button onClick={() => setActiveGuideSection(prev => prev === 'booking' ? null : 'booking')} className="w-full p-6 flex items-center justify-between text-left outline-none">
+                       <div className="flex items-center gap-5">
+                          <div className={`p-4 rounded-2xl transition-colors ${activeGuideSection === 'booking' ? 'bg-blue-500 text-white' : 'bg-blue-50 text-blue-600'}`}>
+                             <CalendarIcon size={24} />
+                          </div>
+                          <div>
+                             <h2 className="text-xl font-black text-slate-800">1. Booking & Onboarding</h2>
+                             <p className="text-sm font-medium text-slate-500 mt-1">Admin bookings, Online self-service, and CRM linking.</p>
+                          </div>
                        </div>
-                       
-                       <div className="pt-4">
-                          <h4 className="font-bold text-slate-800">When Taking a Phone/Walk-in Booking</h4>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1 marker:text-slate-300">
-                             <li>Click <strong>+ New Booking</strong> in the Diary tab.</li>
-                             <li><strong>Always use the CRM Search Bar first</strong> to see if they already exist in our database. This prevents creating duplicate files.</li>
-                             <li>If they are a new patient, fill in their details. <strong>You must ask for their email address.</strong></li>
-                          </ul>
+                       <div className={`p-2 rounded-full transition-transform duration-500 ${activeGuideSection === 'booking' ? 'rotate-180 bg-slate-100 text-slate-800' : 'text-slate-400 bg-slate-50'}`}>
+                          <ChevronDown size={24} />
                        </div>
-
-                       <div className="bg-red-50 border-l-4 border-red-500 p-5 rounded-r-xl mt-4">
-                          <h4 className="text-sm font-black text-red-700 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={16}/> Critical: The "No Email" Fallback</h4>
-                          <p className="text-red-600 text-xs mt-2 font-medium leading-relaxed">If a patient cannot provide an email over the phone, leave it blank but <strong>ensure the mobile number is correct</strong>. The system will automatically text them a secure link to add their email address via their digital receipt. We absolutely need emails to send the £10 Vouchers later.</p>
-                       </div>
-                    </div>
-                 </div>
-
-                 {/* STAGE 2 */}
-                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 2: Arrival & The Clinical Test</h2>
-                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
-                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
-                       <p className="text-slate-600 text-sm">To create a seamless, welcoming environment where the patient is moved smoothly from the waiting area, into the testing room, and handed over for dispensing.</p>
-                    </div>
-
-                    <div className="space-y-4">
-                       <div>
-                          <h4 className="font-bold text-slate-800 mb-2">Managing the Diary Status</h4>
-                          <p className="text-sm text-slate-600 mb-3">The dropdown menu on each patient's appointment block is the "brain" of the practice. It tells the system—and the rest of the team—exactly where the patient is.</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-2 marker:text-slate-300">
-                             <li><strong>Arrived:</strong> Select this the moment they walk through the door. <span className="text-yellow-600 font-bold bg-yellow-50 px-2 py-0.5 rounded ml-1">(Turns Yellow)</span></li>
-                             <li><strong>In Progress:</strong> Select this when the optometrist calls them into the test room. <span className="text-purple-600 font-bold bg-purple-50 px-2 py-0.5 rounded ml-1">(Turns Purple)</span></li>
-                             <li><strong>Visit Complete:</strong> Select this when the test is finished. <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded ml-1">(Turns Green)</span></li>
-                          </ul>
-                       </div>
-
-                       <div className="bg-red-50 border-l-4 border-red-500 p-5 rounded-r-xl mt-4">
-                          <h4 className="text-sm font-black text-red-700 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={16}/> Critical: The "Visit Complete" Timestamp</h4>
-                          <p className="text-red-600 text-xs mt-2 font-medium leading-relaxed">You <strong>MUST</strong> mark the appointment as "Visit Complete" as soon as the test ends. Doing so creates an invisible timestamp in the cloud database. If this is forgotten, the 24-hour automated voucher system will fail to trigger.</p>
-                       </div>
-
-                       <div className="pt-4">
-                          <h4 className="font-bold text-slate-800">Handling FTAs (Failed To Attend)</h4>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1 marker:text-slate-300">
-                             <li>If a patient does not show up, change their status to <strong>FTA</strong>.</li>
-                             <li><strong>What the system does:</strong> The software will wait exactly 30 minutes, then automatically send a polite SMS and Email telling the patient they were missed, including a secure link to reschedule themselves online without tying up our phone lines.</li>
-                          </ul>
+                    </button>
+                    <div className={`transition-all duration-500 ease-in-out ${activeGuideSection === 'booking' ? 'max-h-[1000px] opacity-100 pb-6 px-6' : 'max-h-0 opacity-0 px-6'}`}>
+                       <div className="pt-6 border-t border-slate-100 space-y-6">
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">Online Bookings</h4>
+                             <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1.5 marker:text-blue-300">
+                                <li>Patients booking via the website automatically drop into the Diary Grid.</li>
+                                <li>They instantly receive an automated SMS and Email confirmation.</li>
+                                <li><strong>Action:</strong> Check if the booking has a <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-black mx-1">LINKED</span> badge. If not, click the <strong>Link (🔗)</strong> icon to connect them to their Master CRM profile.</li>
+                             </ul>
+                          </div>
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">Admin / Telephone Bookings</h4>
+                             <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1.5 marker:text-blue-300">
+                                <li>Click <strong>+ New Booking</strong> in the Diary.</li>
+                                <li><strong>Crucial:</strong> Always search the CRM bar first to see if the patient already exists before typing their name.</li>
+                                <li>Always ask for an email address to ensure they receive automated vouchers later.</li>
+                             </ul>
+                          </div>
                        </div>
                     </div>
                  </div>
 
-                 {/* STAGE 3 */}
-                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 3: Dispensing & Revenue Recovery</h2>
-                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
-                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
-                       <p className="text-slate-600 text-sm">To convert every possible sight test and external quote into a successful glasses dispense, using automated goodwill gestures to win back undecided customers.</p>
-                    </div>
-
-                    <div className="space-y-4">
-                       <div>
-                          <h4 className="font-bold text-slate-800">Process A: Internal Sight Tests</h4>
-                          <p className="text-sm text-slate-600 mt-1 mb-2">When a patient finishes their sight test with us:</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1 marker:text-slate-300">
-                            <li>Go to the <strong>Dispensing</strong> tab &rarr; <strong>Sight Test Dispense Tracking</strong>.</li>
-                             <li><strong>Rx Changed?:</strong> Tick this if the optometrist gave them a new prescription.</li>
-                             <li><strong>Dispensed?:</strong> Tick this ONLY if they paid for/ordered glasses today.</li>
-                          </ul>
+                 {/* SECTION 2: RESCHEDULING */}
+                 <div className={`bg-white rounded-[2rem] border transition-all duration-300 shadow-sm overflow-hidden ${activeGuideSection === 'reschedule' ? 'border-orange-400 ring-4 ring-orange-50' : 'border-slate-100 hover:border-slate-300 hover:shadow-md'}`}>
+                    <button onClick={() => setActiveGuideSection(prev => prev === 'reschedule' ? null : 'reschedule')} className="w-full p-6 flex items-center justify-between text-left outline-none">
+                       <div className="flex items-center gap-5">
+                          <div className={`p-4 rounded-2xl transition-colors ${activeGuideSection === 'reschedule' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>
+                             <Clock size={24} />
+                          </div>
+                          <div>
+                             <h2 className="text-xl font-black text-slate-800">2. Rescheduling & Cancellations</h2>
+                             <p className="text-sm font-medium text-slate-500 mt-1">Moving appointments and handling drop-outs smoothly.</p>
+                          </div>
                        </div>
-
-                       <div className="bg-teal-50 border-2 border-dashed border-teal-400 p-6 rounded-xl my-6 text-center">
-                          <h4 className="text-sm font-black text-teal-800 uppercase tracking-wider mb-2">🤖 The 24-Hour Automated Recovery System</h4>
-                          <p className="text-teal-700 text-sm font-medium">If you tick <em>"Rx Changed"</em> but leave <em>"Dispensed"</em> empty, a 24-hour countdown begins in the cloud. Exactly 24 hours later, the system will automatically email them a <strong>£10 Discount Voucher</strong> (valid for 7 days) to encourage them to come back and buy their frames from us.</p>
+                       <div className={`p-2 rounded-full transition-transform duration-500 ${activeGuideSection === 'reschedule' ? 'rotate-180 bg-slate-100 text-slate-800' : 'text-slate-400 bg-slate-50'}`}>
+                          <ChevronDown size={24} />
                        </div>
-
-                       <div className="pt-2">
-                          <h4 className="font-bold text-slate-800">Process B: External Prescriptions & Walk-In Quotes</h4>
-                          <p className="text-sm text-slate-600 mt-1 mb-2">When a customer walks in asking for a quote but isn't ready to buy:</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1 marker:text-slate-300">
-                          <li>Go to the <strong>Dispensing</strong> tab &rarr; <strong>External Prescriptions & Quotes</strong>.</li>
-                             <li>Click <strong>+ Record Walk-In Quote</strong>.</li>
-                             <li>Link them to the CRM (or create a new profile), enter the quoted £ amount, and their email address.</li>
-                             <li>Once saved, click the teal <strong>Send £10 Off</strong> button. They will instantly receive a beautifully branded email with our designer logos (Tom Ford, Ray-Ban, Mulberry, Vanity) and a £10 voucher.</li>
-                          </ul>
-                       </div>
-
-                       <div className="pt-4 border-t border-slate-100 mt-6">
-                          <h4 className="font-bold text-slate-800">When the Customer Returns to Buy</h4>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 marker:text-slate-300">
-                             <li>Go back to the Dispensing tab, locate their Walk-In Quote, and click the green <strong>Mark Dispensed</strong> button. This completes the journey and secures the revenue.</li>
-                          </ul>
+                    </button>
+                    <div className={`transition-all duration-500 ease-in-out ${activeGuideSection === 'reschedule' ? 'max-h-[1000px] opacity-100 pb-6 px-6' : 'max-h-0 opacity-0 px-6'}`}>
+                       <div className="pt-6 border-t border-slate-100 space-y-6">
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">How to Reschedule a Patient</h4>
+                             <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-2 marker:text-orange-300">
+                                <li><strong>Quick Move:</strong> Click and hold any appointment block, then drag and drop it into a new time slot on the grid.</li>
+                                <li><strong>Manual Edit:</strong> Click the Settings (⚙️) icon on the appointment block to manually change their name, phone, email, or add internal admin notes.</li>
+                             </ul>
+                          </div>
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">How to Cancel an Appointment</h4>
+                             <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-2 marker:text-orange-300">
+                                <li>Click the red Trash (🗑️) icon on the appointment block.</li>
+                                <li><strong>What happens next:</strong> Once you confirm the deletion, the system will automatically send a cancellation SMS and Email to the patient on your behalf.</li>
+                             </ul>
+                          </div>
                        </div>
                     </div>
                  </div>
 
-                 {/* STAGE 4 */}
-                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 4: CRM & Patient Communication</h2>
-                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
-                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
-                       <p className="text-slate-600 text-sm">To provide rapid, omnichannel support. Whether the patient texts us or emails us, we reply from one single, unified screen to build incredible customer loyalty.</p>
-                    </div>
-
-                    <div className="space-y-4">
-                       <div>
-                          <h4 className="font-bold text-slate-800">The CRM Hub</h4>
-                          <p className="text-sm text-slate-600 mt-1 mb-2">Navigate to the <strong>CRM & Patients</strong> tab. This is your communication command centre.</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1 marker:text-slate-300">
-                             <li><strong>Left Sidebar:</strong> Functions just like WhatsApp. Patients with unread messages will float to the top with a red notification dot.</li>
-                             <li><strong>The Master Profile:</strong> By selecting a patient, you can view their lifetime appointment history, update their contact details, and see every text/email they have ever sent us.</li>
-                          </ul>
+                 {/* SECTION 3: THE VISIT */}
+                 <div className={`bg-white rounded-[2rem] border transition-all duration-300 shadow-sm overflow-hidden ${activeGuideSection === 'visit' ? 'border-purple-400 ring-4 ring-purple-50' : 'border-slate-100 hover:border-slate-300 hover:shadow-md'}`}>
+                    <button onClick={() => setActiveGuideSection(prev => prev === 'visit' ? null : 'visit')} className="w-full p-6 flex items-center justify-between text-left outline-none">
+                       <div className="flex items-center gap-5">
+                          <div className={`p-4 rounded-2xl transition-colors ${activeGuideSection === 'visit' ? 'bg-purple-500 text-white' : 'bg-purple-50 text-purple-600'}`}>
+                             <Activity size={24} />
+                          </div>
+                          <div>
+                             <h2 className="text-xl font-black text-slate-800">3. The Clinical Visit</h2>
+                             <p className="text-sm font-medium text-slate-500 mt-1">Status management and tracking FTAs.</p>
+                          </div>
                        </div>
-
-                       <div className="pt-4">
-                          <h4 className="font-bold text-slate-800">Replying to Patients</h4>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-2 marker:text-slate-300">
-                             <li><strong>SMS:</strong> Type in the chat box and hit send. The patient will receive a text from "EYE CENTRE". If they reply to that text, it will instantly appear back in this dashboard.</li>
-                             <li><strong>Secure Email:</strong> Click "Compose Email". You can type a subject line, add a message, and attach files (like PDFs or image scans of their prescription). The system automatically compresses large files so they don't bounce.</li>
-                             <li><strong>Threaded Email Replies:</strong> If a patient emails us, click the <em>Reply</em> button directly on their message bubble. This securely locks the thread, ensuring your reply stays grouped with their original email in their inbox.</li>
-                          </ul>
+                       <div className={`p-2 rounded-full transition-transform duration-500 ${activeGuideSection === 'visit' ? 'rotate-180 bg-slate-100 text-slate-800' : 'text-slate-400 bg-slate-50'}`}>
+                          <ChevronDown size={24} />
                        </div>
-
-                       <div className="pt-4">
-                          <h4 className="font-bold text-slate-800">Sending Manual/Ad-Hoc Messages</h4>
-                          <p className="text-sm text-slate-600 mt-1 mb-2">If you need to quickly text or email someone who isn't a registered patient (e.g., a supplier, or a one-off query):</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 marker:text-slate-300">
-                             <li>Click the dark <strong>Send Manual Message</strong> button above the search bar.</li>
-                             <li>Type in their phone number (drop the leading 0) or email address, type your message, and hit send.</li>
-                          </ul>
+                    </button>
+                    <div className={`transition-all duration-500 ease-in-out ${activeGuideSection === 'visit' ? 'max-h-[1000px] opacity-100 pb-6 px-6' : 'max-h-0 opacity-0 px-6'}`}>
+                       <div className="pt-6 border-t border-slate-100 space-y-6">
+                          <p className="text-sm text-slate-600">The dropdown menu on the appointment block is the "brain" of the practice. Keep it updated in real-time.</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                             <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
+                                <h4 className="font-black text-yellow-700 uppercase tracking-wider text-xs">Arrived</h4>
+                                <p className="text-xs text-yellow-800 mt-1">Select this the moment the patient walks through the door.</p>
+                             </div>
+                             <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
+                                <h4 className="font-black text-purple-700 uppercase tracking-wider text-xs">In Progress</h4>
+                                <p className="text-xs text-purple-800 mt-1">Select this when the optometrist calls them in.</p>
+                             </div>
+                             <div className="bg-green-50 p-4 rounded-xl border border-green-100">
+                                <h4 className="font-black text-green-700 uppercase tracking-wider text-xs">Visit Complete</h4>
+                                <p className="text-xs text-green-800 mt-1"><strong>Critical:</strong> Selecting this marks the exact completion time, which is required for the 24-hour voucher system to trigger.</p>
+                             </div>
+                             <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+                                <h4 className="font-black text-red-700 uppercase tracking-wider text-xs">FTA (Failed to Attend)</h4>
+                                <p className="text-xs text-red-800 mt-1">Select this if they no-show. The system will wait 30 minutes, then auto-text them a secure link to reschedule online.</p>
+                             </div>
+                          </div>
                        </div>
                     </div>
                  </div>
+
+                 {/* SECTION 4: DISPENSING */}
+                 <div className={`bg-white rounded-[2rem] border transition-all duration-300 shadow-sm overflow-hidden ${activeGuideSection === 'dispensing' ? 'border-[#3F9185] ring-4 ring-[#3F9185]/10' : 'border-slate-100 hover:border-slate-300 hover:shadow-md'}`}>
+                    <button onClick={() => setActiveGuideSection(prev => prev === 'dispensing' ? null : 'dispensing')} className="w-full p-6 flex items-center justify-between text-left outline-none">
+                       <div className="flex items-center gap-5">
+                          <div className={`p-4 rounded-2xl transition-colors ${activeGuideSection === 'dispensing' ? 'bg-[#3F9185] text-white' : 'bg-teal-50 text-[#3F9185]'}`}>
+                             <Glasses size={24} />
+                          </div>
+                          <div>
+                             <h2 className="text-xl font-black text-slate-800">4. Dispensing & Revenue Recovery</h2>
+                             <p className="text-sm font-medium text-slate-500 mt-1">Winning back lost sales with the automated £10 Voucher.</p>
+                          </div>
+                       </div>
+                       <div className={`p-2 rounded-full transition-transform duration-500 ${activeGuideSection === 'dispensing' ? 'rotate-180 bg-slate-100 text-slate-800' : 'text-slate-400 bg-slate-50'}`}>
+                          <ChevronDown size={24} />
+                       </div>
+                    </button>
+                    <div className={`transition-all duration-500 ease-in-out ${activeGuideSection === 'dispensing' ? 'max-h-[1000px] opacity-100 pb-6 px-6' : 'max-h-0 opacity-0 px-6'}`}>
+                       <div className="pt-6 border-t border-slate-100 space-y-6">
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">Internal Sight Tests</h4>
+                             <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1.5 marker:text-teal-300">
+                                <li>Go to the <strong>Dispensing</strong> tab &rarr; <strong>Sight Test Dispense Tracking</strong>.</li>
+                                <li>Tick <strong>Rx Changed?</strong> if they received a new prescription.</li>
+                                <li>Tick <strong>Dispensed?</strong> ONLY if they paid for glasses today.</li>
+                                <li><strong>The Magic:</strong> If Rx Changed is ticked but Dispensed is blank, the cloud will wait exactly 24 hours and automatically email them the £10 designer discount voucher.</li>
+                             </ul>
+                          </div>
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">Walk-In Quotes (External Rx)</h4>
+                             <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1.5 marker:text-teal-300">
+                                <li>Go to the <strong>Dispensing</strong> tab &rarr; <strong>External Prescriptions</strong>.</li>
+                                <li>Click <strong>+ Record Walk-In Quote</strong>. Fill out their details and quote value.</li>
+                                <li>If they leave without buying, click the teal <strong>Send £10 Off</strong> button to instantly dispatch the voucher.</li>
+                                <li>When they return to buy, click <strong>Mark Dispensed</strong> to secure the revenue data.</li>
+                             </ul>
+                          </div>
+                       </div>
+                    </div>
+                 </div>
+
+                 {/* SECTION 5: CRM */}
+                 <div className={`bg-white rounded-[2rem] border transition-all duration-300 shadow-sm overflow-hidden ${activeGuideSection === 'crm' ? 'border-indigo-400 ring-4 ring-indigo-50' : 'border-slate-100 hover:border-slate-300 hover:shadow-md'}`}>
+                    <button onClick={() => setActiveGuideSection(prev => prev === 'crm' ? null : 'crm')} className="w-full p-6 flex items-center justify-between text-left outline-none">
+                       <div className="flex items-center gap-5">
+                          <div className={`p-4 rounded-2xl transition-colors ${activeGuideSection === 'crm' ? 'bg-indigo-500 text-white' : 'bg-indigo-50 text-indigo-600'}`}>
+                             <UserCog size={24} />
+                          </div>
+                          <div>
+                             <h2 className="text-xl font-black text-slate-800">5. CRM & Omnichannel Hub</h2>
+                             <p className="text-sm font-medium text-slate-500 mt-1">Replying to patients and managing master profiles.</p>
+                          </div>
+                       </div>
+                       <div className={`p-2 rounded-full transition-transform duration-500 ${activeGuideSection === 'crm' ? 'rotate-180 bg-slate-100 text-slate-800' : 'text-slate-400 bg-slate-50'}`}>
+                          <ChevronDown size={24} />
+                       </div>
+                    </button>
+                    <div className={`transition-all duration-500 ease-in-out ${activeGuideSection === 'crm' ? 'max-h-[1000px] opacity-100 pb-6 px-6' : 'max-h-0 opacity-0 px-6'}`}>
+                       <div className="pt-6 border-t border-slate-100 space-y-6">
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">The Omnichannel Inbox</h4>
+                             <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1.5 marker:text-indigo-300">
+                                <li>The left sidebar acts like WhatsApp. Patients with unread replies float to the top with a red notification dot.</li>
+                                <li><strong>SMS:</strong> Type in the chat box to send an instant text message.</li>
+                                <li><strong>Email:</strong> Click the "Compose Email" tab. The system can safely auto-compress PDF attachments and image scans so they never bounce.</li>
+                                <li><strong>Threaded Replies:</strong> Click the 'Reply' button on a patient's email bubble to lock the thread and ensure your response groups perfectly in their inbox.</li>
+                             </ul>
+                          </div>
+                          <div>
+                             <h4 className="font-bold text-slate-800 text-base">Manual Messaging</h4>
+                             <p className="text-sm text-slate-600 mt-1">Need to text a supplier or someone not in the diary? Click the dark <strong>Send Manual Message</strong> button above the search bar to fire off a quick one-time SMS or Email.</p>
+                          </div>
+                       </div>
+                    </div>
+                 </div>
+
               </div>
            </div>
         )}
