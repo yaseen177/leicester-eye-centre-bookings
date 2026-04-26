@@ -1350,7 +1350,112 @@ export default function AdminDashboard() {
     .filter(a => a.status === 'Visit Complete' && !a.appointmentType?.includes('Contact'))
     .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime());
 
-  return (
+    const handlePrintSOP = () => {
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        alert("Please allow pop-ups to generate the PDF guide.");
+        return;
+      }
+  
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>The Eye Centre - SOP & Customer Journey</title>
+            <style>
+                @page { size: A4; margin: 20mm; }
+                body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; line-height: 1.6; }
+                .header { text-align: center; border-bottom: 4px solid #3F9185; padding-bottom: 20px; margin-bottom: 30px; }
+                h1 { color: #0f172a; margin: 0 0 10px 0; font-size: 28px; text-transform: uppercase; }
+                h2 { color: #3F9185; font-size: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 30px;}
+                h3 { color: #334155; font-size: 16px; margin-top: 20px; }
+                p, li { font-size: 14px; color: #475569; }
+                .ui-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 12px; font-family: sans-serif; border: 1px solid rgba(0,0,0,0.1); margin: 0 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);}
+                .btn-teal { background-color: #3F9185; color: white; }
+                .btn-green { background-color: #22c55e; color: white; }
+                .btn-indigo { background-color: #6366f1; color: white; }
+                .btn-red { background-color: #ef4444; color: white; }
+                .btn-dark { background-color: #1e293b; color: white; }
+                .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+                .badge-linked { background-color: #e0e7ff; color: #3730a3; }
+                .dropdown { border: 1px solid #cbd5e1; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #f8fafc; color: #475569;}
+                .critical { background-color: #fff1f2; border-left: 4px solid #e11d48; padding: 15px; margin: 15px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>Standard Operating Procedure</h1>
+                <p style="font-size: 16px; color: #3F9185; margin: 0; font-weight: bold;">The Eye Centre Dashboard & Customer Journey</p>
+            </div>
+  
+            <h2>1. Booking & Onboarding</h2>
+            <h3>Online Bookings</h3>
+            <ul>
+                <li>Patients booking via the website automatically drop into the Diary Grid.</li>
+                <li><strong>Action:</strong> Check if the booking has a <span class="badge badge-linked">LINKED</span> badge. If not, click the <span class="ui-btn" style="background: white; color: #94a3b8;">🔗</span> icon to connect them to their Master CRM profile.</li>
+            </ul>
+            <h3>Admin / Telephone Bookings</h3>
+            <ul>
+                <li>Click <span class="ui-btn btn-teal">+ New Booking</span> in the Diary.</li>
+                <li><strong>Crucial:</strong> Always search the CRM bar first to see if the patient already exists.</li>
+                <li>Always ask for an email address to ensure they receive automated vouchers later.</li>
+            </ul>
+  
+            <h2>2. Rescheduling & Cancellations</h2>
+            <ul>
+                <li><strong>Manual Edit:</strong> Click the <span class="ui-btn" style="background: white; color: #94a3b8;">⚙️</span> icon on the appointment block to change details.</li>
+                <li><strong>Cancel:</strong> Click the <span class="ui-btn" style="background: white; color: #ef4444;">🗑️</span> icon on the block. The system will automatically send a cancellation SMS and Email.</li>
+            </ul>
+  
+            <h2>3. The Clinical Visit</h2>
+            <p>Update the <span class="dropdown">Status ▾</span> dropdown in real-time:</p>
+            <ul>
+                <li><strong>Arrived:</strong> Select this the moment the patient arrives.</li>
+                <li><strong>In Progress:</strong> Select this when they enter the test room.</li>
+                <li><strong>Visit Complete:</strong> Select this when the test finishes. This stamps the exact time for the 24-hour voucher.</li>
+                <li><strong>FTA:</strong> Select this if they no-show. The system waits 30 mins, then auto-texts a rescheduling link.</li>
+            </ul>
+  
+            <h2>4. Dispensing & Revenue Recovery</h2>
+            <h3>Internal Sight Tests</h3>
+            <ul>
+                <li>Go to the Dispensing tab &rarr; <strong>Sight Test Dispense Tracking</strong>.</li>
+                <li>Tick <strong>Rx Changed?</strong> if they received a new prescription.</li>
+                <li>Tick <strong>Dispensed?</strong> ONLY if they paid for glasses today.</li>
+                <li><em>Result:</em> If Rx Changed is ticked but Dispensed is blank, they will automatically receive the £10 discount email in exactly 24 hours.</li>
+                <li>Alternatively, click <span class="ui-btn btn-teal">🏷️ Send £10 Off</span> to dispatch it manually immediately.</li>
+            </ul>
+            <h3>Walk-In Quotes (External Rx)</h3>
+            <ul>
+                <li>Go to Dispensing &rarr; <strong>External Prescriptions</strong> and click <span class="ui-btn btn-teal">+ Record Walk-In Quote</span>.</li>
+                <li>If they leave without buying, click <span class="ui-btn btn-teal">🏷️ Send £10 Off</span> to instantly dispatch the voucher.</li>
+                <li>When they return to buy, click <span class="ui-btn btn-green">Mark Dispensed</span> to secure the revenue data.</li>
+            </ul>
+  
+            <h2>5. CRM & Omnichannel Hub</h2>
+            <ul>
+                <li><strong>SMS:</strong> Type in the chat box to send an instant text message.</li>
+                <li><strong>Secure Email:</strong> Click <span class="ui-btn btn-teal">Compose Email</span> to send messages or attach prescriptions.</li>
+                <li><strong>Threaded Replies:</strong> Click <span class="ui-btn btn-teal" style="background: #0d9488;">↩️ Reply</span> on a patient's email bubble to lock the thread and keep emails grouped.</li>
+                <li><strong>Manual Messaging:</strong> Click <span class="ui-btn btn-dark">✈️ Send Manual Message</span> to quickly text or email someone not in the diary.</li>
+                <li><strong>Import Data:</strong> Click <span class="ui-btn btn-indigo">⬆️</span> to upload bulk CSV databases.</li>
+            </ul>
+        </body>
+        </html>
+      `;
+  
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+      printWindow.focus();
+      
+      // Slight delay to ensure CSS renders before triggering print dialogue
+      setTimeout(() => {
+        printWindow.print();
+      }, 250);
+    };
+
+    return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
       <div className="max-w-6xl mx-auto space-y-6">
         
@@ -1392,10 +1497,21 @@ export default function AdminDashboard() {
         {/* --- GUIDE / SOP VIEW --- */}
         {view === 'guide' && (
            <div className="glass-card rounded-[2.5rem] p-10 space-y-6 animate-in fade-in zoom-in-95">
-              <div className="text-center pb-6 border-b-2 border-slate-100 max-w-3xl mx-auto mb-8">
-                 <h1 className="text-4xl font-black text-slate-800 uppercase tracking-tight">Staff SOP Guide</h1>
-                 <p className="text-[#3F9185] font-black tracking-widest uppercase text-sm mt-2">The Customer Journey Protocol</p>
-                 <p className="text-sm font-medium text-slate-500 mt-4 leading-relaxed">Every action you take in this dashboard triggers real-world communications with our patients. Use this guide to navigate the complete end-to-end customer journey.</p>
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center pb-6 border-b-2 border-slate-100 max-w-4xl mx-auto mb-8 gap-6">
+                 <div>
+                    <h1 className="text-4xl font-black text-slate-800 uppercase tracking-tight">Staff SOP Guide</h1>
+                    <p className="text-[#3F9185] font-black tracking-widest uppercase text-sm mt-2">The Customer Journey Protocol</p>
+                    <p className="text-sm font-medium text-slate-500 mt-2 max-w-xl leading-relaxed">Every action you take in this dashboard triggers real-world communications with our patients. Use this guide to navigate the complete end-to-end customer journey.</p>
+                 </div>
+                 
+                 {/* NEW GENERATE PDF BUTTON */}
+                 <button 
+                   onClick={handlePrintSOP}
+                   className="shrink-0 bg-slate-900 hover:bg-black text-white px-6 py-4 rounded-2xl font-black shadow-xl shadow-slate-900/20 transition-all hover:-translate-y-1 flex items-center gap-3"
+                 >
+                   <Download size={20} />
+                   <span>Download as PDF</span>
+                 </button>
               </div>
 
               <div className="max-w-4xl mx-auto space-y-4 pb-10">
