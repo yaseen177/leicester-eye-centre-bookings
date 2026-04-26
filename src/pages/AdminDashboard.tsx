@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag } from 'lucide-react';
 import { db } from '../lib/firebase';
-// Replace your firestore import line with this:
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
 // @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
@@ -19,7 +18,7 @@ interface ClinicConfig {
 }
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing'>('diary');
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -92,6 +91,16 @@ export default function AdminDashboard() {
   const [apptToLink, setApptToLink] = useState<any>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState('');
 
+  // --- DISPENSING & WALK-IN STATES ---
+  const [walkInQuotes, setWalkInQuotes] = useState<any[]>([]);
+  const [dispensingTab, setDispensingTab] = useState<'walkins' | 'clinic'>('walkins');
+  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
+  const [newQuote, setNewQuote] = useState({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
+
+  // --- SCROLLING ENGINES ---
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [sessionUnreadMessageId, setSessionUnreadMessageId] = useState<string | null>(null);
+
   const [cloudSearchResults, setCloudSearchResults] = useState<any[]>([]);
 
   const performCloudSearch = async (queryText: string) => {
@@ -114,7 +123,7 @@ export default function AdminDashboard() {
         q = query(collection(db, "patients"), where("patientName", ">=", nameTitleCase), where("patientName", "<=", nameTitleCase + '\uf8ff'), limit(15));
       }
       const snap = await getDocs(q as any);
-const cloudMatches: any[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as Record<string, any>) }));
+      const cloudMatches: any[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as Record<string, any>) }));
 
       // 2. LOCAL SEARCH: Scan active memory for Online Bookings & Text Messages
       const queryLower = queryText.toLowerCase();
@@ -159,10 +168,6 @@ const cloudMatches: any[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() 
     }
   };
 
-  // --- SCROLLING ENGINES ---
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [sessionUnreadMessageId, setSessionUnreadMessageId] = useState<string | null>(null);
-
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
@@ -191,11 +196,11 @@ const cloudMatches: any[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() 
     });
 
     const qPatients = query(collection(db, "patients"), orderBy("createdAt", "desc"), limit(150));
-const unsubPatients = onSnapshot(qPatients, (snap) => {
-  setCrmPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-});
+    const unsubPatients = onSnapshot(qPatients, (snap) => {
+      setCrmPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
 
-    const qLogs = query(collection(db, "logs"), orderBy("timestamp", "desc"));
+    const qLogs = query(collection(db, "logs"), orderBy("timestamp", "desc"), limit(200));
     const unsubLogs = onSnapshot(qLogs, (snap) => {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -203,6 +208,11 @@ const unsubPatients = onSnapshot(qPatients, (snap) => {
     const qMessages = query(collection(db, "messages"), orderBy("timestamp", "asc"));
     const unsubMessages = onSnapshot(qMessages, (snap) => {
       setChatMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    const qQuotes = query(collection(db, "quotes"), orderBy("timestamp", "desc"), limit(500));
+    const unsubQuotes = onSnapshot(qQuotes, (snap) => {
+      setWalkInQuotes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
     const loadSettings = async () => {
@@ -227,7 +237,7 @@ const unsubPatients = onSnapshot(qPatients, (snap) => {
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubMessages(); };
+    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubMessages(); unsubQuotes(); };
   }, []);
 
   useEffect(() => {
@@ -500,6 +510,71 @@ const unsubPatients = onSnapshot(qPatients, (snap) => {
         type, patientName, contactInfo, status, action, apptDate, apptTime, errorMsg, timestamp: serverTimestamp()
       });
     } catch (e) { console.error("Failed to write log", e); }
+  };
+
+  // --- DISPENSING & WALK-IN FUNCTIONS ---
+  const handleSaveQuote = async () => {
+    try {
+      await addDoc(collection(db, "quotes"), {
+        ...newQuote,
+        timestamp: serverTimestamp(),
+        voucherSent: false,
+        purchased: false
+      });
+      setIsQuoteModalOpen(false);
+      setNewQuote({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
+      alert("Walk-in quote securely logged.");
+    } catch(e) {
+      alert("Error saving quote.");
+    }
+  };
+
+  const markQuotePurchased = async (quoteId: string) => {
+    try {
+      await setDoc(doc(db, "quotes", quoteId), { purchased: true }, { merge: true });
+    } catch(e) { alert("Error updating status."); }
+  };
+
+  const toggleClinicDispenseField = async (appId: string, field: 'prescriptionChanged' | 'dispensed', currentValue: boolean) => {
+    try {
+      await setDoc(doc(db, "appointments", appId), { [field]: !currentValue }, { merge: true });
+    } catch(e) { alert("Error updating clinical record."); }
+  };
+
+  const handleSendDispenseVoucher = async (docId: string, collectionName: string, email: string, name: string, isClinic: boolean) => {
+    if (!email) {
+      alert("Cannot send voucher. This patient has no email address on file.");
+      return;
+    }
+    try {
+      const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "send_email",
+          templateId: 7, 
+          to_email: email,
+          patient_name: name,
+          subject: "Your £10 Gift from The Eye Centre 🎁",
+          params: {
+            patient_name: name,
+            custom_message: isClinic 
+              ? "Thank you for attending your recent sight test with us! We noticed your prescription has changed but you haven't chosen your new glasses yet. As a gesture of goodwill, please enjoy £10 off any complete pair of glasses. Simply show this email in-store within the next 7 days."
+              : "Thank you for popping in recently for a quote on your new glasses! We would love to look after your vision. As a gesture of goodwill, please enjoy £10 off your complete pair of glasses with us. Simply show this email in-store within the next 7 days.",
+            subject: "Your £10 Gift from The Eye Centre 🎁"
+          }
+        })
+      });
+      
+      if (res.ok) {
+        await setDoc(doc(db, collectionName, docId), { voucherSent: true, voucherSentDate: new Date().toISOString() }, { merge: true });
+        await writeLog('Email', name, email, 'Sent', '£10 Dispensing Voucher', new Date().toISOString().split('T')[0], '');
+        alert("£10 Voucher sent successfully!");
+      } else {
+        alert("Failed to send voucher email.");
+      }
+    } catch(e) {
+      alert("Network error while sending voucher.");
+    }
   };
 
   const toMins = (t: string) => {
@@ -1235,15 +1310,23 @@ const unsubPatients = onSnapshot(qPatients, (snap) => {
     ? isSmsValid 
     : (isEmailValid && manualMsgData.body.trim().length > 0 && manualMsgData.subject.trim().length > 0);
 
+  // Clinic dispenses logic
+  const clinicDispenses = appointments
+    .filter(a => a.status === 'Visit Complete' && !a.appointmentType?.includes('Contact'))
+    .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime());
+
   return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6">
         
         {/* Navigation Bar */}
         <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
           <div className="flex gap-2">
             <button onClick={() => setView('diary')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <LayoutDashboard size={18} /> Diary
+            </button>
+            <button onClick={() => setView('dispensing')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'dispensing' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <Glasses size={18} /> Dispensing
             </button>
             <button onClick={() => setView('messages')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'messages' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <User size={18} /> CRM & Patients
@@ -1325,6 +1408,160 @@ const unsubPatients = onSnapshot(qPatients, (snap) => {
             <div className="max-h-[70vh] overflow-y-auto pr-2 scroll-smooth">
               {renderGrid()}
             </div>
+          </div>
+        )}
+
+        {/* --- DISPENSING MODULE VIEW --- */}
+        {view === 'dispensing' && (
+          <div className="glass-card rounded-[2.5rem] p-10 space-y-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                <Glasses className="text-[#3F9185]" /> Dispensing & Walk-Ins
+              </h2>
+              {dispensingTab === 'walkins' && (
+                <button onClick={() => setIsQuoteModalOpen(true)} className="bg-[#3F9185] text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition-all shadow-md">
+                  + Record Walk-In Quote
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-4 border-b border-slate-200 pb-4 mb-6">
+              <button 
+                onClick={() => setDispensingTab('walkins')} 
+                className={`pb-2 px-2 font-black text-sm transition-all border-b-2 ${dispensingTab === 'walkins' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              >
+                External Prescriptions & Quotes
+              </button>
+              <button 
+                onClick={() => setDispensingTab('clinic')} 
+                className={`pb-2 px-2 font-black text-sm transition-all border-b-2 ${dispensingTab === 'clinic' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              >
+                Sight Test Dispenes Tracking
+              </button>
+            </div>
+
+            {dispensingTab === 'walkins' && (
+              <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+                <div className="max-h-[65vh] overflow-y-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                      <tr>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Date Logged</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Walk-In Patient</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Contact Details</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Quote Value</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Status</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {walkInQuotes.map((quote) => (
+                        <tr key={quote.id} className={`transition-colors ${quote.purchased ? 'bg-green-50/30' : 'hover:bg-slate-50/50'}`}>
+                          <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">
+                            {quote.timestamp ? new Date(quote.timestamp.seconds * 1000).toLocaleDateString('en-GB') : 'Just now'}
+                          </td>
+                          <td className="p-4">
+                            <p className="font-bold text-slate-800 text-sm">{quote.patientName}</p>
+                            {quote.notes && <p className="text-[10px] text-slate-400 font-bold mt-1 line-clamp-1">{quote.notes}</p>}
+                          </td>
+                          <td className="p-4">
+                            <p className="text-xs font-medium text-slate-600">{quote.email || 'No email'}</p>
+                            <p className="text-xs font-medium text-slate-600 mt-0.5">{quote.phone || 'No phone'}</p>
+                          </td>
+                          <td className="p-4 font-black text-sm text-slate-800">£{quote.quoteValue || '0.00'}</td>
+                          <td className="p-4">
+                            {quote.purchased ? (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-green-100 text-green-700">Dispensed</span>
+                            ) : quote.voucherSent ? (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700">Voucher Sent</span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-600">Pending</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-right space-x-2">
+                            {!quote.purchased && (
+                              <button onClick={() => markQuotePurchased(quote.id)} className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 transition-colors shadow-sm">
+                                Mark Dispensed
+                              </button>
+                            )}
+                            {!quote.purchased && !quote.voucherSent && quote.email && (
+                              <button onClick={() => handleSendDispenseVoucher(quote.id, "quotes", quote.email, quote.patientName, false)} className="px-3 py-1.5 bg-[#3F9185] text-white rounded-lg text-xs font-bold hover:bg-teal-600 transition-colors shadow-sm flex items-center gap-1.5 ml-auto mt-2">
+                                <Tag size={12}/> Send £10 Off
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {walkInQuotes.length === 0 && <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold italic">No walk-in quotes recorded yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {dispensingTab === 'clinic' && (
+              <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+                <div className="p-4 bg-indigo-50 border-b border-indigo-100">
+                  <p className="text-sm font-bold text-indigo-900">Clinical Dispense Tracking</p>
+                  <p className="text-xs text-indigo-700 mt-1">This list automatically filters to show completed sight tests. Tick if their prescription changed and if they dispensed. If they didn't dispense, send them a £10 voucher to encourage them to return.</p>
+                </div>
+                <div className="max-h-[60vh] overflow-y-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                      <tr>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Appt Date</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Patient</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-center">Rx Changed?</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-center">Dispensed?</th>
+                        <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {clinicDispenses.map((app) => {
+                        const canSendVoucher = !!app.prescriptionChanged && !app.dispensed && !app.voucherSent && app.email;
+                        return (
+                          <tr key={app.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">{new Date(app.appointmentDate).toLocaleDateString('en-GB')}</td>
+                            <td className="p-4">
+                              <p className="font-bold text-slate-800 text-sm">{app.patientName}</p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">{app.appointmentType}</p>
+                            </td>
+                            <td className="p-4 text-center">
+                              <input 
+                                type="checkbox" 
+                                className="w-5 h-5 accent-[#3F9185] cursor-pointer" 
+                                checked={!!app.prescriptionChanged} 
+                                onChange={() => toggleClinicDispenseField(app.id, 'prescriptionChanged', !!app.prescriptionChanged)} 
+                              />
+                            </td>
+                            <td className="p-4 text-center">
+                              <input 
+                                type="checkbox" 
+                                className="w-5 h-5 accent-green-500 cursor-pointer" 
+                                checked={!!app.dispensed} 
+                                onChange={() => toggleClinicDispenseField(app.id, 'dispensed', !!app.dispensed)} 
+                              />
+                            </td>
+                            <td className="p-4 text-right">
+                              {app.voucherSent ? (
+                                <span className="px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700">Voucher Sent</span>
+                              ) : canSendVoucher ? (
+                                <button onClick={() => handleSendDispenseVoucher(app.id, "appointments", app.email, app.patientName, true)} className="px-3 py-1.5 bg-[#3F9185] text-white rounded-lg text-xs font-bold hover:bg-teal-600 transition-colors shadow-sm inline-flex items-center gap-1.5">
+                                  <Tag size={12}/> Send £10 Off
+                                </button>
+                              ) : (
+                                <span className="text-[10px] font-bold text-slate-300 uppercase">N/A</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {clinicDispenses.length === 0 && <tr><td colSpan={5} className="p-10 text-center text-slate-400 font-bold italic">No completed sight tests found.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2058,6 +2295,74 @@ const unsubPatients = onSnapshot(qPatients, (snap) => {
         {view === 'reports' && <ReportsDashboard appointments={appointments} />}
       </div>
 
+      {/* --- RECORD WALK-IN QUOTE MODAL --- */}
+      {isQuoteModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6">
+               <h2 className="text-xl font-black text-slate-800">Record Walk-In Quote</h2>
+               <button onClick={() => setIsQuoteModalOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Patient Name</label>
+                <input 
+                  type="text" placeholder="e.g. John Doe" 
+                  className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold text-slate-800"
+                  value={newQuote.patientName} onChange={e => setNewQuote({...newQuote, patientName: e.target.value})}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Phone Number</label>
+                  <input 
+                    type="tel" placeholder="07123456789" 
+                    className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold text-slate-800"
+                    value={newQuote.phone} onChange={e => setNewQuote({...newQuote, phone: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Email Address</label>
+                  <input 
+                    type="email" placeholder="Required for voucher" 
+                    className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold text-slate-800"
+                    value={newQuote.email} onChange={e => setNewQuote({...newQuote, email: e.target.value.toLowerCase()})}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Quoted Amount (£)</label>
+                <input 
+                  type="number" placeholder="e.g. 150.00" 
+                  className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-black text-slate-800"
+                  value={newQuote.quoteValue} onChange={e => setNewQuote({...newQuote, quoteValue: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Notes (Lens type, frames discussed)</label>
+                <textarea 
+                  placeholder="e.g. Varifocals, Ray-Ban frames, wanted to check with partner." 
+                  className="w-full p-4 mt-1 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] h-24 text-sm resize-none text-slate-800"
+                  value={newQuote.notes} onChange={e => setNewQuote({...newQuote, notes: e.target.value})}
+                />
+              </div>
+            </div>
+
+            <button 
+              onClick={handleSaveQuote} 
+              disabled={!newQuote.patientName || !newQuote.quoteValue} 
+              className="w-full py-4 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all bg-[#3F9185] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+               Save Quote Record
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* --- CSV IMPORT MODAL WITH BATCHING --- */}
       {isCsvModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
@@ -2392,18 +2697,18 @@ const unsubPatients = onSnapshot(qPatients, (snap) => {
               <div className="col-span-full mb-2 p-4 bg-indigo-50 rounded-xl border border-indigo-100 transition-all">
                  <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Search Master CRM Patient</label>
                  <input
-  type="text"
-  placeholder="Search by name, email or phone..."
-  className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
-  value={bookingSearchQuery}
-  onChange={e => {
-    setBookingSearchQuery(e.target.value);
-    performCloudSearch(e.target.value);
-  }}
-/>
-{bookingSearchQuery && (
-  <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
-    {cloudSearchResults.map(p => (
+                   type="text"
+                   placeholder="Search by name, email or phone..."
+                   className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+                   value={bookingSearchQuery}
+                   onChange={e => {
+                     setBookingSearchQuery(e.target.value);
+                     performCloudSearch(e.target.value);
+                   }}
+                 />
+                 {bookingSearchQuery && (
+                   <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+                     {cloudSearchResults.map(p => (
                        <button
                          key={p.id}
                          onClick={() => {
