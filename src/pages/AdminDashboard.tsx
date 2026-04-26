@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, AlertTriangle } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
 // @ts-ignore
@@ -18,7 +18,7 @@ interface ClinicConfig {
 }
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing' | 'guide'>('diary');
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -112,7 +112,6 @@ export default function AdminDashboard() {
       return;
     }
     try {
-      // 1. CLOUD SEARCH: Ask Firebase for Master CRM Records
       let q;
       if (queryText.startsWith('0') || queryText.startsWith('+')) {
         let phone = queryText.replace(/[\s\-\(\)]/g, '');
@@ -128,7 +127,6 @@ export default function AdminDashboard() {
       const snap = await getDocs(q as any);
       const cloudMatches: any[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as Record<string, any>) }));
 
-      // 2. LOCAL SEARCH: Scan active memory for Online Bookings & Text Messages
       const queryLower = queryText.toLowerCase();
       
       const apptMatches = appointments.filter(a => 
@@ -143,28 +141,23 @@ export default function AdminDashboard() {
         (m.phone || '').toLowerCase().includes(queryLower)
       ).map(m => ({ id: `unknown-${m.phone || m.email}`, patientName: m.patientName, phone: m.phone, email: m.email }));
 
-      // 3. MERGE & DEDUPLICATE: Combine both lists perfectly
       const mergedMap = new Map();
       
-      // Master records take priority
       cloudMatches.forEach(p => {
          const key = p.phone || p.email || p.id;
          mergedMap.set(key, p);
       });
 
-      // Add online bookings if they don't already exist
       apptMatches.forEach(p => {
          const key = p.phone || p.email;
          if (key && !mergedMap.has(key)) mergedMap.set(key, p);
       });
 
-      // Add messaged patients if they don't already exist
       msgMatches.forEach(p => {
          const key = p.phone || p.email;
          if (key && !mergedMap.has(key)) mergedMap.set(key, p);
       });
 
-      // Return the top 20 merged results
       setCloudSearchResults(Array.from(mergedMap.values()).slice(0, 20));
     } catch (e) {
       console.error("Search error", e);
@@ -368,7 +361,6 @@ export default function AdminDashboard() {
         const formattedDob = standardizeDate(rawDob);
         const formattedEmail = rawEmail.toLowerCase();
 
-        // Check for duplicates in the current CRM
         const existing = crmPatients.find(p => 
           (formattedPhone && p.phone === formattedPhone) || 
           (formattedEmail && p.email === formattedEmail)
@@ -394,7 +386,7 @@ export default function AdminDashboard() {
 
       setImportAnalysis({ new: newPts, duplicates: dupPts });
       setIsAnalyzing(false);
-    }, 500); // Small timeout to allow UI to render spinner for large datasets
+    }, 500); 
   };
 
   const processBatchedImport = async () => {
@@ -408,7 +400,6 @@ export default function AdminDashboard() {
         ...importAnalysis.duplicates.map(p => ({ type: 'merge', data: p }))
       ];
 
-      // Firebase limits batches to 500 operations. We use 490 to be safe.
       const CHUNK_SIZE = 490;
       
       for (let i = 0; i < allOperations.length; i += CHUNK_SIZE) {
@@ -431,7 +422,6 @@ export default function AdminDashboard() {
               });
            } else {
               const existRef = doc(db, "patients", op.data.existingId);
-              // Merge to prevent overwriting existing data with blanks
               batch.set(existRef, {
                  ...(op.data.name && { patientName: op.data.name }),
                  ...(op.data.phone && { phone: op.data.phone }),
@@ -578,7 +568,6 @@ export default function AdminDashboard() {
       return;
     }
     
-    // Calculate the expiry date (7 days from now)
     const expiryDate = new Date();
     expiryDate.setDate(expiryDate.getDate() + 7);
     const formattedExpiryDate = expiryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -594,7 +583,7 @@ export default function AdminDashboard() {
           type: "send_email",
           to_email: email,
           patient_name: name,
-          templateId: 10, // Linked to your new Brevo template
+          templateId: 10,
           params: {
             patient_name: name.split(' ')[0],
             custom_message: openingText,
@@ -614,6 +603,7 @@ export default function AdminDashboard() {
       alert("Network error while sending voucher.");
     }
   };
+
   const toMins = (t: string) => {
     const [h, m] = t.split(':').map(Number);
     return h * 60 + m;
@@ -1388,11 +1378,177 @@ export default function AdminDashboard() {
             <button onClick={() => setView('reports')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'reports' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Activity size={18} /> Analytics
             </button>
+            <button onClick={() => setView('guide')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'guide' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <BookOpen size={18} /> SOP Guide
+            </button>
           </div>
           <button onClick={() => window.location.href='/admin-login'} className="p-2 text-slate-400 hover:text-red-500">
             <LogOut size={20}/>
           </button>
         </div>
+
+        {/* --- GUIDE / SOP VIEW --- */}
+        {view === 'guide' && (
+           <div className="glass-card rounded-[2.5rem] p-10 space-y-10 animate-in fade-in">
+              <div className="text-center pb-8 border-b-4 border-[#3F9185] max-w-3xl mx-auto">
+                 <h1 className="text-4xl font-black text-slate-800 uppercase tracking-tight">Staff Training & SOP Guide</h1>
+                 <p className="text-slate-500 font-bold mt-2">The Eye Centre Dashboard & Customer Journey Protocol</p>
+                 <p className="text-sm font-medium text-slate-400 mt-4">Every click in this software triggers a real-world communication with the patient. Your accuracy directly drives our practice's revenue and patient retention.</p>
+              </div>
+
+              <div className="space-y-8 max-w-4xl mx-auto">
+                 {/* STAGE 1 */}
+                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 1: Pre-Arrival & Booking</h2>
+                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
+                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
+                       <p className="text-slate-600 text-sm">To ensure the patient receives immediate, professional confirmation of their appointment and that their contact details are perfectly accurate for future marketing and clinical reminders.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                       <div>
+                          <h4 className="font-bold text-slate-800">When a Patient Books Online</h4>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1 marker:text-slate-300">
+                             <li>The system automatically captures their details and places them in the <strong>Diary Grid</strong>.</li>
+                             <li>They instantly receive an SMS and Email confirmation via our cloud servers.</li>
+                             <li><strong>Your Task:</strong> Look at the Diary. If the booking has a teal <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider mx-1">LINKED</span> badge, they are an existing patient. If not, click the <strong>Link Icon (🔗)</strong> next to their name, search the database, and link them to their Master CRM profile.</li>
+                          </ul>
+                       </div>
+                       
+                       <div className="pt-4">
+                          <h4 className="font-bold text-slate-800">When Taking a Phone/Walk-in Booking</h4>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1 marker:text-slate-300">
+                             <li>Click <strong>+ New Booking</strong> in the Diary tab.</li>
+                             <li><strong>Always use the CRM Search Bar first</strong> to see if they already exist in our database. This prevents creating duplicate files.</li>
+                             <li>If they are a new patient, fill in their details. <strong>You must ask for their email address.</strong></li>
+                          </ul>
+                       </div>
+
+                       <div className="bg-red-50 border-l-4 border-red-500 p-5 rounded-r-xl mt-4">
+                          <h4 className="text-sm font-black text-red-700 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={16}/> Critical: The "No Email" Fallback</h4>
+                          <p className="text-red-600 text-xs mt-2 font-medium leading-relaxed">If a patient cannot provide an email over the phone, leave it blank but <strong>ensure the mobile number is correct</strong>. The system will automatically text them a secure link to add their email address via their digital receipt. We absolutely need emails to send the £10 Vouchers later.</p>
+                       </div>
+                    </div>
+                 </div>
+
+                 {/* STAGE 2 */}
+                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 2: Arrival & The Clinical Test</h2>
+                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
+                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
+                       <p className="text-slate-600 text-sm">To create a seamless, welcoming environment where the patient is moved smoothly from the waiting area, into the testing room, and handed over for dispensing.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                       <div>
+                          <h4 className="font-bold text-slate-800 mb-2">Managing the Diary Status</h4>
+                          <p className="text-sm text-slate-600 mb-3">The dropdown menu on each patient's appointment block is the "brain" of the practice. It tells the system—and the rest of the team—exactly where the patient is.</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-2 marker:text-slate-300">
+                             <li><strong>Arrived:</strong> Select this the moment they walk through the door. <span className="text-yellow-600 font-bold bg-yellow-50 px-2 py-0.5 rounded ml-1">(Turns Yellow)</span></li>
+                             <li><strong>In Progress:</strong> Select this when the optometrist calls them into the test room. <span className="text-purple-600 font-bold bg-purple-50 px-2 py-0.5 rounded ml-1">(Turns Purple)</span></li>
+                             <li><strong>Visit Complete:</strong> Select this when the test is finished. <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded ml-1">(Turns Green)</span></li>
+                          </ul>
+                       </div>
+
+                       <div className="bg-red-50 border-l-4 border-red-500 p-5 rounded-r-xl mt-4">
+                          <h4 className="text-sm font-black text-red-700 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={16}/> Critical: The "Visit Complete" Timestamp</h4>
+                          <p className="text-red-600 text-xs mt-2 font-medium leading-relaxed">You <strong>MUST</strong> mark the appointment as "Visit Complete" as soon as the test ends. Doing so creates an invisible timestamp in the cloud database. If this is forgotten, the 24-hour automated voucher system will fail to trigger.</p>
+                       </div>
+
+                       <div className="pt-4">
+                          <h4 className="font-bold text-slate-800">Handling FTAs (Failed To Attend)</h4>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-1 marker:text-slate-300">
+                             <li>If a patient does not show up, change their status to <strong>FTA</strong>.</li>
+                             <li><strong>What the system does:</strong> The software will wait exactly 30 minutes, then automatically send a polite SMS and Email telling the patient they were missed, including a secure link to reschedule themselves online without tying up our phone lines.</li>
+                          </ul>
+                       </div>
+                    </div>
+                 </div>
+
+                 {/* STAGE 3 */}
+                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 3: Dispensing & Revenue Recovery</h2>
+                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
+                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
+                       <p className="text-slate-600 text-sm">To convert every possible sight test and external quote into a successful glasses dispense, using automated goodwill gestures to win back undecided customers.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                       <div>
+                          <h4 className="font-bold text-slate-800">Process A: Internal Sight Tests</h4>
+                          <p className="text-sm text-slate-600 mt-1 mb-2">When a patient finishes their sight test with us:</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1 marker:text-slate-300">
+                            <li>Go to the <strong>Dispensing</strong> tab &rarr; <strong>Sight Test Dispense Tracking</strong>.</li>
+                             <li><strong>Rx Changed?:</strong> Tick this if the optometrist gave them a new prescription.</li>
+                             <li><strong>Dispensed?:</strong> Tick this ONLY if they paid for/ordered glasses today.</li>
+                          </ul>
+                       </div>
+
+                       <div className="bg-teal-50 border-2 border-dashed border-teal-400 p-6 rounded-xl my-6 text-center">
+                          <h4 className="text-sm font-black text-teal-800 uppercase tracking-wider mb-2">🤖 The 24-Hour Automated Recovery System</h4>
+                          <p className="text-teal-700 text-sm font-medium">If you tick <em>"Rx Changed"</em> but leave <em>"Dispensed"</em> empty, a 24-hour countdown begins in the cloud. Exactly 24 hours later, the system will automatically email them a <strong>£10 Discount Voucher</strong> (valid for 7 days) to encourage them to come back and buy their frames from us.</p>
+                       </div>
+
+                       <div className="pt-2">
+                          <h4 className="font-bold text-slate-800">Process B: External Prescriptions & Walk-In Quotes</h4>
+                          <p className="text-sm text-slate-600 mt-1 mb-2">When a customer walks in asking for a quote but isn't ready to buy:</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1 marker:text-slate-300">
+                          <li>Go to the <strong>Dispensing</strong> tab &rarr; <strong>External Prescriptions & Quotes</strong>.</li>
+                             <li>Click <strong>+ Record Walk-In Quote</strong>.</li>
+                             <li>Link them to the CRM (or create a new profile), enter the quoted £ amount, and their email address.</li>
+                             <li>Once saved, click the teal <strong>Send £10 Off</strong> button. They will instantly receive a beautifully branded email with our designer logos (Tom Ford, Ray-Ban, Mulberry, Vanity) and a £10 voucher.</li>
+                          </ul>
+                       </div>
+
+                       <div className="pt-4 border-t border-slate-100 mt-6">
+                          <h4 className="font-bold text-slate-800">When the Customer Returns to Buy</h4>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 marker:text-slate-300">
+                             <li>Go back to the Dispensing tab, locate their Walk-In Quote, and click the green <strong>Mark Dispensed</strong> button. This completes the journey and secures the revenue.</li>
+                          </ul>
+                       </div>
+                    </div>
+                 </div>
+
+                 {/* STAGE 4 */}
+                 <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+                    <h2 className="text-2xl font-black text-[#3F9185] border-b-2 border-slate-100 pb-4 mb-6">Stage 4: CRM & Patient Communication</h2>
+                    <div className="bg-slate-50 border-l-4 border-blue-500 p-6 rounded-r-xl mb-6">
+                       <h3 className="text-sm font-black text-blue-700 uppercase tracking-wider mb-2">🎯 The Customer Journey Goal</h3>
+                       <p className="text-slate-600 text-sm">To provide rapid, omnichannel support. Whether the patient texts us or emails us, we reply from one single, unified screen to build incredible customer loyalty.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                       <div>
+                          <h4 className="font-bold text-slate-800">The CRM Hub</h4>
+                          <p className="text-sm text-slate-600 mt-1 mb-2">Navigate to the <strong>CRM & Patients</strong> tab. This is your communication command centre.</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1 marker:text-slate-300">
+                             <li><strong>Left Sidebar:</strong> Functions just like WhatsApp. Patients with unread messages will float to the top with a red notification dot.</li>
+                             <li><strong>The Master Profile:</strong> By selecting a patient, you can view their lifetime appointment history, update their contact details, and see every text/email they have ever sent us.</li>
+                          </ul>
+                       </div>
+
+                       <div className="pt-4">
+                          <h4 className="font-bold text-slate-800">Replying to Patients</h4>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 mt-2 space-y-2 marker:text-slate-300">
+                             <li><strong>SMS:</strong> Type in the chat box and hit send. The patient will receive a text from "EYE CENTRE". If they reply to that text, it will instantly appear back in this dashboard.</li>
+                             <li><strong>Secure Email:</strong> Click "Compose Email". You can type a subject line, add a message, and attach files (like PDFs or image scans of their prescription). The system automatically compresses large files so they don't bounce.</li>
+                             <li><strong>Threaded Email Replies:</strong> If a patient emails us, click the <em>Reply</em> button directly on their message bubble. This securely locks the thread, ensuring your reply stays grouped with their original email in their inbox.</li>
+                          </ul>
+                       </div>
+
+                       <div className="pt-4">
+                          <h4 className="font-bold text-slate-800">Sending Manual/Ad-Hoc Messages</h4>
+                          <p className="text-sm text-slate-600 mt-1 mb-2">If you need to quickly text or email someone who isn't a registered patient (e.g., a supplier, or a one-off query):</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 marker:text-slate-300">
+                             <li>Click the dark <strong>Send Manual Message</strong> button above the search bar.</li>
+                             <li>Type in their phone number (drop the leading 0) or email address, type your message, and hit send.</li>
+                          </ul>
+                       </div>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        )}
 
         {/* --- DIARY VIEW --- */}
         {view === 'diary' && (
