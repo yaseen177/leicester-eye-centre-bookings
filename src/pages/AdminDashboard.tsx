@@ -631,13 +631,13 @@ export default function AdminDashboard() {
                         <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 35px;">
                             <tr>
                                 <td align="center" width="33%" style="padding: 5px;">
-                                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Tom_Ford_Logo.svg/320px-Tom_Ford_Logo.svg.png" alt="Tom Ford" style="max-width: 90px; height: auto; display: block; border: 0;">
+                                    <img src="https://wsrv.nl/?url=upload.wikimedia.org/wikipedia/commons/thumb/8/87/Tom_Ford_Logo.svg/320px-Tom_Ford_Logo.svg.png&output=png" alt="Tom Ford" style="max-width: 90px; height: auto; display: block; border: 0;">
                                 </td>
                                 <td align="center" width="33%" style="padding: 5px;">
-                                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Ray-Ban_logo.svg/320px-Ray-Ban_logo.svg.png" alt="Ray-Ban" style="max-width: 80px; height: auto; display: block; border: 0;">
+                                    <img src="https://wsrv.nl/?url=upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Ray-Ban_logo.svg/320px-Ray-Ban_logo.svg.png&output=png" alt="Ray-Ban" style="max-width: 80px; height: auto; display: block; border: 0;">
                                 </td>
                                 <td align="center" width="33%" style="padding: 5px;">
-                                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Mulberry_Logo.svg/320px-Mulberry_Logo.svg.png" alt="Mulberry" style="max-width: 85px; height: auto; display: block; border: 0;">
+                                    <img src="https://wsrv.nl/?url=upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Mulberry_Logo.svg/320px-Mulberry_Logo.svg.png&output=png" alt="Mulberry" style="max-width: 85px; height: auto; display: block; border: 0;">
                                 </td>
                             </tr>
                         </table>
