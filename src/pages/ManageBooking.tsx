@@ -196,40 +196,52 @@ export default function ManageBooking() {
   const handleCancel = async () => {
     setActionLoading(true);
     try {
+      // 1. Delete from database FIRST to prevent 'ghost' appointments if the patient closes the tab early.
+      await deleteDoc(doc(db, 'appointments', id!));
+
+      // 2. Prepare both notification requests to run simultaneously
+      const notificationPromises = [];
+
       if (appointment.email) {
-        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "send_email",
-            templateId: 3, 
-            to_email: appointment.email,
-            patient_name: appointment.patientName.split(' ')[0],
-            params: {
+        notificationPromises.push(
+          fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "send_email",
+              templateId: 3, 
+              to_email: appointment.email,
               patient_name: appointment.patientName.split(' ')[0],
-              date: new Date(appointment.appointmentDate).toLocaleDateString('en-GB'),
-              time: appointment.appointmentTime
-            }
-          })
-        }).catch(e => console.error(e));
+              params: {
+                patient_name: appointment.patientName.split(' ')[0],
+                date: new Date(appointment.appointmentDate).toLocaleDateString('en-GB'),
+                time: appointment.appointmentTime
+              }
+            })
+          }).catch(e => console.error("Email failed:", e))
+        );
       }
 
       if (appointment.phone) {
-        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: appointment.phone,
-            body: `Cancellation: ${appointment.patientName.split(' ')[0]}, your appointment on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} has been cancelled. The Eye Centre.`,
-            cancelSid: appointment.reminderSid
-          })
-        }).catch(e => console.error(e));
+        notificationPromises.push(
+          fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: appointment.phone,
+              body: `Cancellation: ${appointment.patientName.split(' ')[0]}, your appointment on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} has been cancelled. The Eye Centre.`,
+              cancelSid: appointment.reminderSid
+            })
+          }).catch(e => console.error("SMS failed:", e))
+        );
       }
 
-      await deleteDoc(doc(db, 'appointments', id!));
+      // 3. Fire both the SMS and Email off at the exact same time
+      await Promise.all(notificationPromises);
+
       alert("Appointment Cancelled.");
       navigate('/');
     } catch (err) { 
-      alert("Error cancelling appointment."); 
+      alert("Error cancelling appointment. Please try again."); 
       setActionLoading(false); 
     }
   };
