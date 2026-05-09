@@ -374,16 +374,15 @@ export default function BookingPage() {
             })
           });
 
-          // TEMPORARY TESTING BLOCK (Force Instant Send)
-          if (true) {
+          // LIVE PRODUCTION BLOCK (24-Hour Delay)
+          if (reminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
             const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 to: formattedPhone,
                 body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow @ ${booking.time}.\nPlease confirm your attendance or reschedule here: ${window.location.origin}/manage/${docRef.id}\nThe Eye Centre, Leicester`,
-                
-                // reminderTime: reminderDate.toISOString() <-- COMMENTED OUT FOR TESTING
+                reminderTime: reminderDate.toISOString() 
               })
             });
 
