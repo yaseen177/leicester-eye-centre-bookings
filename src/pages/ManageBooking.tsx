@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/firebase';
 import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone } from 'lucide-react';
+import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone, CheckCircle2 } from 'lucide-react';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
