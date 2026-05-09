@@ -26,6 +26,7 @@ export default function AdminDashboard() {
   const [closedDates, setClosedDates] = useState<string[]>([]);
 
   const [isUnconfirmedModalOpen, setIsUnconfirmedModalOpen] = useState(false);
+  const [recentlyConfirmed, setRecentlyConfirmed] = useState<string[]>([]);
 
   const [activeGuideSection, setActiveGuideSection] = useState<string | null>('booking');
   
@@ -1000,6 +1001,9 @@ export default function AdminDashboard() {
 
   const confirmAppointmentAdmin = async (appt: any) => {
     try {
+      // Optimistically update the UI to show the Green 'Confirmed' box instantly
+      setRecentlyConfirmed(prev => [...prev, appt.id]);
+      
       const docRef = doc(db, 'appointments', appt.id);
 
       // 1. If there is a scheduled "Please Confirm" text, cancel it to save SMS credits
@@ -1379,17 +1383,22 @@ export default function AdminDashboard() {
     .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime());
 
 
-  // Find all Unconfirmed Appointments in the next 7 Days
+  // Find Unconfirmed (and recently confirmed) Appointments in the next 7 Days
   const next7Days = new Date();
   next7Days.setDate(next7Days.getDate() + 7);
   const today = new Date();
   today.setHours(0,0,0,0);
   
-  const unconfirmedList = appointments.filter(a => {
-     const isBooked = a.status === 'Booked' || !a.status;
+  const callListDisplay = appointments.filter(a => {
      const apptDate = new Date(a.appointmentDate);
-     return isBooked && apptDate >= today && apptDate <= next7Days;
+     const inRange = apptDate >= today && apptDate <= next7Days;
+     const isBooked = a.status === 'Booked' || !a.status;
+     const isRecent = recentlyConfirmed.includes(a.id);
+     return inRange && (isBooked || isRecent);
   }).sort((a,b) => new Date(a.appointmentDate).getTime() - new Date(b.appointmentDate).getTime());
+
+  // Count strictly the ones that are still unconfirmed for the button badge
+  const unconfirmedCount = callListDisplay.filter(a => a.status === 'Booked' || !a.status).length;
 
   const handlePrintSOP = () => {
       const printWindow = window.open('', '_blank');
@@ -1761,8 +1770,8 @@ export default function AdminDashboard() {
             <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3"><CalendarIcon className="text-[#3F9185]" /> Daily Grid</h2>
                 <button onClick={() => setIsBookingModalOpen(true)} className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 shadow-md">+ New Booking</button>
-                <button onClick={() => setIsUnconfirmedModalOpen(true)} className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 shadow-md transition-all ${unconfirmedList.length > 0 ? 'bg-orange-500 hover:bg-orange-600 text-white animate-pulse' : 'bg-slate-100 text-slate-400'}`}>
-                   📞 7-Day Call List ({unconfirmedList.length})
+                <button onClick={() => setIsUnconfirmedModalOpen(true)} className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 shadow-md transition-all ${unconfirmedCount > 0 ? 'bg-orange-500 hover:bg-orange-600 text-white animate-pulse' : 'bg-slate-100 text-slate-400'}`}>
+                   📞 7-Day Call List ({unconfirmedCount})
                 </button>
               </div>
               <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
@@ -3313,35 +3322,69 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-[2.5rem] p-8 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95">
             <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
                <div>
-                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">📞 Unconfirmed Appointments</h2>
-                  <p className="text-sm font-medium text-slate-500 mt-1">Patients booked in the next 7 days who have not confirmed.</p>
+                  <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                     <span className="bg-orange-100 text-orange-600 p-2 rounded-xl">📞</span> 
+                     7-Day Call List
+                  </h2>
+                  <p className="text-sm font-medium text-slate-500 mt-2">Patients booked in the next 7 days who have not confirmed their attendance.</p>
                </div>
-               <button onClick={() => setIsUnconfirmedModalOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+               <button onClick={() => { setIsUnconfirmedModalOpen(false); setRecentlyConfirmed([]); }} className="p-2 bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors">
+                  <X size={24} />
+               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto pr-2 space-y-3">
-               {unconfirmedList.length === 0 ? (
-                 <div className="text-center py-10 text-slate-400 font-bold">All caught up! No unconfirmed patients in the next 7 days.</div>
+            <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+               {callListDisplay.length === 0 ? (
+                 <div className="flex flex-col items-center justify-center py-12 text-slate-400 space-y-4 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                    <CheckCircle2 size={48} className="text-emerald-400 opacity-50" />
+                    <p className="font-bold text-lg">All caught up!</p>
+                    <p className="text-sm">No unconfirmed patients in the next 7 days.</p>
+                 </div>
                ) : (
-                 unconfirmedList.map(appt => (
-                   <div key={appt.id} className="flex justify-between items-center p-4 bg-orange-50 border border-orange-100 rounded-xl hover:shadow-md transition-all">
-                      <div>
-                         <div className="flex items-center gap-2 mb-1">
-                            <span className="font-black text-slate-800">{appt.patientName}</span>
-                            <span className="text-[10px] font-bold bg-white text-orange-600 px-2 py-0.5 rounded border border-orange-200">{appt.phone || 'No Phone'}</span>
-                         </div>
-                         <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                           {new Date(appt.appointmentDate).toLocaleDateString('en-GB')} @ {appt.appointmentTime}
-                         </p>
-                      </div>
-                      <button 
-                        onClick={() => confirmAppointmentAdmin(appt)} 
-                        className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all"
-                      >
-                        Mark Confirmed
-                      </button>
-                   </div>
-                 ))
+                 callListDisplay.map(appt => {
+                   const isConfirmed = recentlyConfirmed.includes(appt.id) || appt.status === 'Confirmed';
+                   
+                   return (
+                     <div key={appt.id} className={`flex flex-col md:flex-row justify-between items-start md:items-center p-5 rounded-2xl border-2 transition-all duration-500 ${isConfirmed ? 'bg-emerald-50 border-emerald-200 shadow-sm' : 'bg-white border-slate-200 hover:border-orange-300 hover:shadow-md'}`}>
+                        <div className="mb-4 md:mb-0">
+                           <div className="flex items-center gap-3 mb-2">
+                              <span className="font-black text-slate-800 text-lg">{appt.patientName}</span>
+                              <span className="text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 px-2 py-1 rounded-md">{appt.appointmentType}</span>
+                           </div>
+                           <div className="flex flex-wrap items-center gap-3 text-sm">
+                              <span className="font-bold text-slate-600 flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100">
+                                <CalendarIcon size={14} className={isConfirmed ? "text-emerald-500" : "text-orange-500"} /> 
+                                {new Date(appt.appointmentDate).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} @ {appt.appointmentTime}
+                              </span>
+                              {appt.phone ? (
+                                 <a href={`tel:${appt.phone}`} className="font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition-colors">
+                                    📞 {appt.phone}
+                                 </a>
+                              ) : (
+                                 <span className="font-bold text-slate-400 flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg">
+                                    No Phone
+                                 </span>
+                              )}
+                           </div>
+                        </div>
+                        
+                        <div className="w-full md:w-auto flex justify-end">
+                           {isConfirmed ? (
+                              <div className="flex items-center gap-2 bg-emerald-100 text-emerald-700 font-black text-sm px-5 py-3 rounded-xl w-full md:w-auto justify-center animate-in zoom-in">
+                                 <CheckCircle2 size={18} /> Confirmed!
+                              </div>
+                           ) : (
+                              <button 
+                                onClick={() => confirmAppointmentAdmin(appt)} 
+                                className="bg-orange-500 hover:bg-orange-600 text-white font-black text-sm px-6 py-3 rounded-xl shadow-md shadow-orange-500/20 transition-all hover:-translate-y-0.5 w-full md:w-auto"
+                              >
+                                Mark Confirmed
+                              </button>
+                           )}
+                        </div>
+                     </div>
+                   );
+                 })
                )}
             </div>
           </div>
