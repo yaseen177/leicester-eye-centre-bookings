@@ -25,6 +25,8 @@ export default function AdminDashboard() {
   const [editingApp, setEditingApp] = useState<any>(null);
   const [closedDates, setClosedDates] = useState<string[]>([]);
 
+  const [isUnconfirmedModalOpen, setIsUnconfirmedModalOpen] = useState(false);
+
   const [activeGuideSection, setActiveGuideSection] = useState<string | null>('booking');
   
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -908,10 +910,10 @@ export default function AdminDashboard() {
       }
   
       if (formattedPhone && formattedPhone.length > 5) {
-        let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please reply to this message or call 0116 253 2788.\nThe Eye Centre, Leicester`;
+        let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nPlease confirm your attendance here: ${receiptLink}\nFor any enquiries, please call 0116 253 2788.`;
 
         if (!newBooking.email) {
-          smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\n\nTo receive your full digital receipt and manage your booking online, please tap here to securely add your email address: ${receiptLink}`;
+          smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\n\nPlease tap here to confirm your attendance and securely add your email address: ${receiptLink}`;
         }
 
         try {
@@ -996,7 +998,46 @@ export default function AdminDashboard() {
     }
   };
 
+  const confirmAppointmentAdmin = async (appt: any) => {
+    try {
+      const docRef = doc(db, 'appointments', appt.id);
+      const apptDateObj = new Date(`${appt.appointmentDate}T${appt.appointmentTime}`);
+      const reminderDate = new Date(apptDateObj.getTime() - (24 * 60 * 60 * 1000));
+      const now = new Date();
+
+      if (appt.phone && reminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
+        if (appt.reminderSid) {
+          await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to: appt.phone, cancelSid: appt.reminderSid })
+          });
+        }
+
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: appt.phone,
+            body: `Reminder: ${appt.patientName.split(' ')[0]}, your appointment is tomorrow @ ${appt.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${appt.id}`,
+            reminderTime: reminderDate.toISOString()
+          })
+        });
+
+        if (smsRes.ok) {
+          const smsData = await smsRes.json();
+          await setDoc(docRef, { status: 'Confirmed', reminderSid: smsData.sid || smsData.reminderSid || null }, { merge: true });
+          return;
+        }
+      }
+      await setDoc(docRef, { status: 'Confirmed' }, { merge: true });
+    } catch (err) { alert("Failed to confirm appointment."); }
+  };
+
   const updateStatus = async (id: string, newStatus: string) => {
+    if (newStatus === 'Confirmed') {
+      const appt = appointments.find(a => a.id === id);
+      if (appt) await confirmAppointmentAdmin(appt);
+      return;
+    }
     try {
       const appRef = doc(db, "appointments", id);
       const appSnap = await getDoc(appRef);
@@ -1036,6 +1077,7 @@ export default function AdminDashboard() {
       case 'In Progress': return 'bg-purple-100 text-purple-700 border-purple-200';
       case 'Visit Complete': return 'bg-green-100 text-green-700 border-green-200';
       case 'FTA': return 'bg-red-100 text-red-700 border-red-200';
+      case 'Confirmed': return 'bg-emerald-500 text-white border-emerald-600';
       default: return 'bg-slate-100 text-slate-600 border-slate-200';
     }
   };
@@ -1167,7 +1209,7 @@ export default function AdminDashboard() {
                       <div className="flex items-center gap-2">
                          <span className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-wider ${booking.source === 'Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{booking.source === 'Admin' ? 'Admin' : 'Online'}</span>
                          <select value={booking.status || 'Booked'} onChange={(e) => updateStatus(booking.id, e.target.value)} className={`text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded border cursor-pointer outline-none transition-colors appearance-none text-center ${getStatusColor(booking.status || 'Booked')}`} onClick={(e) => e.stopPropagation()}>
-                           <option value="Booked">Booked</option><option value="Arrived">Arrived</option><option value="In Progress">In Progress</option><option value="Visit Complete">Completed</option><option value="FTA">FTA</option>
+                           <option value="Booked">Booked</option><option value="Confirmed">Confirmed</option><option value="Arrived">Arrived</option><option value="In Progress">In Progress</option><option value="Visit Complete">Completed</option><option value="FTA">FTA</option>
                          </select>
                       </div>
                     </div>
@@ -1350,7 +1392,20 @@ export default function AdminDashboard() {
     .filter(a => a.status === 'Visit Complete' && !a.appointmentType?.includes('Contact'))
     .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime());
 
-    const handlePrintSOP = () => {
+
+  // Find all Unconfirmed Appointments in the next 7 Days
+  const next7Days = new Date();
+  next7Days.setDate(next7Days.getDate() + 7);
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  
+  const unconfirmedList = appointments.filter(a => {
+     const isBooked = a.status === 'Booked' || !a.status;
+     const apptDate = new Date(a.appointmentDate);
+     return isBooked && apptDate >= today && apptDate <= next7Days;
+  }).sort((a,b) => new Date(a.appointmentDate).getTime() - new Date(b.appointmentDate).getTime());
+
+  const handlePrintSOP = () => {
       const printWindow = window.open('', '_blank');
       if (!printWindow) {
         alert("Please allow pop-ups to generate the PDF guide.");
@@ -1454,6 +1509,9 @@ export default function AdminDashboard() {
         printWindow.print();
       }, 250);
     };
+
+  
+  
 
     return (
     <div className="min-h-screen p-6 bg-[#f8fafc]">
@@ -1714,9 +1772,12 @@ export default function AdminDashboard() {
         {view === 'diary' && (
           <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-              <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3"><CalendarIcon className="text-[#3F9185]" /> Daily Grid</h2>
-                <button onClick={() => setIsBookingModalOpen(true)} className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-md">+ New Booking</button>
+                <button onClick={() => setIsBookingModalOpen(true)} className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 shadow-md">+ New Booking</button>
+                <button onClick={() => setIsUnconfirmedModalOpen(true)} className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 shadow-md transition-all ${unconfirmedList.length > 0 ? 'bg-orange-500 hover:bg-orange-600 text-white animate-pulse' : 'bg-slate-100 text-slate-400'}`}>
+                   📞 7-Day Call List ({unconfirmedList.length})
+                </button>
               </div>
               <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
                 <button onClick={handlePreviousDay} className="px-3 py-2 bg-white rounded-xl font-bold text-slate-500 hover:text-[#3F9185] hover:shadow-sm transition-all text-xs uppercase">&larr; Prev</button>
@@ -3256,7 +3317,52 @@ export default function AdminDashboard() {
             </div>
           </div>
         </div>
+      
+                        
+      
       )}
+    {/* --- 7-DAY UNCONFIRMED CALL LIST MODAL --- */}
+    {isUnconfirmedModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[150] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+               <div>
+                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">📞 Unconfirmed Appointments</h2>
+                  <p className="text-sm font-medium text-slate-500 mt-1">Patients booked in the next 7 days who have not confirmed.</p>
+               </div>
+               <button onClick={() => setIsUnconfirmedModalOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto pr-2 space-y-3">
+               {unconfirmedList.length === 0 ? (
+                 <div className="text-center py-10 text-slate-400 font-bold">All caught up! No unconfirmed patients in the next 7 days.</div>
+               ) : (
+                 unconfirmedList.map(appt => (
+                   <div key={appt.id} className="flex justify-between items-center p-4 bg-orange-50 border border-orange-100 rounded-xl hover:shadow-md transition-all">
+                      <div>
+                         <div className="flex items-center gap-2 mb-1">
+                            <span className="font-black text-slate-800">{appt.patientName}</span>
+                            <span className="text-[10px] font-bold bg-white text-orange-600 px-2 py-0.5 rounded border border-orange-200">{appt.phone || 'No Phone'}</span>
+                         </div>
+                         <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                           {new Date(appt.appointmentDate).toLocaleDateString('en-GB')} @ {appt.appointmentTime}
+                         </p>
+                      </div>
+                      <button 
+                        onClick={() => confirmAppointmentAdmin(appt)} 
+                        className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all"
+                      >
+                        Mark Confirmed
+                      </button>
+                   </div>
+                 ))
+               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Put it right above these existing final tags: */}
     </div>
   );
 }

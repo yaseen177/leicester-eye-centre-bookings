@@ -380,7 +380,7 @@ export default function BookingPage() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 to: formattedPhone,
-                body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow @ ${booking.time}.\nIf you need to reschedule, please call us on 0116 253 2788.\nThe Eye Centre, Leicester`,
+                body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow @ ${booking.time}.\nPlease confirm your attendance or reschedule here: ${window.location.origin}/manage/${docRef.id}\nThe Eye Centre, Leicester`,
                 reminderTime: reminderDate.toISOString() 
               })
             });

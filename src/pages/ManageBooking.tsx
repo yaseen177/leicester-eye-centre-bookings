@@ -193,6 +193,51 @@ export default function ManageBooking() {
     setIsUpdatingPhone(false);
   };
 
+
+  const handleConfirmAttendance = async () => {
+    setActionLoading(true);
+    try {
+      const docRef = doc(db, 'appointments', id!);
+      const apptDateObj = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}`);
+      const reminderDate = new Date(apptDateObj.getTime() - (24 * 60 * 60 * 1000));
+      const now = new Date();
+
+      // If we are more than 24h away, swap the SMS text
+      if (appointment.phone && reminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
+        // 1. Cancel the old "Please confirm" text
+        if (appointment.reminderSid) {
+          await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to: appointment.phone, cancelSid: appointment.reminderSid })
+          });
+        }
+
+        // 2. Schedule the new "Standard" reminder text
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: appointment.phone,
+            body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${appointment.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${id}`,
+            reminderTime: reminderDate.toISOString()
+          })
+        });
+
+        if (smsRes.ok) {
+          const smsData = await smsRes.json();
+          const sid = smsData.sid || smsData.reminderSid;
+          await setDoc(docRef, { status: 'Confirmed', reminderSid: sid || null }, { merge: true });
+        }
+      } else {
+        await setDoc(docRef, { status: 'Confirmed' }, { merge: true });
+      }
+
+      setAppointment({ ...appointment, status: 'Confirmed' });
+    } catch (err) {
+      alert("Error confirming appointment.");
+    }
+    setActionLoading(false);
+  };
+
   const handleCancel = async () => {
     setActionLoading(true);
     try {
@@ -322,6 +367,29 @@ export default function ManageBooking() {
             <div className="text-center mb-8">
               <h2 className="text-2xl font-black text-slate-800">Manage Appointment</h2>
               <p className="text-slate-500 font-medium">For {appointment.patientName}</p>
+
+              {(!appointment.status || appointment.status === 'Booked') && (
+              <div className="bg-orange-50 border-2 border-orange-200 p-5 rounded-2xl animate-in fade-in slide-in-from-top-4 shadow-sm text-center">
+                <AlertTriangle size={28} className="text-orange-500 mx-auto mb-2" />
+                <h3 className="text-lg font-black text-orange-900 mb-1">Action Required</h3>
+                <p className="text-sm font-medium text-orange-700 mb-4">Please confirm that you will be attending your appointment tomorrow.</p>
+                <button 
+                  onClick={handleConfirmAttendance} 
+                  disabled={actionLoading}
+                  className="w-full py-3 rounded-xl font-black bg-orange-500 text-white hover:bg-orange-600 shadow-md transition-all flex justify-center"
+                >
+                  {actionLoading ? <Loader2 className="animate-spin" /> : 'Yes, I will attend'}
+                </button>
+              </div>
+            )}
+
+            {appointment.status === 'Confirmed' && (
+               <div className="bg-green-50 border-2 border-green-200 p-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm">
+                  <CheckCircle2 className="text-green-600" size={24} />
+                  <span className="font-black text-green-800">Appointment Confirmed</span>
+               </div>
+            )}
+
             </div>
 
             <div className="bg-slate-50 p-4 rounded-2xl space-y-3 border border-slate-100">
