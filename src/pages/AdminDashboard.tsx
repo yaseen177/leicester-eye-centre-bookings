@@ -1001,35 +1001,21 @@ export default function AdminDashboard() {
   const confirmAppointmentAdmin = async (appt: any) => {
     try {
       const docRef = doc(db, 'appointments', appt.id);
-      const apptDateObj = new Date(`${appt.appointmentDate}T${appt.appointmentTime}`);
-      const reminderDate = new Date(apptDateObj.getTime() - (24 * 60 * 60 * 1000));
-      const now = new Date();
 
-      if (appt.phone && reminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
-        if (appt.reminderSid) {
-          await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ to: appt.phone, cancelSid: appt.reminderSid })
-          });
-        }
-
-        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+      // 1. If there is a scheduled "Please Confirm" text, cancel it to save SMS credits
+      if (appt.phone && appt.reminderSid) {
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: appt.phone,
-            body: `Reminder: ${appt.patientName.split(' ')[0]}, your appointment is tomorrow @ ${appt.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${appt.id}`,
-            reminderTime: reminderDate.toISOString()
-          })
-        });
-
-        if (smsRes.ok) {
-          const smsData = await smsRes.json();
-          await setDoc(docRef, { status: 'Confirmed', reminderSid: smsData.sid || smsData.reminderSid || null }, { merge: true });
-          return;
-        }
+          body: JSON.stringify({ to: appt.phone, cancelSid: appt.reminderSid })
+        }).catch(e => console.error("Failed to cancel SMS:", e));
       }
+
+      // 2. Update the status in the database to 'Confirmed'
       await setDoc(docRef, { status: 'Confirmed' }, { merge: true });
-    } catch (err) { alert("Failed to confirm appointment."); }
+
+    } catch (err) { 
+      alert("Failed to confirm appointment."); 
+    }
   };
 
   const updateStatus = async (id: string, newStatus: string) => {
