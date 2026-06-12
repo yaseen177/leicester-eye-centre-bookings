@@ -19,7 +19,7 @@ interface ClinicConfig {
 
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing'>('diary');
-  const [pricingJson, setPricingJson] = useState('{}');
+  const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
   // Fetch Pricing Data on load
@@ -29,10 +29,9 @@ export default function AdminDashboard() {
         const docRef = doc(db, 'settings', 'pricing');
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setPricingJson(JSON.stringify(docSnap.data(), null, 2));
+          setPricingData(docSnap.data());
         } else {
-          // Default baseline pricing structure if it doesn't exist yet
-          const defaultPricing = {
+          setPricingData({
             singleVision: {
               new: { "1.5": 0, "1.6 Spherical": 45, "1.6 Aspheric": 65, "1.67": 100, "1.74": 149 },
               own: { "1.5": 59, "1.6 Spherical": 104, "1.6 Aspheric": 124, "1.67": 159, "1.74": 208 }
@@ -44,8 +43,7 @@ export default function AdminDashboard() {
             },
             coatings: { marBase: 35, blueBase: 45, blueVarifocal: 20 },
             extras: { transitions: 49, transitionsVarifocal: 69, xtractive: 65, tint: 35 }
-          };
-          setPricingJson(JSON.stringify(defaultPricing, null, 2));
+          });
         }
       } catch (error) {
         console.error("Error fetching pricing:", error);
@@ -57,11 +55,10 @@ export default function AdminDashboard() {
   const handleSavePricing = async () => {
     try {
       setIsSavingPricing(true);
-      const parsedData = JSON.parse(pricingJson);
-      await setDoc(doc(db, 'settings', 'pricing'), parsedData);
+      await setDoc(doc(db, 'settings', 'pricing'), pricingData);
       alert('Pricing updated successfully! The price list website will now reflect these changes.');
     } catch (error) {
-      alert('Invalid JSON format. Please check for missing commas or quotes.');
+      alert('Failed to save pricing.');
       console.error(error);
     } finally {
       setIsSavingPricing(false);
@@ -2761,31 +2758,149 @@ export default function AdminDashboard() {
         {view === 'reports' && <ReportsDashboard appointments={appointments} />}
 
         {/* --- PRICING CONFIG VIEW --- */}
-        {view === 'pricing' && (
-          <div className="glass-card rounded-[2.5rem] p-10 space-y-6 animate-in fade-in zoom-in-95">
-            <div className="flex justify-between items-center mb-6 pb-6 border-b-2 border-slate-100">
+        {view === 'pricing' && !pricingData && (
+          <div className="glass-card rounded-[2.5rem] p-10 flex items-center justify-center min-h-[400px]">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#3F9185]"></div>
+          </div>
+        )}
+        
+        {view === 'pricing' && pricingData && (
+          <div className="glass-card rounded-[2.5rem] p-6 md:p-10 space-y-8 animate-in fade-in zoom-in-95">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-2 pb-6 border-b-2 border-slate-100 gap-4">
               <div>
                 <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3 uppercase tracking-tight">
                   <Tag className="text-[#3F9185]" /> Master Pricing Configuration
                 </h2>
-                <p className="text-sm font-medium text-slate-500 mt-2">Edit the JSON values below. This syncs directly to your live Price List website.</p>
+                <p className="text-sm font-medium text-slate-500 mt-2">Adjust prices below. Clicking publish will instantly update the live quoting tool.</p>
               </div>
               <button 
                 onClick={handleSavePricing}
                 disabled={isSavingPricing}
-                className="bg-slate-900 hover:bg-black text-white px-8 py-4 rounded-2xl font-black shadow-xl shadow-slate-900/20 transition-all hover:-translate-y-1 disabled:opacity-50"
+                className="w-full md:w-auto bg-[#3F9185] hover:bg-[#2c6b62] text-white px-8 py-4 rounded-2xl font-black shadow-xl shadow-[#3F9185]/20 transition-all hover:-translate-y-1 disabled:opacity-50"
               >
                 {isSavingPricing ? 'Saving...' : 'Publish Prices to Live Site'}
               </button>
             </div>
             
-            <div className="rounded-[2rem] bg-slate-900 p-4 shadow-inner border-4 border-slate-800">
-              <textarea 
-                value={pricingJson}
-                onChange={(e) => setPricingJson(e.target.value)}
-                className="w-full h-[600px] bg-slate-900 text-emerald-400 p-4 font-mono text-sm md:text-base border-none outline-none focus:ring-2 focus:ring-[#3F9185] rounded-xl resize-y leading-relaxed"
-                spellCheck="false"
-              />
+            <div className="space-y-8">
+              {/* Single Vision */}
+              <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100">
+                <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-widest flex items-center gap-2">👓 Single Vision</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[500px]">
+                    <thead>
+                      <tr className="text-xs text-slate-400 uppercase tracking-widest border-b-2 border-slate-100">
+                        <th className="pb-4 font-black">Lens Index</th>
+                        <th className="pb-4 font-black">New Frame (£)</th>
+                        <th className="pb-4 font-black">Own Frame (£)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {['1.5', '1.6 Spherical', '1.6 Aspheric', '1.67', '1.74'].map((idx) => (
+                        <tr key={idx} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
+                          <td className="py-4 font-bold text-slate-700">{idx}</td>
+                          <td className="py-4">
+                            <input type="number" value={pricingData.singleVision.new[idx]} onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              setPricingData({...pricingData, singleVision: {...pricingData.singleVision, new: {...pricingData.singleVision.new, [idx]: val}}});
+                            }} className="w-24 p-3 bg-slate-100 border-2 border-transparent rounded-xl focus:border-[#3F9185] focus:bg-white outline-none font-bold transition-all text-slate-700" />
+                          </td>
+                          <td className="py-4">
+                            <input type="number" value={pricingData.singleVision.own[idx]} onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              setPricingData({...pricingData, singleVision: {...pricingData.singleVision, own: {...pricingData.singleVision.own, [idx]: val}}});
+                            }} className="w-24 p-3 bg-slate-100 border-2 border-transparent rounded-xl focus:border-[#3F9185] focus:bg-white outline-none font-bold transition-all text-slate-700" />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Varifocals */}
+              <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100">
+                <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-widest flex items-center gap-2">📋 Varifocals</h3>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {['basic', 'elite', 'individual'].map((tier) => (
+                    <div key={tier} className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                      <h4 className="font-black text-slate-800 capitalize mb-6 text-xl">{tier} Tier</h4>
+                      <div className="space-y-4">
+                        {['1.5', '1.6', '1.67', '1.74'].map((idx, i) => (
+                          <div key={idx} className="flex items-center justify-between gap-2 border-b border-slate-200/60 pb-4 last:border-0 last:pb-0">
+                            <span className="font-bold text-slate-600 w-12">Idx {idx}</span>
+                            <div className="flex items-center gap-3">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-400 uppercase mb-1">New (£)</span>
+                                <input type="number" value={pricingData.varifocal[tier].new[i]} onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const next = {...pricingData};
+                                  next.varifocal[tier].new = [...next.varifocal[tier].new];
+                                  next.varifocal[tier].new[i] = val;
+                                  setPricingData(next);
+                                }} className="w-20 p-2.5 bg-white border-2 border-slate-200 rounded-xl text-center focus:border-[#3F9185] outline-none font-bold text-slate-700 transition-all" />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-400 uppercase mb-1">Own (£)</span>
+                                <input type="number" value={pricingData.varifocal[tier].own[i]} onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const next = {...pricingData};
+                                  next.varifocal[tier].own = [...next.varifocal[tier].own];
+                                  next.varifocal[tier].own[i] = val;
+                                  setPricingData(next);
+                                }} className="w-20 p-2.5 bg-white border-2 border-slate-200 rounded-xl text-center focus:border-[#3F9185] outline-none font-bold text-slate-700 transition-all" />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Coatings & Extras */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100">
+                  <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-widest flex items-center gap-2">✨ Coatings</h3>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <span className="font-bold text-slate-700">MAR (Single Vision)</span>
+                      <input type="number" value={pricingData.coatings.marBase} onChange={(e) => setPricingData({...pricingData, coatings: {...pricingData.coatings, marBase: parseInt(e.target.value)||0}})} className="w-24 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-[#3F9185] outline-none font-bold text-slate-700 text-center transition-all" />
+                    </div>
+                    <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <span className="font-bold text-slate-700">Blue Filter (Single Vision)</span>
+                      <input type="number" value={pricingData.coatings.blueBase} onChange={(e) => setPricingData({...pricingData, coatings: {...pricingData.coatings, blueBase: parseInt(e.target.value)||0}})} className="w-24 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-[#3F9185] outline-none font-bold text-slate-700 text-center transition-all" />
+                    </div>
+                    <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <span className="font-bold text-slate-700">Blue Filter (Varifocal Upgrade)</span>
+                      <input type="number" value={pricingData.coatings.blueVarifocal} onChange={(e) => setPricingData({...pricingData, coatings: {...pricingData.coatings, blueVarifocal: parseInt(e.target.value)||0}})} className="w-24 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-[#3F9185] outline-none font-bold text-slate-700 text-center transition-all" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100">
+                  <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-widest flex items-center gap-2">☀️ Light Protection</h3>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <span className="font-bold text-slate-700">Transitions (Single Vision)</span>
+                      <input type="number" value={pricingData.extras.transitions} onChange={(e) => setPricingData({...pricingData, extras: {...pricingData.extras, transitions: parseInt(e.target.value)||0}})} className="w-24 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-[#3F9185] outline-none font-bold text-slate-700 text-center transition-all" />
+                    </div>
+                    <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <span className="font-bold text-slate-700">Transitions (Varifocal)</span>
+                      <input type="number" value={pricingData.extras.transitionsVarifocal} onChange={(e) => setPricingData({...pricingData, extras: {...pricingData.extras, transitionsVarifocal: parseInt(e.target.value)||0}})} className="w-24 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-[#3F9185] outline-none font-bold text-slate-700 text-center transition-all" />
+                    </div>
+                    <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <span className="font-bold text-slate-700">XtrActive Transitions</span>
+                      <input type="number" value={pricingData.extras.xtractive} onChange={(e) => setPricingData({...pricingData, extras: {...pricingData.extras, xtractive: parseInt(e.target.value)||0}})} className="w-24 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-[#3F9185] outline-none font-bold text-slate-700 text-center transition-all" />
+                    </div>
+                    <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <span className="font-bold text-slate-700">Solid Tint</span>
+                      <input type="number" value={pricingData.extras.tint} onChange={(e) => setPricingData({...pricingData, extras: {...pricingData.extras, tint: parseInt(e.target.value)||0}})} className="w-24 p-3 bg-white border-2 border-slate-200 rounded-xl focus:border-[#3F9185] outline-none font-bold text-slate-700 text-center transition-all" />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
