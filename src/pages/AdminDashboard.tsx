@@ -18,7 +18,55 @@ interface ClinicConfig {
 }
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing' | 'guide'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing'>('diary');
+  const [pricingJson, setPricingJson] = useState('{}');
+  const [isSavingPricing, setIsSavingPricing] = useState(false);
+
+  // Fetch Pricing Data on load
+  useEffect(() => {
+    const fetchPricing = async () => {
+      try {
+        const docRef = doc(db, 'settings', 'pricing');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setPricingJson(JSON.stringify(docSnap.data(), null, 2));
+        } else {
+          // Default baseline pricing structure if it doesn't exist yet
+          const defaultPricing = {
+            singleVision: {
+              new: { "1.5": 0, "1.6 Spherical": 45, "1.6 Aspheric": 65, "1.67": 100, "1.74": 149 },
+              own: { "1.5": 59, "1.6 Spherical": 104, "1.6 Aspheric": 124, "1.67": 159, "1.74": 208 }
+            },
+            varifocal: {
+              basic: { new: [159, 224, 254, 304], own: [179, 244, 274, 324] },
+              elite: { new: [179, 274, 304, 354], own: [199, 294, 324, 374] },
+              individual: { new: [239, 334, 354, 414], own: [259, 354, 374, 434] }
+            },
+            coatings: { marBase: 35, blueBase: 45, blueVarifocal: 20 },
+            extras: { transitions: 49, transitionsVarifocal: 69, xtractive: 65, tint: 35 }
+          };
+          setPricingJson(JSON.stringify(defaultPricing, null, 2));
+        }
+      } catch (error) {
+        console.error("Error fetching pricing:", error);
+      }
+    };
+    fetchPricing();
+  }, []);
+
+  const handleSavePricing = async () => {
+    try {
+      setIsSavingPricing(true);
+      const parsedData = JSON.parse(pricingJson);
+      await setDoc(doc(db, 'settings', 'pricing'), parsedData);
+      alert('Pricing updated successfully! The price list website will now reflect these changes.');
+    } catch (error) {
+      alert('Invalid JSON format. Please check for missing commas or quotes.');
+      console.error(error);
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -1541,6 +1589,9 @@ export default function AdminDashboard() {
             <button onClick={() => setView('guide')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'guide' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <BookOpen size={18} /> SOP Guide
             </button>
+            <button onClick={() => setView('pricing')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'pricing' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <Tag size={18} /> Prices
+            </button>
           </div>
           <button onClick={() => window.location.href='/admin-login'} className="p-2 text-slate-400 hover:text-red-500">
             <LogOut size={20}/>
@@ -2706,8 +2757,35 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* --- REPORTS VIEW --- */}
-        {view === 'reports' && <ReportsDashboard appointments={appointments} />}
+        {/* --- PRICING CONFIG VIEW --- */}
+        {view === 'pricing' && (
+          <div className="glass-card rounded-[2.5rem] p-10 space-y-6 animate-in fade-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6 pb-6 border-b-2 border-slate-100">
+              <div>
+                <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3 uppercase tracking-tight">
+                  <Tag className="text-[#3F9185]" /> Master Pricing Configuration
+                </h2>
+                <p className="text-sm font-medium text-slate-500 mt-2">Edit the JSON values below. This syncs directly to your live Price List website.</p>
+              </div>
+              <button 
+                onClick={handleSavePricing}
+                disabled={isSavingPricing}
+                className="bg-slate-900 hover:bg-black text-white px-8 py-4 rounded-2xl font-black shadow-xl shadow-slate-900/20 transition-all hover:-translate-y-1 disabled:opacity-50"
+              >
+                {isSavingPricing ? 'Saving...' : 'Publish Prices to Live Site'}
+              </button>
+            </div>
+            
+            <div className="rounded-[2rem] bg-slate-900 p-4 shadow-inner border-4 border-slate-800">
+              <textarea 
+                value={pricingJson}
+                onChange={(e) => setPricingJson(e.target.value)}
+                className="w-full h-[600px] bg-slate-900 text-emerald-400 p-4 font-mono text-sm md:text-base border-none outline-none focus:ring-2 focus:ring-[#3F9185] rounded-xl resize-y leading-relaxed"
+                spellCheck="false"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* --- RECORD WALK-IN QUOTE MODAL --- */}
