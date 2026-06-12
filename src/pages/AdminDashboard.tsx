@@ -2757,6 +2757,9 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* --- REPORTS VIEW --- */}
+        {view === 'reports' && <ReportsDashboard appointments={appointments} />}
+
         {/* --- PRICING CONFIG VIEW --- */}
         {view === 'pricing' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-6 animate-in fade-in zoom-in-95">
