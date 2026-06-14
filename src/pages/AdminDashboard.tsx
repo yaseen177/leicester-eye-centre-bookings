@@ -271,27 +271,26 @@ export default function AdminDashboard() {
       const d = await getDoc(docRef);
       if (d.exists()) {
         const cloudData = d.data();
-        
-        // Backward compatibility for existing flat hours
-        let loadedHours = cloudData.hours || prev.hours;
-        if (loadedHours.start) {
-          const base = { start: loadedHours.start, end: loadedHours.end };
-          loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
-        }
-
-        setConfig(prev => ({
-          ...prev,
-          times: cloudData.times || prev.times,
-          hours: loadedHours,
-          lunch: {
-            start: cloudData.lunch?.start || "13:00",
-            end: cloudData.lunch?.end || "14:00",
-            enabled: cloudData.lunch?.enabled ?? true
-          },
-          weeklyOff: cloudData.weeklyOff || prev.weeklyOff,
-          openDates: cloudData.openDates || prev.openDates,
-          dailyOverrides: cloudData.dailyOverrides || prev.dailyOverrides
-        }));
+        setConfig(prev => {
+          let loadedHours = cloudData.hours || prev.hours;
+          if (loadedHours && loadedHours.start) {
+            const base = { start: loadedHours.start, end: loadedHours.end };
+            loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
+          }
+          return {
+            ...prev,
+            times: cloudData.times || prev.times,
+            hours: loadedHours,
+            lunch: {
+              start: cloudData.lunch?.start || "13:00",
+              end: cloudData.lunch?.end || "14:00",
+              enabled: cloudData.lunch?.enabled ?? true
+            },
+            weeklyOff: cloudData.weeklyOff || prev.weeklyOff,
+            openDates: cloudData.openDates || prev.openDates,
+            dailyOverrides: cloudData.dailyOverrides || prev.dailyOverrides
+          };
+        });
         setClosedDates(cloudData.closedDates || []);
       }
     };
@@ -2722,15 +2721,23 @@ export default function AdminDashboard() {
 
               <div className="space-y-4">
                 <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Activity size={18}/> Clinic Hours</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Opens</label>
-                    <input type="time" value={config.hours.start} onChange={e => setConfig({...config, hours: {...config.hours, start: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-4 px-1">
+                    <span className="text-[10px] font-black uppercase text-slate-400">Day</span>
+                    <span className="text-[10px] font-black uppercase text-slate-400">Opens</span>
+                    <span className="text-[10px] font-black uppercase text-slate-400">Closes</span>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Closes</label>
-                    <input type="time" value={config.hours.end} onChange={e => setConfig({...config, hours: {...config.hours, end: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
-                  </div>
+                  {daysOfWeek.map((day, idx) => {
+                    const isOff = config.weeklyOff.includes(idx);
+                    const dayH = config.hours[idx] || { start: "09:00", end: "17:00" };
+                    return (
+                      <div key={day} className={`grid grid-cols-3 gap-4 items-center ${isOff ? 'opacity-40 pointer-events-none' : ''}`}>
+                        <span className="text-xs font-bold text-slate-600 pl-1">{day}</span>
+                        <input type="time" value={dayH.start} onChange={e => setConfig({...config, hours: {...config.hours, [idx]: {...dayH, start: e.target.value}}})} className="w-full p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-bold" />
+                        <input type="time" value={dayH.end} onChange={e => setConfig({...config, hours: {...config.hours, [idx]: {...dayH, end: e.target.value}}})} className="w-full p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-bold" />
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 

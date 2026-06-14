@@ -62,21 +62,22 @@ export default function ManageBooking() {
     const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {
         const data = d.data();
-        
-        let loadedHours = data.hours || prev.hours;
-        if (loadedHours.start) {
-          const base = { start: loadedHours.start, end: loadedHours.end };
-          loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
-        }
-
-        setSettings(prev => ({
-          ...prev,
-          hours: loadedHours,
-          eyeCheck: Number(data.times?.eyeCheck) || 30, contactLens: Number(data.times?.contactLens) || 20,
-          closedDates: data.closedDates || [], openDates: data.openDates || [],
-          weeklyOff: data.weeklyOff || [], lunch: data.lunch || prev.lunch,
-          dailyOverrides: data.dailyOverrides || {}
-        }));
+        setSettings(prev => {
+          let loadedHours = data.hours || prev.hours;
+          if (loadedHours && loadedHours.start) {
+            const base = { start: loadedHours.start, end: loadedHours.end };
+            loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
+          }
+          return {
+            ...prev,
+            hours: loadedHours,
+            eyeCheck: Number(data.times?.eyeCheck) || 30, contactLens: Number(data.times?.contactLens) || 20,
+            buffer: Number(data.buffer) || 0,
+            closedDates: data.closedDates || [], openDates: data.openDates || [], weeklyOff: data.weeklyOff || [],
+            lunch: data.lunch || { start: "13:00", end: "14:00", enabled: true },
+            dailyOverrides: data.dailyOverrides || {}
+          };
+        });
       }
     });
 
