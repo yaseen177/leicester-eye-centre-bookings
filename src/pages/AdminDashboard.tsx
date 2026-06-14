@@ -9,7 +9,7 @@ import ReportsDashboard from './ReportsDashboard';
 
 interface ClinicConfig {
   times: { eyeCheck: number; contactLens: number };
-  hours: { start: string; end: string };
+  hours: Record<number, { start: string; end: string }>;
   lunch: { start: string; end: string; enabled: boolean };
   weeklyOff: number[];
   openDates: string[];
@@ -82,7 +82,12 @@ export default function AdminDashboard() {
 
   const [config, setConfig] = useState<ClinicConfig>({ 
     times: { eyeCheck: 30, contactLens: 20 }, 
-    hours: { start: "09:00", end: "17:00" },
+    hours: { 
+      0: { start: "09:00", end: "17:00" }, 1: { start: "09:00", end: "17:00" },
+      2: { start: "09:00", end: "17:00" }, 3: { start: "09:00", end: "17:00" },
+      4: { start: "09:00", end: "17:00" }, 5: { start: "09:00", end: "17:00" },
+      6: { start: "09:00", end: "17:00" } 
+    },
     lunch: { start: "13:00", end: "14:00", enabled: true },
     weeklyOff: [0], openDates: [], dailyOverrides: {}
   });
@@ -266,10 +271,18 @@ export default function AdminDashboard() {
       const d = await getDoc(docRef);
       if (d.exists()) {
         const cloudData = d.data();
+        
+        // Backward compatibility for existing flat hours
+        let loadedHours = cloudData.hours || prev.hours;
+        if (loadedHours.start) {
+          const base = { start: loadedHours.start, end: loadedHours.end };
+          loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
+        }
+
         setConfig(prev => ({
           ...prev,
           times: cloudData.times || prev.times,
-          hours: cloudData.hours || prev.hours,
+          hours: loadedHours,
           lunch: {
             start: cloudData.lunch?.start || "13:00",
             end: cloudData.lunch?.end || "14:00",
@@ -1199,7 +1212,9 @@ export default function AdminDashboard() {
 
   const renderGrid = () => {
     const grid: ReactNode[] = [];
-    const dayHours = config.dailyOverrides?.[selectedDate] || config.hours;
+    const dayOfWeek = new Date(selectedDate).getDay();
+    const baseHours = config.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
+    const dayHours = config.dailyOverrides?.[selectedDate] || baseHours;
     const startMins = toMins(dayHours.start);
     const endMins = toMins(dayHours.end);
 
@@ -1862,9 +1877,9 @@ export default function AdminDashboard() {
             <div className="mb-8 p-5 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-3 text-slate-500"><Clock size={16} /><span className="text-xs font-bold uppercase">Shift for this specific day:</span></div>
               <div className="flex items-center gap-2">
-                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.start || config.hours.start} onChange={(e) => updateDailyHours(e.target.value, config.dailyOverrides?.[selectedDate]?.end || config.hours.end)} />
+                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.start || config.hours[new Date(selectedDate).getDay()]?.start || "09:00"} onChange={(e) => updateDailyHours(e.target.value, config.dailyOverrides?.[selectedDate]?.end || config.hours[new Date(selectedDate).getDay()]?.end || "17:00")} />
                 <span className="text-slate-300">to</span>
-                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.end || config.hours.end} onChange={(e) => updateDailyHours(config.dailyOverrides?.[selectedDate]?.start || config.hours.start, e.target.value)} />
+                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.end || config.hours[new Date(selectedDate).getDay()]?.end || "17:00"} onChange={(e) => updateDailyHours(config.dailyOverrides?.[selectedDate]?.start || config.hours[new Date(selectedDate).getDay()]?.start || "09:00", e.target.value)} />
               </div>
             </div>
 

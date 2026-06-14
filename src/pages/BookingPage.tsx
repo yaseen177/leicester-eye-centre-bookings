@@ -19,8 +19,12 @@ export default function BookingPage() {
   const [loading, setLoading] = useState(false);
   const [existingBookings, setExistingBookings] = useState<any[]>([]);
   const [settings, setSettings] = useState({ 
-    start: "09:00", 
-    end: "17:00", 
+    hours: { 
+      0: { start: "09:00", end: "17:00" }, 1: { start: "09:00", end: "17:00" },
+      2: { start: "09:00", end: "17:00" }, 3: { start: "09:00", end: "17:00" },
+      4: { start: "09:00", end: "17:00" }, 5: { start: "09:00", end: "17:00" },
+      6: { start: "09:00", end: "17:00" } 
+    } as Record<number, { start: string; end: string }>,
     eyeCheck: 30, 
     contactLens: 20,
     buffer: 0,
@@ -73,10 +77,16 @@ export default function BookingPage() {
     const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {
         const data = d.data();
+        
+        let loadedHours = data.hours || prev.hours;
+        if (loadedHours.start) {
+          const base = { start: loadedHours.start, end: loadedHours.end };
+          loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
+        }
+
         setSettings(prev => ({
           ...prev,
-          start: data.hours?.start || "09:00",
-          end: data.hours?.end || "17:00",
+          hours: loadedHours,
           eyeCheck: Number(data.times?.eyeCheck) || 30,
           contactLens: Number(data.times?.contactLens) || 20,
           closedDates: data.closedDates || [],
@@ -116,7 +126,8 @@ export default function BookingPage() {
 
     if (isStandardDayOff && !isManuallyOverriddenToOpen) return [];
   
-    const dayHours = dailyOverrides?.[targetDate] || settings;
+    const baseHours = settings.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
+    const dayHours = dailyOverrides?.[targetDate] || baseHours;
     const clinicStart = toMins(dayHours.start || "09:00");
     const clinicEnd = toMins(dayHours.end || "17:00");
 
