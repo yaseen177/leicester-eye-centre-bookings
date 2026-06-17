@@ -688,7 +688,10 @@ export default function AdminDashboard() {
   };
 
   const calculateSlotsForDate = (targetDate: string) => {
-    const dayHours = config.dailyOverrides?.[targetDate] || config.hours;
+    const dateObj = new Date(targetDate);
+    const dayOfWeek = dateObj.getDay();
+    const baseHours = config.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
+    const dayHours = config.dailyOverrides?.[targetDate] || baseHours;
     const startMins = toMins(dayHours.start);
     const endMins = toMins(dayHours.end);
 
@@ -1211,7 +1214,8 @@ export default function AdminDashboard() {
 
   const renderGrid = () => {
     const grid: ReactNode[] = [];
-    const dayOfWeek = new Date(selectedDate).getDay();
+    const dateObj = new Date(selectedDate);
+    const dayOfWeek = dateObj.getDay();
     const baseHours = config.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
     const dayHours = config.dailyOverrides?.[selectedDate] || baseHours;
     const startMins = toMins(dayHours.start);
