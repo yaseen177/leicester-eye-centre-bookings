@@ -1,21 +1,38 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
 // @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
 import ReportsDashboard from './ReportsDashboard';
 
-interface ClinicConfig {
-  times: { eyeCheck: number; contactLens: number };
+interface ClinicScheduleConfig {
+  times: Record<string, number>;
   hours: Record<number, { start: string; end: string }>;
   lunch: { start: string; end: string; enabled: boolean };
   weeklyOff: number[];
   openDates: string[];
   dailyOverrides: Record<string, { start: string; end: string }>;
-  closedDates?: string[];
+  closedDates: string[];
 }
+
+interface ClinicConfig {
+  eyeCare: ClinicScheduleConfig;
+  dispensing: ClinicScheduleConfig;
+}
+
+type ClinicKey = 'eyeCare' | 'dispensing';
+
+// Dispensing appointments are tagged with this exact appointmentType string.
+const isDispensingAppointment = (appointmentType?: string) => appointmentType === 'Dispensing';
+
+// Returns the slot duration (mins) for a given clinic + appointment type.
+const getSlotDuration = (clinic: ClinicKey, appointmentType: string | undefined, times: Record<string, number>) => {
+  if (clinic === 'dispensing') return times.dispensing || 15;
+  return appointmentType?.includes('Contact') ? times.contactLens : times.eyeCheck;
+};
 
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing'>('diary');
@@ -68,7 +85,7 @@ export default function AdminDashboard() {
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [editingApp, setEditingApp] = useState<any>(null);
-  const [closedDates, setClosedDates] = useState<string[]>([]);
+  
 
   const [isUnconfirmedModalOpen, setIsUnconfirmedModalOpen] = useState(false);
   const [recentlyConfirmed, setRecentlyConfirmed] = useState<string[]>([]);
@@ -80,17 +97,30 @@ export default function AdminDashboard() {
     firstName: '', lastName: '', email: '', phone: '', dob: '', service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
   });
 
+  const defaultEyeCareHours = { 
+    0: { start: "09:00", end: "17:00" }, 1: { start: "09:00", end: "17:00" },
+    2: { start: "09:00", end: "17:00" }, 3: { start: "09:00", end: "17:00" },
+    4: { start: "09:00", end: "17:00" }, 5: { start: "09:00", end: "17:00" },
+    6: { start: "09:00", end: "17:00" } 
+  };
+
   const [config, setConfig] = useState<ClinicConfig>({ 
-    times: { eyeCheck: 30, contactLens: 20 }, 
-    hours: { 
-      0: { start: "09:00", end: "17:00" }, 1: { start: "09:00", end: "17:00" },
-      2: { start: "09:00", end: "17:00" }, 3: { start: "09:00", end: "17:00" },
-      4: { start: "09:00", end: "17:00" }, 5: { start: "09:00", end: "17:00" },
-      6: { start: "09:00", end: "17:00" } 
+    eyeCare: {
+      times: { eyeCheck: 30, contactLens: 20 },
+      hours: defaultEyeCareHours,
+      lunch: { start: "13:00", end: "14:00", enabled: true },
+      weeklyOff: [0], openDates: [], dailyOverrides: {}, closedDates: []
     },
-    lunch: { start: "13:00", end: "14:00", enabled: true },
-    weeklyOff: [0], openDates: [], dailyOverrides: {}
+    dispensing: {
+      // weeklyOff: [] — open every day by default, including Sundays, per your Dispensing hours
+      times: { dispensing: 15 },
+      hours: defaultEyeCareHours,
+      lunch: { start: "13:00", end: "14:00", enabled: true },
+      weeklyOff: [], openDates: [], dailyOverrides: {}, closedDates: []
+    }
   });
+
+  const [activeClinic, setActiveClinic] = useState<ClinicKey>('eyeCare');
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -266,32 +296,42 @@ export default function AdminDashboard() {
       setWalkInQuotes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const normalizeClinicSchedule = (cloudData: any, prev: ClinicScheduleConfig): ClinicScheduleConfig => {
+      let loadedHours = cloudData?.hours || prev.hours;
+      if (loadedHours && loadedHours.start) {
+        const base = { start: loadedHours.start, end: loadedHours.end };
+        loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
+      }
+      return {
+        times: cloudData?.times || prev.times,
+        hours: loadedHours,
+        lunch: {
+          start: cloudData?.lunch?.start || "13:00",
+          end: cloudData?.lunch?.end || "14:00",
+          enabled: cloudData?.lunch?.enabled ?? true
+        },
+        weeklyOff: cloudData?.weeklyOff || prev.weeklyOff,
+        openDates: cloudData?.openDates || prev.openDates,
+        dailyOverrides: cloudData?.dailyOverrides || prev.dailyOverrides,
+        closedDates: cloudData?.closedDates || []
+      };
+    };
+
     const loadSettings = async () => {
       const docRef = doc(db, "settings", "clinicConfig");
       const d = await getDoc(docRef);
       if (d.exists()) {
-        const cloudData = d.data();
-        setConfig(prev => {
-          let loadedHours = cloudData.hours || prev.hours;
-          if (loadedHours && loadedHours.start) {
-            const base = { start: loadedHours.start, end: loadedHours.end };
-            loadedHours = { 0: base, 1: base, 2: base, 3: base, 4: base, 5: base, 6: base };
-          }
-          return {
-            ...prev,
-            times: cloudData.times || prev.times,
-            hours: loadedHours,
-            lunch: {
-              start: cloudData.lunch?.start || "13:00",
-              end: cloudData.lunch?.end || "14:00",
-              enabled: cloudData.lunch?.enabled ?? true
-            },
-            weeklyOff: cloudData.weeklyOff || prev.weeklyOff,
-            openDates: cloudData.openDates || prev.openDates,
-            dailyOverrides: cloudData.dailyOverrides || prev.dailyOverrides
-          };
-        });
-        setClosedDates(cloudData.closedDates || []);
+        const cloudData: any = d.data();
+        // Backward-compatible: old documents stored eyeCare's fields flat at the
+        // top level (no "eyeCare" key). Treat that shape as eyeCare data so nothing
+        // breaks on the first load after this update — no manual migration needed.
+        const eyeCareCloudData = cloudData.eyeCare || cloudData;
+        const dispensingCloudData = cloudData.dispensing || null;
+
+        setConfig(prev => ({
+          eyeCare: normalizeClinicSchedule(eyeCareCloudData, prev.eyeCare),
+          dispensing: normalizeClinicSchedule(dispensingCloudData, prev.dispensing)
+        }));
       }
     };
     loadSettings();
@@ -688,18 +728,19 @@ export default function AdminDashboard() {
   };
 
   const calculateSlotsForDate = (targetDate: string) => {
+    const activeConfig = config[activeClinic];
     const dateObj = new Date(targetDate);
     const dayOfWeek = dateObj.getDay();
-    const baseHours = config.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
-    const dayHours = config.dailyOverrides?.[targetDate] || baseHours;
+    const baseHours = activeConfig.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
+    const dayHours = activeConfig.dailyOverrides?.[targetDate] || baseHours;
     const startMins = toMins(dayHours.start);
     const endMins = toMins(dayHours.end);
 
-    const isLunchEnabled = config.lunch?.enabled ?? true;
-    const lunchStartMins = toMins(config.lunch?.start || "13:00");
-    const lunchEndMins = toMins(config.lunch?.end || "14:00");
+    const isLunchEnabled = activeConfig.lunch?.enabled ?? true;
+    const lunchStartMins = toMins(activeConfig.lunch?.start || "13:00");
+    const lunchEndMins = toMins(activeConfig.lunch?.end || "14:00");
 
-    const duration = newBooking.service === 'Eye Check' ? config.times.eyeCheck : config.times.contactLens;
+    const duration = getSlotDuration(activeClinic, newBooking.service, activeConfig.times);
     const slots: string[] = [];
 
     const now = new Date();
@@ -708,9 +749,9 @@ export default function AdminDashboard() {
     const currentMins = (now.getHours() * 60) + now.getMinutes();
 
     const dayBookings = appointments
-      .filter(b => b.appointmentDate === targetDate)
+      .filter(b => b.appointmentDate === targetDate && isDispensingAppointment(b.appointmentType) === (activeClinic === 'dispensing'))
       .map(b => {
-        const d = b.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck;
+        const d = getSlotDuration(activeClinic, b.appointmentType, activeConfig.times);
         return { start: toMins(b.appointmentTime), end: toMins(b.appointmentTime) + d };
       });
 
@@ -908,7 +949,9 @@ export default function AdminDashboard() {
       const age = calculateAge(newBooking.dob);
       let category = 'Eye Check Private';
       
-      if (newBooking.service === 'Contact Lens Check') {
+      if (newBooking.service === 'Dispensing') {
+        category = 'Dispensing';
+      } else if (newBooking.service === 'Contact Lens Check') {
         category = 'Contact Lens Check';
       } else {
         if (age >= 60) category = 'Eye Check Over 60';
@@ -988,6 +1031,20 @@ export default function AdminDashboard() {
         } catch(e) {
           await writeLog('SMS', newBooking.firstName, formattedPhone, 'Failed', 'Booking Confirmation', selectedDate, newBooking.time, 'Network Error');
         }
+
+        try {
+          await scheduleAllReminders({
+            docRef,
+            phone: formattedPhone,
+            firstName: newBooking.firstName,
+            service: newBooking.service,
+            dateStr: selectedDate,
+            timeStr: newBooking.time,
+            manageLink
+          });
+        } catch (e) {
+          console.error("Reminder scheduling failed:", e);
+        }
       }
   
       setIsBookingModalOpen(false);
@@ -1015,11 +1072,12 @@ export default function AdminDashboard() {
   };
 
   const isDateClosed = () => {
+    const activeConfig = config[activeClinic];
     const dateObj = new Date(selectedDate);
     const dayOfWeek = dateObj.getDay(); 
-    const isWeeklyOff = config.weeklyOff?.includes(dayOfWeek);
-    const isManuallyOpened = config.openDates?.includes(selectedDate);
-    const isManuallyClosed = closedDates.includes(selectedDate);
+    const isWeeklyOff = activeConfig.weeklyOff?.includes(dayOfWeek);
+    const isManuallyOpened = activeConfig.openDates?.includes(selectedDate);
+    const isManuallyClosed = activeConfig.closedDates?.includes(selectedDate);
     return isManuallyClosed || (isWeeklyOff && !isManuallyOpened);
   };
 
@@ -1050,6 +1108,7 @@ export default function AdminDashboard() {
           if (res.ok) {
             await writeLog('SMS', bookingData.patientName, bookingData.phone, 'Sent', 'Cancellation', bookingData.appointmentDate, bookingData.appointmentTime);
           }
+          await cancelReminder(bookingData.phone, bookingData.reminderSid9am);
         }
 
         await deleteDoc(doc(db, "appointments", bookingData.id));
@@ -1111,6 +1170,18 @@ export default function AdminDashboard() {
         
         if (newStatus === 'Visit Complete' && appData.status !== 'Visit Complete') {
            updatePayload.completedAt = serverTimestamp();
+
+           await fetch("https://twilio.yaseen-hussain18.workers.dev/schedule-review", {
+             method: "POST",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({
+               appointmentId: id,
+               email: appData.email || null,
+               phone: appData.phone || null,
+               patientName: appData.patientName ? appData.patientName.split(' ')[0] : 'there',
+               reviewLink: "https://www.google.com/search?sca_esv=05e9b9d0eac2d55a&rlz=1CDGOYI_enGB1088GB1088&hl=en-GB&sxsrf=APpeQntpMKdzO9SDte-MCG_ZRfLgKl4KBg:1783540324328&q=the+eye+centre+leicester+reviews&uds=AJ5uw1_dDM0QRrBvstcLgcNOdWNUTp49nD5ZGFiPqYDS57Mh_l8Marhi0sbANwKRftiz0PBKSX-G1_gD37-l5blZLXw-Lfl2V7KKV3AmFKGhSY3GtXj9pR5m3j379YBlpeVlCwUXF9lfE4X6SfSiET0xdcb2zIe_M_004dt2LjxRIYk5dtQCkiepolzg9PHdSY6aI4K8LCLiGDkKfrlXC0rBgyczRupHZZGDnxqI_YZ3xZj6-SRBdsEveU997FyjhMlDIbjiG5hDyaJLoTB_wSyYcBoYUSDsqBy4Y-Yegpj7bfG1UBA3fzPjecCJqulnzmXunPVGoPhQQzwAagrdiYlOID7QL7yRshnS7gre7Bc5bcxfOseQnHdKdNdgdcHm3HkE02RRp8v3UV8P-cY51abu6w2gGOk45ah_0Xw5r5l9ILJW-H-abt4EDxECuk7pRBmd9eJqTqcL7xPUFz3QNGgAK8dmdj97E7kF50BOlsNyFr7HMS0QfELq2FNVrJmmAnJc0R_-C8rRCeNj70pyBAdZH91cK-uSwpqznKLqliOdJXiS8d_woBOGQIH5f9lcf6iANpkzJXx4&si=APenkKn5T4YN59srr511wD6k6Pufj9DEzRUvB1XJSwUeeT5afuk9OXJStp1chFik7qFY28F84v-Qc5HlqCAcfm-YiEGKKNJp2OfWCZznsUQXwKBPT6_iGSbg2GIuWRPYBjmuE1XRqgT6YCV7v6UunSV76WzembaWMg%3D%3D&sa=X&ved=2ahUKEwjghuW77cOVAxU-S_EDHXuHJrQQk8gLegQIGxAB&ictx=1"
+             })
+           }).catch(err => console.error("Review scheduling failed:", err));
         }
       }
 
@@ -1171,12 +1242,13 @@ export default function AdminDashboard() {
   };
 
   const toggleDayStatus = async (date: string) => {
+    const activeConfig = config[activeClinic];
     const dateObj = new Date(date);
     const dayOfWeek = dateObj.getDay();
-    const isWeeklyOff = config.weeklyOff?.includes(dayOfWeek);
+    const isWeeklyOff = activeConfig.weeklyOff?.includes(dayOfWeek);
 
-    let newClosed = [...closedDates];
-    let newOpen = [...(config.openDates || [])];
+    let newClosed = [...(activeConfig.closedDates || [])];
+    let newOpen = [...(activeConfig.openDates || [])];
 
     if (isWeeklyOff) {
       newOpen = newOpen.includes(date) ? newOpen.filter(d => d !== date) : [...newOpen, date];
@@ -1184,25 +1256,29 @@ export default function AdminDashboard() {
       newClosed = newClosed.includes(date) ? newClosed.filter(d => d !== date) : [...newClosed, date];
     }
 
-    setClosedDates(newClosed);
-    const updatedConfig = { ...config, openDates: newOpen, closedDates: newClosed };
+    const updatedConfig = {
+      ...config,
+      [activeClinic]: { ...activeConfig, openDates: newOpen, closedDates: newClosed }
+    };
     setConfig(updatedConfig);
     await setDoc(doc(db, "settings", "clinicConfig"), updatedConfig, { merge: true });
   };
 
   const updateDailyHours = async (start: string, end: string) => {
-    const newOverrides = { ...config.dailyOverrides, [selectedDate]: { start, end } };
-    const newConfig = { ...config, dailyOverrides: newOverrides };
-    setConfig(newConfig);
-    await setDoc(doc(db, "settings", "clinicConfig"), newConfig, { merge: true });
+    const activeConfig = config[activeClinic];
+    const newOverrides = { ...activeConfig.dailyOverrides, [selectedDate]: { start, end } };
+    const updatedConfig = { ...config, [activeClinic]: { ...activeConfig, dailyOverrides: newOverrides } };
+    setConfig(updatedConfig);
+    await setDoc(doc(db, "settings", "clinicConfig"), updatedConfig, { merge: true });
   };
 
   const toggleWeeklyDay = async (dayIndex: number) => {
-    let newWeeklyOff = [...config.weeklyOff];
+    const activeConfig = config[activeClinic];
+    let newWeeklyOff = [...activeConfig.weeklyOff];
     newWeeklyOff = newWeeklyOff.includes(dayIndex) ? newWeeklyOff.filter(d => d !== dayIndex) : [...newWeeklyOff, dayIndex];
-    const newConfig = { ...config, weeklyOff: newWeeklyOff };
-    setConfig(newConfig);
-    await setDoc(doc(db, "settings", "clinicConfig"), newConfig, { merge: true });
+    const updatedConfig = { ...config, [activeClinic]: { ...activeConfig, weeklyOff: newWeeklyOff } };
+    setConfig(updatedConfig);
+    await setDoc(doc(db, "settings", "clinicConfig"), updatedConfig, { merge: true });
   };
 
   const saveConfig = async () => {
@@ -1213,28 +1289,32 @@ export default function AdminDashboard() {
   };
 
   const renderGrid = () => {
+    const activeConfig = config[activeClinic];
     const grid: ReactNode[] = [];
     const dateObj = new Date(selectedDate);
     const dayOfWeek = dateObj.getDay();
-    const baseHours = config.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
-    const dayHours = config.dailyOverrides?.[selectedDate] || baseHours;
+    const baseHours = activeConfig.hours[dayOfWeek] || { start: "09:00", end: "17:00" };
+    const dayHours = activeConfig.dailyOverrides?.[selectedDate] || baseHours;
     const startMins = toMins(dayHours.start);
     const endMins = toMins(dayHours.end);
 
-    const isLunchEnabled = config.lunch?.enabled ?? true;
-    const lunchStartMins = toMins(config.lunch?.start || "13:00");
-    const lunchEndMins = toMins(config.lunch?.end || "14:00");
+    const isLunchEnabled = activeConfig.lunch?.enabled ?? true;
+    const lunchStartMins = toMins(activeConfig.lunch?.start || "13:00");
+    const lunchEndMins = toMins(activeConfig.lunch?.end || "14:00");
+
+    const gridStepMins = activeClinic === 'dispensing' ? (activeConfig.times.dispensing || 15) : activeConfig.times.eyeCheck;
+    const clinicAppointments = appointments.filter((a: any) => isDispensingAppointment(a.appointmentType) === (activeClinic === 'dispensing'));
     
     for (let time = startMins; time < endMins; time += 5) {
       const timeStr = fromMins(time);
       const isLunchSlot = isLunchEnabled && (time >= lunchStartMins && time < lunchEndMins);
-      const booking = appointments.find((a: any) => a.appointmentDate === selectedDate && a.appointmentTime === timeStr);
+      const booking = clinicAppointments.find((a: any) => a.appointmentDate === selectedDate && a.appointmentTime === timeStr);
   
-      const isGridLine = time % config.times.eyeCheck === 0;
+      const isGridLine = time % gridStepMins === 0;
 
       if (booking || isGridLine) {
         const duration = booking 
-          ? (booking.appointmentType.includes('Contact') ? config.times.contactLens : config.times.eyeCheck)
+          ? getSlotDuration(activeClinic, booking.appointmentType, activeConfig.times)
           : 0;
         const endTimeStr = booking ? fromMins(time + duration) : '';
 
@@ -1308,7 +1388,7 @@ export default function AdminDashboard() {
                     if (!isLunchSlot && !isDateClosed()) {
                       setNewBooking({
                         firstName: '', lastName: '', email: '', phone: '', dob: '', 
-                        service: 'Eye Check', time: timeStr, 
+                        service: activeClinic === 'dispensing' ? 'Dispensing' : 'Eye Check', time: timeStr, 
                         inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
                       });
                       setIsBookingModalOpen(true);
@@ -1440,9 +1520,11 @@ export default function AdminDashboard() {
     ? isSmsValid 
     : (isEmailValid && manualMsgData.body.trim().length > 0 && manualMsgData.subject.trim().length > 0);
 
-  // Clinic dispenses logic
+  // Clinic dispenses logic — excludes Contact Lens Checks AND the new Dispensing
+  // clinic bookings (those ARE the dispensing appointment, not an eye check
+  // patient who still needs glasses dispensed to them).
   const clinicDispenses = appointments
-    .filter(a => a.status === 'Visit Complete' && !a.appointmentType?.includes('Contact'))
+    .filter(a => a.status === 'Visit Complete' && !a.appointmentType?.includes('Contact') && !isDispensingAppointment(a.appointmentType))
     .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime());
 
 
@@ -1832,10 +1914,14 @@ export default function AdminDashboard() {
         {/* --- DIARY VIEW --- */}
         {view === 'diary' && (
           <div className="glass-card rounded-[2.5rem] p-8 shadow-2xl shadow-teal-900/5">
+            <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 mb-6 w-fit">
+              <button onClick={() => setActiveClinic('eyeCare')} className={`px-5 py-2 rounded-xl font-black text-xs uppercase transition-all ${activeClinic === 'eyeCare' ? 'bg-[#3F9185] text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>Eye Care Diary</button>
+              <button onClick={() => setActiveClinic('dispensing')} className={`px-5 py-2 rounded-xl font-black text-xs uppercase transition-all ${activeClinic === 'dispensing' ? 'bg-[#3F9185] text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>Dispensing Diary</button>
+            </div>
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3"><CalendarIcon className="text-[#3F9185]" /> Daily Grid</h2>
-                <button onClick={() => setIsBookingModalOpen(true)} className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 shadow-md">+ New Booking</button>
+                <button onClick={() => { setNewBooking(prev => ({ ...prev, service: activeClinic === 'dispensing' ? 'Dispensing' : 'Eye Check' })); setIsBookingModalOpen(true); }} className="bg-[#3F9185] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 shadow-md">+ New Booking</button>
                 <button onClick={() => setIsUnconfirmedModalOpen(true)} className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 shadow-md transition-all ${unconfirmedCount > 0 ? 'bg-orange-500 hover:bg-orange-600 text-white animate-pulse' : 'bg-slate-100 text-slate-400'}`}>
                    📞 7-Day Call List ({unconfirmedCount})
                 </button>
@@ -1880,9 +1966,9 @@ export default function AdminDashboard() {
             <div className="mb-8 p-5 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-3 text-slate-500"><Clock size={16} /><span className="text-xs font-bold uppercase">Shift for this specific day:</span></div>
               <div className="flex items-center gap-2">
-                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.start || config.hours[new Date(selectedDate).getDay()]?.start || "09:00"} onChange={(e) => updateDailyHours(e.target.value, config.dailyOverrides?.[selectedDate]?.end || config.hours[new Date(selectedDate).getDay()]?.end || "17:00")} />
+                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config[activeClinic].dailyOverrides?.[selectedDate]?.start || config[activeClinic].hours[new Date(selectedDate).getDay()]?.start || "09:00"} onChange={(e) => updateDailyHours(e.target.value, config[activeClinic].dailyOverrides?.[selectedDate]?.end || config[activeClinic].hours[new Date(selectedDate).getDay()]?.end || "17:00")} />
                 <span className="text-slate-300">to</span>
-                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config.dailyOverrides?.[selectedDate]?.end || config.hours[new Date(selectedDate).getDay()]?.end || "17:00"} onChange={(e) => updateDailyHours(config.dailyOverrides?.[selectedDate]?.start || config.hours[new Date(selectedDate).getDay()]?.start || "09:00", e.target.value)} />
+                <input type="time" className="p-2 bg-slate-50 rounded-lg text-xs font-bold outline-none" value={config[activeClinic].dailyOverrides?.[selectedDate]?.end || config[activeClinic].hours[new Date(selectedDate).getDay()]?.end || "17:00"} onChange={(e) => updateDailyHours(config[activeClinic].dailyOverrides?.[selectedDate]?.start || config[activeClinic].hours[new Date(selectedDate).getDay()]?.start || "09:00", e.target.value)} />
               </div>
             </div>
 
@@ -2707,19 +2793,34 @@ export default function AdminDashboard() {
         {/* --- SETTINGS VIEW --- */}
         {view === 'settings' && (
           <div className="glass-card rounded-[2.5rem] p-10 space-y-8">
-            <h2 className="text-2xl font-black text-slate-800">Clinic Settings</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-black text-slate-800">Clinic Settings</h2>
+              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
+                <button onClick={() => setActiveClinic('eyeCare')} className={`px-5 py-2 rounded-xl font-black text-xs uppercase transition-all ${activeClinic === 'eyeCare' ? 'bg-[#3F9185] text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>Eye Care</button>
+                <button onClick={() => setActiveClinic('dispensing')} className={`px-5 py-2 rounded-xl font-black text-xs uppercase transition-all ${activeClinic === 'dispensing' ? 'bg-[#3F9185] text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>Dispensing</button>
+              </div>
+            </div>
             <div className="grid md:grid-cols-2 gap-10">
               <div className="space-y-4">
                 <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Clock size={18}/> Durations (mins)</h3>
                 <div className="space-y-4">
-                  <div>
-                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Eye Examination</label>
-                    <input type="number" value={config.times.eyeCheck} onChange={e => setConfig({...config, times: {...config.times, eyeCheck: +e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Contact Lens Check</label>
-                    <input type="number" value={config.times.contactLens} onChange={e => setConfig({...config, times: {...config.times, contactLens: +e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
-                  </div>
+                  {activeClinic === 'eyeCare' ? (
+                    <>
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Eye Examination</label>
+                        <input type="number" value={config.eyeCare.times.eyeCheck} onChange={e => setConfig({...config, eyeCare: {...config.eyeCare, times: {...config.eyeCare.times, eyeCheck: +e.target.value}}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Contact Lens Check</label>
+                        <input type="number" value={config.eyeCare.times.contactLens} onChange={e => setConfig({...config, eyeCare: {...config.eyeCare, times: {...config.eyeCare.times, contactLens: +e.target.value}}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Dispensing Appointment</label>
+                      <input type="number" value={config.dispensing.times.dispensing} onChange={e => setConfig({...config, dispensing: {...config.dispensing, times: {...config.dispensing.times, dispensing: +e.target.value}}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2732,13 +2833,13 @@ export default function AdminDashboard() {
                     <span className="text-[10px] font-black uppercase text-slate-400">Closes</span>
                   </div>
                   {daysOfWeek.map((day, idx) => {
-                    const isOff = config.weeklyOff.includes(idx);
-                    const dayH = config.hours[idx] || { start: "09:00", end: "17:00" };
+                    const isOff = config[activeClinic].weeklyOff.includes(idx);
+                    const dayH = config[activeClinic].hours[idx] || { start: "09:00", end: "17:00" };
                     return (
                       <div key={day} className={`grid grid-cols-3 gap-4 items-center ${isOff ? 'opacity-40 pointer-events-none' : ''}`}>
                         <span className="text-xs font-bold text-slate-600 pl-1">{day}</span>
-                        <input type="time" value={dayH.start} onChange={e => setConfig({...config, hours: {...config.hours, [idx]: {...dayH, start: e.target.value}}})} className="w-full p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-bold" />
-                        <input type="time" value={dayH.end} onChange={e => setConfig({...config, hours: {...config.hours, [idx]: {...dayH, end: e.target.value}}})} className="w-full p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-bold" />
+                        <input type="time" value={dayH.start} onChange={e => setConfig({...config, [activeClinic]: {...config[activeClinic], hours: {...config[activeClinic].hours, [idx]: {...dayH, start: e.target.value}}}})} className="w-full p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-bold" />
+                        <input type="time" value={dayH.end} onChange={e => setConfig({...config, [activeClinic]: {...config[activeClinic], hours: {...config[activeClinic].hours, [idx]: {...dayH, end: e.target.value}}}})} className="w-full p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185] text-sm font-bold" />
                       </div>
                     )
                   })}
@@ -2749,18 +2850,18 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Clock size={18}/> Lunch Break</h3>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={config.lunch.enabled} onChange={e => setConfig({...config, lunch: {...config.lunch, enabled: e.target.checked}})} />
+                    <input type="checkbox" className="sr-only peer" checked={config[activeClinic].lunch.enabled} onChange={e => setConfig({...config, [activeClinic]: {...config[activeClinic], lunch: {...config[activeClinic].lunch, enabled: e.target.checked}}})} />
                     <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#3F9185]"></div>
                   </label>
                 </div>
-                <div className={`grid grid-cols-2 gap-4 ${!config.lunch.enabled ? 'opacity-30 pointer-events-none' : ''}`}>
+                <div className={`grid grid-cols-2 gap-4 ${!config[activeClinic].lunch.enabled ? 'opacity-30 pointer-events-none' : ''}`}>
                   <div>
                     <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Starts</label>
-                    <input type="time" value={config.lunch.start} onChange={e => setConfig({...config, lunch: {...config.lunch, start: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                    <input type="time" value={config[activeClinic].lunch.start} onChange={e => setConfig({...config, [activeClinic]: {...config[activeClinic], lunch: {...config[activeClinic].lunch, start: e.target.value}}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
                   </div>
                   <div>
                     <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Ends</label>
-                    <input type="time" value={config.lunch.end} onChange={e => setConfig({...config, lunch: {...config.lunch, end: e.target.value}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                    <input type="time" value={config[activeClinic].lunch.end} onChange={e => setConfig({...config, [activeClinic]: {...config[activeClinic], lunch: {...config[activeClinic].lunch, end: e.target.value}}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
                   </div>
                 </div>
               </div>
@@ -2769,7 +2870,7 @@ export default function AdminDashboard() {
                 <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><CalendarIcon size={18}/> Weekly Off</h3>
                 <div className="flex flex-wrap gap-2">
                   {daysOfWeek.map((day, idx) => (
-                    <button key={day} onClick={() => toggleWeeklyDay(idx)} className={`px-4 py-2 rounded-xl font-bold text-xs ${config.weeklyOff.includes(idx) ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
+                    <button key={day} onClick={() => toggleWeeklyDay(idx)} className={`px-4 py-2 rounded-xl font-bold text-xs ${config[activeClinic].weeklyOff.includes(idx) ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
                       {day}
                     </button>
                   ))}
@@ -3467,8 +3568,14 @@ export default function AdminDashboard() {
               </div>
               
               <select className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={newBooking.service} onChange={e => setNewBooking({...newBooking, service: e.target.value})}>
-                <option value="Eye Check">Eye Check</option>
-                <option value="Contact Lens Check">Contact Lens Check</option>
+                {activeClinic === 'dispensing' ? (
+                  <option value="Dispensing">Dispensing</option>
+                ) : (
+                  <>
+                    <option value="Eye Check">Eye Check</option>
+                    <option value="Contact Lens Check">Contact Lens Check</option>
+                  </>
+                )}
               </select>
 
               {newBooking.service === 'Eye Check' && newBooking.dob && (

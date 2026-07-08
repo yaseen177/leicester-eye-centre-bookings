@@ -76,7 +76,11 @@ export default function BookingPage() {
     
     const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {
-        const data = d.data();
+        const raw = d.data();
+        // Backward-compatible: old documents stored these fields flat at the top
+        // level. New documents nest Eye Care under "eyeCare" (Dispensing is
+        // admin-only and lives separately under "dispensing").
+        const data = raw.eyeCare || raw;
         setSettings(prev => {
           let loadedHours = data.hours || prev.hours;
           if (loadedHours && loadedHours.start) {
@@ -373,10 +377,6 @@ export default function BookingPage() {
       }
 
       if (formattedPhone && formattedPhone.length > 5) {
-        const appointmentDateObj = new Date(`${booking.date}T${booking.time}`);
-        const reminderDate = new Date(appointmentDateObj.getTime() - (24 * 60 * 60 * 1000));
-        const now = new Date();
-
         try {
           await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
             method: "POST",
@@ -387,26 +387,15 @@ export default function BookingPage() {
             })
           });
 
-          // LIVE PRODUCTION BLOCK (24-Hour Delay)
-          if (reminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
-            const smsResponse = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                to: formattedPhone,
-                body: `Reminder: ${booking.firstName}, your ${booking.service} is tomorrow @ ${booking.time}.\nPlease confirm your attendance or reschedule here: ${window.location.origin}/manage/${docRef.id}\nThe Eye Centre, Leicester`,
-                reminderTime: reminderDate.toISOString() 
-              })
-            });
-
-            if (smsResponse.ok) {
-              const smsData = await smsResponse.json();
-              const sidToSave = smsData.sid || smsData.reminderSid;
-              if (sidToSave) {
-                await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
-              }
-            }
-          }
+          await scheduleAllReminders({
+            docRef,
+            phone: formattedPhone,
+            firstName: booking.firstName,
+            service: booking.service,
+            dateStr: booking.date,
+            timeStr: booking.time,
+            manageLink: `${window.location.origin}/manage/${docRef.id}`
+          });
         } catch (smsError) {
           console.error("SMS API Error:", smsError);
         }

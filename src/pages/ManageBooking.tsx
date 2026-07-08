@@ -177,26 +177,16 @@ export default function ManageBooking() {
         })
       });
 
-      // 2. Schedule Reminder ONLY if > 24 hours away
-      if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
-        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: formattedPhone,
-            body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${appointment.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${id}`,
-            reminderTime: newReminderDate.toISOString()
-          })
-        });
-
-        if (smsRes.ok) {
-          const smsData = await smsRes.json();
-          const sid = smsData.sid || smsData.reminderSid;
-          if (sid) {
-            await setDoc(docRef, { reminderSid: sid }, { merge: true });
-          }
-        }
-      }
+      // 2. Schedule the 24h + 9am reminders now that we have a phone number
+      await scheduleAllReminders({
+        docRef,
+        phone: formattedPhone,
+        firstName: appointment.patientName.split(' ')[0],
+        service: appointment.appointmentType || 'appointment',
+        dateStr: appointment.appointmentDate,
+        timeStr: appointment.appointmentTime,
+        manageLink: `${window.location.origin}/manage/${id}`
+      });
 
       setAppointment({ ...appointment, phone: formattedPhone });
       setNewPhone('');
@@ -293,6 +283,7 @@ export default function ManageBooking() {
             })
           }).catch(e => console.error("SMS failed:", e))
         );
+        notificationPromises.push(cancelReminder(appointment.phone, appointment.reminderSid9am));
       }
 
       // 3. Fire both the SMS and Email off at the exact same time
@@ -332,7 +323,7 @@ export default function ManageBooking() {
       }
 
       if (appointment.phone) {
-        // 1. Immediate Update SMS
+        // 1. Immediate Update SMS + cancel the old 24h reminder
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -342,27 +333,19 @@ export default function ManageBooking() {
           })
         });
 
-        const newApptDateObj = new Date(`${rescheduleDate}T${rescheduleTime}`);
-        const newReminderDate = new Date(newApptDateObj.getTime() - (24 * 60 * 60 * 1000));
-        const now = new Date();
+        // 2. Cancel the old 9am reminder too
+        await cancelReminder(appointment.phone, appointment.reminderSid9am);
 
-        // 2. Schedule new Reminder ONLY if > 24 hours away
-        if (newReminderDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
-          const smsReminderRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              to: appointment.phone,
-              body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${rescheduleTime} at The Eye Centre. If you need to manage this, click here: ${window.location.origin}/manage/${id}`,
-              reminderTime: newReminderDate.toISOString() 
-            })
-          });
-
-          if (smsReminderRes.ok) {
-            const smsData = await smsReminderRes.json();
-            const sidToSave = smsData.sid || smsData.reminderSid;
-            if (sidToSave) await setDoc(docRef, { reminderSid: sidToSave }, { merge: true });
-          }
-        }
+        // 3. Schedule fresh 24h + 9am reminders against the new date/time
+        await scheduleAllReminders({
+          docRef,
+          phone: appointment.phone,
+          firstName: appointment.patientName.split(' ')[0],
+          service: appointment.appointmentType || 'appointment',
+          dateStr: rescheduleDate,
+          timeStr: rescheduleTime,
+          manageLink: `${window.location.origin}/manage/${id}`
+        });
       }
 
       alert("Appointment successfully rescheduled!");
