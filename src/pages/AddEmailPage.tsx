@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { Loader2, Mail, CheckCircle2, ArrowRight } from 'lucide-react';
 
 export default function AddEmailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -19,7 +20,14 @@ export default function AddEmailPage() {
         const docRef = doc(db, 'appointments', id);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setAppointment({ id: docSnap.id, ...docSnap.data() });
+          const data = docSnap.data();
+          // Already has an email on file — nothing for this page to do,
+          // send them to the real manage/confirm page instead.
+          if (data.email) {
+            navigate(`/manage/${id}`, { replace: true });
+            return;
+          }
+          setAppointment({ id: docSnap.id, ...data });
         }
       } catch (err) {
         console.error("Failed to fetch appointment");
@@ -27,7 +35,7 @@ export default function AddEmailPage() {
       setLoading(false);
     };
     fetchAppt();
-  }, [id]);
+  }, [id, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

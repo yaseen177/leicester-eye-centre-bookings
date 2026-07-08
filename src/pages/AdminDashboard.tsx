@@ -1310,7 +1310,7 @@ export default function AdminDashboard() {
       const isLunchSlot = isLunchEnabled && (time >= lunchStartMins && time < lunchEndMins);
       const booking = clinicAppointments.find((a: any) => a.appointmentDate === selectedDate && a.appointmentTime === timeStr);
   
-      const isGridLine = time % gridStepMins === 0;
+      const isGridLine = (time - startMins) % gridStepMins === 0;
 
       if (booking || isGridLine) {
         const duration = booking 

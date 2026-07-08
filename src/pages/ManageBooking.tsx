@@ -62,7 +62,11 @@ export default function ManageBooking() {
     
     const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {
-        const data = d.data();
+        const raw = d.data();
+        // Backward-compatible: Eye Care's fields now live under "eyeCare" since
+        // the Dispensing clinic was added. (Dispensing isn't relevant here —
+        // patients can only reschedule within Eye Care.)
+        const data = raw.eyeCare || raw;
         setSettings(prev => {
           let loadedHours = data.hours || prev.hours;
           if (loadedHours && loadedHours.start) {
