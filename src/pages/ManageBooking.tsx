@@ -171,7 +171,7 @@ export default function ManageBooking() {
         body: JSON.stringify({
           to: formattedPhone,
           body: `Alert: ${appointment.patientName.split(' ')[0]}, your mobile number has been successfully linked to your booking on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime}. You will now receive SMS updates.`
-        })
+        }) 
       });
 
       // 2. Schedule the 24h + 9am reminders now that we have a phone number
