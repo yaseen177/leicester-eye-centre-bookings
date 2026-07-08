@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/firebase';
+import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone, CheckCircle2 } from 'lucide-react';
 
@@ -162,10 +163,6 @@ export default function ManageBooking() {
 
       const docRef = doc(db, 'appointments', id!);
       await setDoc(docRef, { phone: formattedPhone }, { merge: true });
-
-      const apptDateObj = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}`);
-      const newReminderDate = new Date(apptDateObj.getTime() - (24 * 60 * 60 * 1000));
-      const now = new Date();
 
       // 1. Immediate Welcome SMS
       await fetch("https://twilio.yaseen-hussain18.workers.dev/", {

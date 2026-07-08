@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, setDoc, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
+import { scheduleAllReminders } from '../lib/reminders';
+import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
