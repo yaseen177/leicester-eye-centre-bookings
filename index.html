@@ -5,6 +5,26 @@
     <link rel="icon" type="image/png" href="/fav.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>the eye centre | leicester</title>
+
+    <!-- Google tag (gtag.js) -->
+    <!-- Same Measurement ID as theeyecentre.com (G-FTMRKLGR93) — this MUST match
+         for the two domains to be treated as one continuous user journey. -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-FTMRKLGR93"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      // send_page_view is disabled here because this is a single-page app —
+      // src/lib/analytics.ts fires page_view manually on every route change
+      // instead (otherwise only the very first page load would ever be tracked).
+      gtag('config', 'G-FTMRKLGR93', {
+        send_page_view: false,
+        linker: {
+          domains: ['theeyecentre.com', 'book.theeyecentre.com']
+        }
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

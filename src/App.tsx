@@ -1,10 +1,23 @@
-import { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import BookingPage from './pages/BookingPage';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import ManageBooking from './pages/ManageBooking';
 import AddEmailPage from './pages/AddEmailPage';
+import { trackPageView } from './lib/analytics';
+
+// Fires a GA4 page_view every time the in-app route changes — see
+// src/lib/analytics.ts for why this is needed for a single-page app.
+function AnalyticsListener() {
+  const location = useLocation();
+
+  useEffect(() => {
+    trackPageView(location.pathname + location.search);
+  }, [location]);
+
+  return null;
+}
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -15,6 +28,7 @@ export default function App() {
 
   return (
     <Router>
+      <AnalyticsListener />
       <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
         <Routes>
           
