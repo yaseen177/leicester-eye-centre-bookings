@@ -86,6 +86,7 @@ export default function AdminDashboard() {
   const [logsLastUpdated, setLogsLastUpdated] = useState<Date | null>(null);
   const [callLogs, setCallLogs] = useState<any[]>([]);
   const [callLogsLastUpdated, setCallLogsLastUpdated] = useState<Date | null>(null);
+  const [callerNameLookup, setCallerNameLookup] = useState<Record<string, string>>({});
   const [callLogSearch, setCallLogSearch] = useState("");
   const [callLogOutcomeFilter, setCallLogOutcomeFilter] = useState("All");
   const [now, setNow] = useState(new Date());
@@ -369,6 +370,45 @@ export default function AdminDashboard() {
     loadSettings();
     return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); };
   }, []);
+
+  // Look up the CRM (patients collection) for each unique caller number
+  // appearing in callLogs, so the Calls tab can show a name instead of
+  // just a raw phone number where a match exists. Queries the database
+  // directly (rather than only checking the already-loaded 150 most
+  // recent CRM patients) so older patients are still found correctly.
+  useEffect(() => {
+    const uniqueNumbers = Array.from(new Set(callLogs.map(c => c.from).filter(Boolean)));
+    const numbersToLookUp = uniqueNumbers.filter(n => !(n in callerNameLookup));
+    if (numbersToLookUp.length === 0) return;
+
+    const chunkSize = 10; // Firestore 'in' query limit safety margin
+    const chunks: string[][] = [];
+    for (let i = 0; i < numbersToLookUp.length; i += chunkSize) {
+      chunks.push(numbersToLookUp.slice(i, i + chunkSize));
+    }
+
+    (async () => {
+      const found: Record<string, string> = {};
+      for (const chunk of chunks) {
+        try {
+          const snap = await getDocs(query(collection(db, "patients"), where("phone", "in", chunk)));
+          snap.docs.forEach(d => {
+            const data = d.data();
+            if (data.phone && data.patientName) found[data.phone] = data.patientName;
+          });
+        } catch (err) {
+          console.error("Caller name lookup failed for a batch:", err);
+        }
+      }
+      // Mark every number we attempted as looked-up (even if no match),
+      // so we don't keep re-querying the same unmatched numbers forever.
+      setCallerNameLookup(prev => {
+        const next = { ...prev };
+        numbersToLookUp.forEach(n => { next[n] = found[n] || ''; });
+        return next;
+      });
+    })();
+  }, [callLogs]);
 
   useEffect(() => {
     if (selectedChatPatient) {
@@ -2848,7 +2888,7 @@ export default function AdminDashboard() {
             </div>
             <div className="flex gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
               <div className="flex-1">
-                <input type="text" placeholder="Search by phone number..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-medium" value={callLogSearch} onChange={(e) => setCallLogSearch(e.target.value)} />
+                <input type="text" placeholder="Search by phone number or patient name..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-medium" value={callLogSearch} onChange={(e) => setCallLogSearch(e.target.value)} />
               </div>
               <select className="p-3 rounded-xl border border-slate-200 outline-none text-sm font-bold text-slate-600 bg-white" value={callLogOutcomeFilter} onChange={(e) => setCallLogOutcomeFilter(e.target.value)}>
                 <option value="All">All Outcomes</option>
@@ -2872,11 +2912,24 @@ export default function AdminDashboard() {
                   <tbody className="divide-y divide-slate-50">
                     {callLogs
                       .filter(c => callLogOutcomeFilter === "All" || c.outcome === callLogOutcomeFilter)
-                      .filter(c => (c.from || '').toLowerCase().includes(callLogSearch.toLowerCase()))
+                      .filter(c => {
+                        const q = callLogSearch.toLowerCase();
+                        const name = (callerNameLookup[c.from] || '').toLowerCase();
+                        return (c.from || '').toLowerCase().includes(q) || name.includes(q);
+                      })
                       .map((c) => (
                         <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">{c.timestamp ? new Date(c.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Just now'}</td>
-                          <td className="p-4 font-bold text-slate-800 text-sm">{c.from}</td>
+                          <td className="p-4">
+                            {callerNameLookup[c.from] ? (
+                              <>
+                                <p className="font-bold text-slate-800 text-sm">{callerNameLookup[c.from]}</p>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{c.from}</p>
+                              </>
+                            ) : (
+                              <p className="font-bold text-slate-800 text-sm">{c.from}</p>
+                            )}
+                          </td>
                           <td className="p-4">
                             {c.outcome === 'answered' && (
                               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-50 text-green-700 border border-green-100 text-xs font-black uppercase tracking-wider"><PhoneIncoming size={14} /> Answered</span>
