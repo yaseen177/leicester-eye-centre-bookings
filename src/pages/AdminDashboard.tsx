@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
@@ -35,7 +35,7 @@ const getSlotDuration = (clinic: ClinicKey, appointmentType: string | undefined,
 };
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing'>('diary');
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -83,6 +83,9 @@ export default function AdminDashboard() {
   };
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [callLogs, setCallLogs] = useState<any[]>([]);
+  const [callLogSearch, setCallLogSearch] = useState("");
+  const [callLogOutcomeFilter, setCallLogOutcomeFilter] = useState("All");
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [editingApp, setEditingApp] = useState<any>(null);
   
@@ -286,6 +289,11 @@ export default function AdminDashboard() {
       setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const qCallLogs = query(collection(db, "callLogs"), orderBy("timestamp", "desc"), limit(200));
+    const unsubCallLogs = onSnapshot(qCallLogs, (snap) => {
+      setCallLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
     const qMessages = query(collection(db, "messages"), orderBy("timestamp", "asc"));
     const unsubMessages = onSnapshot(qMessages, (snap) => {
       setChatMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -335,7 +343,7 @@ export default function AdminDashboard() {
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubMessages(); unsubQuotes(); };
+    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); };
   }, []);
 
   useEffect(() => {
@@ -1677,6 +1685,9 @@ export default function AdminDashboard() {
             <button onClick={() => setView('logs')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'logs' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <FileText size={18} /> Logs
             </button>
+            <button onClick={() => setView('calls')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'calls' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <PhoneCall size={18} /> Calls
+            </button>
             <button onClick={() => setView('settings')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'settings' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Settings size={18} /> Settings
             </button>
@@ -2783,6 +2794,78 @@ export default function AdminDashboard() {
                       </tr>
                     ))}
                     {logs.length === 0 && <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold italic">No communication logs found.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {view === 'calls' && (
+          <div className="glass-card rounded-[2.5rem] p-10 space-y-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                <PhoneCall className="text-[#3F9185]" /> Call Logs
+              </h2>
+            </div>
+            <div className="flex gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <div className="flex-1">
+                <input type="text" placeholder="Search by phone number..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-medium" value={callLogSearch} onChange={(e) => setCallLogSearch(e.target.value)} />
+              </div>
+              <select className="p-3 rounded-xl border border-slate-200 outline-none text-sm font-bold text-slate-600 bg-white" value={callLogOutcomeFilter} onChange={(e) => setCallLogOutcomeFilter(e.target.value)}>
+                <option value="All">All Outcomes</option>
+                <option value="answered">Answered</option>
+                <option value="missed">Missed</option>
+                <option value="no_transfer_requested">No Transfer Requested</option>
+              </select>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+              <div className="max-h-[60vh] overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                    <tr>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Time</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Caller Number</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Outcome</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Callback</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {callLogs
+                      .filter(c => callLogOutcomeFilter === "All" || c.outcome === callLogOutcomeFilter)
+                      .filter(c => (c.from || '').toLowerCase().includes(callLogSearch.toLowerCase()))
+                      .map((c) => (
+                        <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">{c.timestamp ? new Date(c.timestamp.seconds * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'Just now'}</td>
+                          <td className="p-4 font-bold text-slate-800 text-sm">{c.from}</td>
+                          <td className="p-4">
+                            {c.outcome === 'answered' && (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-50 text-green-700 border border-green-100 text-xs font-black uppercase tracking-wider"><PhoneIncoming size={14} /> Answered</span>
+                            )}
+                            {c.outcome === 'missed' && (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-50 text-red-700 border border-red-100 text-xs font-black uppercase tracking-wider"><PhoneMissed size={14} /> Missed</span>
+                            )}
+                            {c.outcome === 'no_transfer_requested' && (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-500">No Transfer Requested</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-right">
+                            {c.outcome === 'missed' && (
+                              c.calledBack ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-500 text-xs font-bold"><CheckCircle2 size={14} /> Called back</span>
+                              ) : (
+                                <button
+                                  onClick={() => setDoc(doc(db, 'callLogs', c.id), { calledBack: true }, { merge: true })}
+                                  className="px-3 py-1.5 rounded-full bg-[#3F9185] text-white text-xs font-bold hover:opacity-90 transition-opacity"
+                                >
+                                  Mark as called back
+                                </button>
+                              )
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    {callLogs.length === 0 && <tr><td colSpan={4} className="p-10 text-center text-slate-400 font-bold italic">No call logs yet.</td></tr>}
                   </tbody>
                 </table>
               </div>
