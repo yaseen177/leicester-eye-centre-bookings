@@ -216,7 +216,8 @@ export default function AdminDashboard() {
   const [newRecallInterval, setNewRecallInterval] = useState<number>(12);
   const [isSavingNewRecall, setIsSavingNewRecall] = useState(false);
   const [editingRecall, setEditingRecall] = useState<any>(null); // null=closed, {}=new, {...recall}=editing
-  const [editRecallForm, setEditRecallForm] = useState({ patientName: '', email: '', phone: '', recallType: 'Spectacles', intervalMonths: 12, nextRecallDate: '', status: 'Active' });
+  const [editRecallForm, setEditRecallForm] = useState({ patientId: null as string | null, patientName: '', email: '', phone: '', recallType: 'Spectacles', intervalMonths: 12, nextRecallDate: '', status: 'Active' });
+  const [newRecallSearchQuery, setNewRecallSearchQuery] = useState('');
   const [isSavingEditRecall, setIsSavingEditRecall] = useState(false);
 
   const RECALL_TYPE_LABEL: Record<string, string> = {
@@ -1449,13 +1450,15 @@ export default function AdminDashboard() {
   const openEditRecall = (recall: any | null) => {
     if (recall) {
       setEditRecallForm({
+        patientId: recall.patientId || null,
         patientName: recall.patientName || '', email: recall.email || '', phone: recall.phone || '',
         recallType: recall.recallType || 'Spectacles', intervalMonths: recall.intervalMonths || 12,
         nextRecallDate: recall.nextRecallDate || '', status: recall.status || 'Active'
       });
       setEditingRecall(recall);
     } else {
-      setEditRecallForm({ patientName: '', email: '', phone: '', recallType: 'Spectacles', intervalMonths: 12, nextRecallDate: new Date().toISOString().split('T')[0], status: 'Active' });
+      setEditRecallForm({ patientId: null, patientName: '', email: '', phone: '', recallType: 'Spectacles', intervalMonths: 12, nextRecallDate: new Date().toISOString().split('T')[0], status: 'Active' });
+      setNewRecallSearchQuery('');
       setEditingRecall({});
     }
   };
@@ -1482,7 +1485,7 @@ export default function AdminDashboard() {
       const payload = {
         patientName: editRecallForm.patientName.trim(),
         email: editRecallForm.email.trim() || null,
-        phone: editRecallForm.phone.trim() || null,
+        phone: editRecallForm.phone.trim() ? standardizePhone(editRecallForm.phone.trim()) : null,
         recallType: editRecallForm.recallType,
         intervalMonths: Number(editRecallForm.intervalMonths),
         nextRecallDate: editRecallForm.nextRecallDate,
@@ -1494,7 +1497,7 @@ export default function AdminDashboard() {
         await setDoc(doc(db, 'recalls', editingRecall.id), { ...payload, needsNewRecall: false }, { merge: true });
       } else {
         await addDoc(collection(db, 'recalls'), {
-          ...payload, patientId: null, dob: null, stoppedReason: null, linkedAppointmentId: null,
+          ...payload, patientId: editRecallForm.patientId, dob: null, stoppedReason: null, linkedAppointmentId: null,
           needsNewRecall: false, stagesSent: [],
           comms: { email: { lastStage: null, lastSentAt: null, lastStatus: null, brevoMessageId: null }, sms: { lastStage: null, lastSentAt: null, lastStatus: null, twilioSid: null } },
           source: 'dashboard_manual_create', createdAt: serverTimestamp()
@@ -1550,10 +1553,11 @@ export default function AdminDashboard() {
         if (!res.ok) alert('Failed to send email.');
       } else {
         if (!recall.phone) { alert('No mobile on file for this patient.'); return; }
+        const cleanPhone = standardizePhone(recall.phone);
         const body = `Hi ${firstName}, reminder from The Eye Centre - you're due for your ${svcLabel}. Book online: https://book.theeyecentre.com or call 0116 253 2788.`;
         const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: recall.phone, body })
+          body: JSON.stringify({ to: cleanPhone, body })
         });
         await addDoc(collection(db, 'recallEvents'), {
           recallId: recall.id, patientName: recall.patientName, channel: 'sms', contact: recall.phone,
@@ -3632,6 +3636,41 @@ export default function AdminDashboard() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div className="bg-white rounded-[2rem] shadow-2xl p-8 max-w-sm w-full space-y-4">
               <h3 className="text-lg font-black text-slate-800">{editingRecall.id ? 'Edit Recall' : 'New Recall'}</h3>
+              {!editingRecall.id && (
+                <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                  <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Search Master CRM Patient (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="Search by name, email or phone..."
+                    className="w-full p-2.5 mt-1 rounded-lg bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+                    value={newRecallSearchQuery}
+                    onChange={e => { setNewRecallSearchQuery(e.target.value); performCloudSearch(e.target.value); }}
+                  />
+                  {newRecallSearchQuery && (
+                    <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+                      {cloudSearchResults.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => {
+                            setEditRecallForm({ ...editRecallForm, patientId: p.id && !String(p.id).startsWith('unknown-') ? p.id : null, patientName: p.patientName || '', email: p.email || '', phone: p.phone || '' });
+                            setNewRecallSearchQuery('');
+                          }}
+                          className="w-full text-left p-2 text-sm hover:bg-indigo-50 font-medium"
+                        >
+                          {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                        </button>
+                      ))}
+                      {cloudSearchResults.length === 0 && <p className="text-xs text-slate-400 p-2">No matches yet - keep typing.</p>}
+                    </div>
+                  )}
+                  {editRecallForm.patientId && (
+                    <div className="mt-2 flex items-center justify-between bg-white p-2 rounded-lg border border-indigo-200">
+                      <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5"><LinkIcon size={12}/> Linked to CRM record</span>
+                      <button onClick={() => setEditRecallForm({ ...editRecallForm, patientId: null })} className="text-[10px] text-red-500 font-bold hover:underline">Unlink</button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase">Patient Name</label>
                 <input value={editRecallForm.patientName} onChange={e => setEditRecallForm({ ...editRecallForm, patientName: e.target.value })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold" />
