@@ -3443,7 +3443,7 @@ export default function AdminDashboard() {
               <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                 <Bell className="text-[#3F9185]" /> Recall System
               </h2>
-              <button onClick={() => openEditRecall(null)} className="px-4 py-2 bg-[#3F9185] text-white text-xs font-black rounded-xl hover:bg-teal-700">+ New Recall</button>
+              <button onClick={() => openEditRecall(null)} className="px-4 py-2 bg-[#3F9185] text-white text-xs font-black rounded-xl hover:bg-teal-700 flex items-center gap-1.5"><Plus size={14}/> New Recall</button>
             </div>
 
             {/* Summary stat cards */}
