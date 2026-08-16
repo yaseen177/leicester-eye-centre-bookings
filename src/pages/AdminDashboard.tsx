@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
@@ -215,6 +215,9 @@ export default function AdminDashboard() {
   const [pendingNewRecallFor, setPendingNewRecallFor] = useState<any>(null); // { patientId, patientName, email, phone, recallType, visitDate, apptId }
   const [newRecallInterval, setNewRecallInterval] = useState<number>(12);
   const [isSavingNewRecall, setIsSavingNewRecall] = useState(false);
+  const [editingRecall, setEditingRecall] = useState<any>(null); // null=closed, {}=new, {...recall}=editing
+  const [editRecallForm, setEditRecallForm] = useState({ patientName: '', email: '', phone: '', recallType: 'Spectacles', intervalMonths: 12, nextRecallDate: '', status: 'Active' });
+  const [isSavingEditRecall, setIsSavingEditRecall] = useState(false);
 
   const RECALL_TYPE_LABEL: Record<string, string> = {
     Spectacles: 'Spectacles',
@@ -1449,6 +1452,49 @@ export default function AdminDashboard() {
     setCrmTab('recalls');
     setView('messages');
     setSelectedRecallForDetail(null);
+  };
+
+  const openEditRecall = (recall: any | null) => {
+    if (recall) {
+      setEditRecallForm({
+        patientName: recall.patientName || '', email: recall.email || '', phone: recall.phone || '',
+        recallType: recall.recallType || 'Spectacles', intervalMonths: recall.intervalMonths || 12,
+        nextRecallDate: recall.nextRecallDate || '', status: recall.status || 'Active'
+      });
+      setEditingRecall(recall);
+    } else {
+      setEditRecallForm({ patientName: '', email: '', phone: '', recallType: 'Spectacles', intervalMonths: 12, nextRecallDate: new Date().toISOString().split('T')[0], status: 'Active' });
+      setEditingRecall({});
+    }
+  };
+
+  const handleSaveEditRecall = async () => {
+    if (!editRecallForm.patientName.trim() || !editRecallForm.nextRecallDate) { alert('Patient name and due date are required.'); return; }
+    setIsSavingEditRecall(true);
+    try {
+      const payload = {
+        patientName: editRecallForm.patientName.trim(),
+        email: editRecallForm.email.trim() || null,
+        phone: editRecallForm.phone.trim() || null,
+        recallType: editRecallForm.recallType,
+        intervalMonths: Number(editRecallForm.intervalMonths),
+        nextRecallDate: editRecallForm.nextRecallDate,
+        status: editRecallForm.status,
+        updatedAt: serverTimestamp()
+      };
+      if (editingRecall?.id) {
+        await setDoc(doc(db, 'recalls', editingRecall.id), payload, { merge: true });
+      } else {
+        await addDoc(collection(db, 'recalls'), {
+          ...payload, patientId: null, dob: null, stoppedReason: null, linkedAppointmentId: null,
+          needsNewRecall: false, stagesSent: [],
+          comms: { email: { lastStage: null, lastSentAt: null, lastStatus: null, brevoMessageId: null }, sms: { lastStage: null, lastSentAt: null, lastStatus: null, twilioSid: null } },
+          source: 'dashboard_manual_create', createdAt: serverTimestamp()
+        });
+      }
+      setEditingRecall(null);
+    } catch (e) { console.error(e); alert('Failed to save recall.'); }
+    finally { setIsSavingEditRecall(false); }
   };
 
   const handleStopRecall = async (recallId: string) => {
@@ -3042,6 +3088,7 @@ export default function AdminDashboard() {
                                   {(r.status === 'Stopped' || r.status === 'Lapsed') && (
                                     <button onClick={() => handleReactivateRecall(r.id)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600">Reactivate</button>
                                   )}
+                                  <button onClick={() => openEditRecall(r)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600">Edit</button>
                                 </div>
                               </div>
                             );
@@ -3385,6 +3432,7 @@ export default function AdminDashboard() {
               <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                 <Bell className="text-[#3F9185]" /> Recall System
               </h2>
+              <button onClick={() => openEditRecall(null)} className="px-4 py-2 bg-[#3F9185] text-white text-xs font-black rounded-xl hover:bg-teal-700">+ New Recall</button>
             </div>
 
             {/* Summary stat cards */}
@@ -3498,6 +3546,7 @@ export default function AdminDashboard() {
                                 {(r.status === 'Stopped' || r.status === 'Lapsed') && (
                                   <button onClick={() => handleReactivateRecall(r.id)} title="Reactivate" className="p-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600"><RotateCcw size={14} /></button>
                                 )}
+                                <button onClick={() => openEditRecall(r)} title="Edit" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><UserCog size={14} /></button>
                               </div>
                             </td>
                           </tr>
@@ -3527,6 +3576,7 @@ export default function AdminDashboard() {
                   >
                     <UserCog size={12} /> Open CRM record
                   </button>
+                  <button onClick={() => { openEditRecall(selectedRecallForDetail); setSelectedRecallForDetail(null); }} className="text-xs font-bold text-slate-500 hover:underline mt-2 ml-3">Edit</button>
                 </div>
                 <button onClick={() => setSelectedRecallForDetail(null)} className="p-2 text-slate-400 hover:text-slate-700"><X size={20} /></button>
               </div>
@@ -3566,8 +3616,64 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* --- SET NEW RECALL PROMPT (after a Visit Complete) --- */}
-        {pendingNewRecallFor && (
+        {/* --- EDIT / NEW RECALL MODAL --- */}
+        {editingRecall !== null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-white rounded-[2rem] shadow-2xl p-8 max-w-sm w-full space-y-4">
+              <h3 className="text-lg font-black text-slate-800">{editingRecall.id ? 'Edit Recall' : 'New Recall'}</h3>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase">Patient Name</label>
+                <input value={editRecallForm.patientName} onChange={e => setEditRecallForm({ ...editRecallForm, patientName: e.target.value })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase">Email</label>
+                  <input value={editRecallForm.email} onChange={e => setEditRecallForm({ ...editRecallForm, email: e.target.value })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase">Mobile</label>
+                  <input value={editRecallForm.phone} onChange={e => setEditRecallForm({ ...editRecallForm, phone: e.target.value })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase">Type</label>
+                  <select value={editRecallForm.recallType} onChange={e => setEditRecallForm({ ...editRecallForm, recallType: e.target.value })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold bg-white">
+                    <option value="Spectacles">Spectacles</option>
+                    <option value="ContactLenses">Contact Lenses</option>
+                    <option value="ContactLensOrder">CL Reorder</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase">Interval (mo)</label>
+                  <input type="number" value={editRecallForm.intervalMonths} onChange={e => setEditRecallForm({ ...editRecallForm, intervalMonths: Number(e.target.value) })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase">Due Date</label>
+                <input type="date" value={editRecallForm.nextRecallDate} onChange={e => setEditRecallForm({ ...editRecallForm, nextRecallDate: e.target.value })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase">Status</label>
+                <select value={editRecallForm.status} onChange={e => setEditRecallForm({ ...editRecallForm, status: e.target.value })} className="w-full p-2.5 rounded-lg border border-slate-200 text-sm font-bold bg-white">
+                  <option value="Active">Active</option>
+                  <option value="Booked">Booked</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Lapsed">Lapsed</option>
+                  <option value="Stopped">Stopped</option>
+                </select>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setEditingRecall(null)} className="flex-1 py-3 rounded-xl font-bold text-sm text-slate-500 bg-slate-50 hover:bg-slate-100">Cancel</button>
+                <button onClick={handleSaveEditRecall} disabled={isSavingEditRecall} className="flex-1 py-3 rounded-xl font-bold text-sm text-white bg-[#3F9185] hover:bg-teal-700 disabled:opacity-50">
+                  {isSavingEditRecall ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- SET NEW RECALL PROMPT (after a Visit Complete) --- */}        {pendingNewRecallFor && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div className="bg-white rounded-[2rem] shadow-2xl p-8 max-w-sm w-full">
               <div className="flex items-center gap-3 mb-2">
