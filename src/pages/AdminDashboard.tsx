@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
@@ -35,7 +35,7 @@ const getSlotDuration = (clinic: ClinicKey, appointmentType: string | undefined,
 };
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls'>('diary');
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -160,7 +160,7 @@ export default function AdminDashboard() {
   const [crmPatients, setCrmPatients] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
-  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'profile'>('chat');
+  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'profile' | 'recalls'>('chat');
   const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '' });
   
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
@@ -201,6 +201,56 @@ export default function AdminDashboard() {
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [apptToLink, setApptToLink] = useState<any>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState('');
+
+  // --- RECALL SYSTEM STATE ---
+  const [recalls, setRecalls] = useState<any[]>([]);
+  const [recallEvents, setRecallEvents] = useState<any[]>([]);
+  const [recallSearch, setRecallSearch] = useState('');
+  const [recallStatusFilter, setRecallStatusFilter] = useState<'All' | 'Active' | 'Booked' | 'Completed' | 'Lapsed'>('All');
+  const [recallTypeFilter, setRecallTypeFilter] = useState<'All' | 'Spectacles' | 'ContactLenses' | 'ContactLensOrder'>('All');
+  const [selectedRecallForDetail, setSelectedRecallForDetail] = useState<any>(null);
+
+  // Prompted automatically after an appointment is marked 'Visit Complete' and a
+  // matching recall was found & stopped - lets staff pick the interval for the next one.
+  const [pendingNewRecallFor, setPendingNewRecallFor] = useState<any>(null); // { patientId, patientName, email, phone, recallType, visitDate, apptId }
+  const [newRecallInterval, setNewRecallInterval] = useState<number>(12);
+  const [isSavingNewRecall, setIsSavingNewRecall] = useState(false);
+
+  const RECALL_TYPE_LABEL: Record<string, string> = {
+    Spectacles: 'Spectacles',
+    ContactLenses: 'Contact Lenses',
+    ContactLensOrder: 'CL Reorder',
+  };
+
+  const RECALL_INTERVAL_OPTIONS: Record<string, number[]> = {
+    Spectacles: [6, 12, 24],
+    ContactLenses: [6, 12, 24],
+    ContactLensOrder: [1, 3, 6],
+  };
+
+  const getRecallStatusColor = (status: string) => {
+    switch (status) {
+      case 'Active': return 'bg-blue-50 text-blue-600 border-blue-100';
+      case 'Booked': return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+      case 'Completed': return 'bg-slate-100 text-slate-500 border-slate-200';
+      case 'Lapsed': return 'bg-red-50 text-red-600 border-red-100';
+      case 'Stopped': return 'bg-slate-100 text-slate-400 border-slate-200';
+      default: return 'bg-slate-50 text-slate-500 border-slate-100';
+    }
+  };
+
+  const getCommsStatusBadge = (status: string | null | undefined) => {
+    if (!status) return { label: 'Not sent', className: 'bg-slate-50 text-slate-400 border-slate-100' };
+    const map: Record<string, { label: string; className: string }> = {
+      sent: { label: 'Sent', className: 'bg-blue-50 text-blue-600 border-blue-100' },
+      delivered: { label: 'Delivered', className: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
+      opened: { label: 'Opened', className: 'bg-teal-50 text-teal-600 border-teal-100' },
+      bounced: { label: 'Bounced', className: 'bg-red-50 text-red-600 border-red-100' },
+      failed: { label: 'Failed', className: 'bg-red-50 text-red-600 border-red-100' },
+      undelivered: { label: 'Undelivered', className: 'bg-red-50 text-red-600 border-red-100' },
+    };
+    return map[status] || { label: status, className: 'bg-slate-50 text-slate-500 border-slate-100' };
+  };
 
   // --- DISPENSING & WALK-IN STATES ---
   const [walkInQuotes, setWalkInQuotes] = useState<any[]>([]);
@@ -329,6 +379,16 @@ export default function AdminDashboard() {
       setWalkInQuotes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const qRecalls = query(collection(db, "recalls"), orderBy("nextRecallDate", "asc"), limit(2000));
+    const unsubRecalls = onSnapshot(qRecalls, (snap) => {
+      setRecalls(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    const qRecallEvents = query(collection(db, "recallEvents"), orderBy("timestamp", "desc"), limit(500));
+    const unsubRecallEvents = onSnapshot(qRecallEvents, (snap) => {
+      setRecallEvents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
     const normalizeClinicSchedule = (cloudData: any, prev: ClinicScheduleConfig): ClinicScheduleConfig => {
       let loadedHours = cloudData?.hours || prev.hours;
       if (loadedHours && loadedHours.start) {
@@ -368,7 +428,7 @@ export default function AdminDashboard() {
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); };
+    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); };
   }, []);
 
   // Look up the CRM (patients collection) for each unique caller number
@@ -1254,6 +1314,15 @@ export default function AdminDashboard() {
                reviewLink: "https://www.google.com/search?sca_esv=05e9b9d0eac2d55a&rlz=1CDGOYI_enGB1088GB1088&hl=en-GB&sxsrf=APpeQntpMKdzO9SDte-MCG_ZRfLgKl4KBg:1783540324328&q=the+eye+centre+leicester+reviews&uds=AJ5uw1_dDM0QRrBvstcLgcNOdWNUTp49nD5ZGFiPqYDS57Mh_l8Marhi0sbANwKRftiz0PBKSX-G1_gD37-l5blZLXw-Lfl2V7KKV3AmFKGhSY3GtXj9pR5m3j379YBlpeVlCwUXF9lfE4X6SfSiET0xdcb2zIe_M_004dt2LjxRIYk5dtQCkiepolzg9PHdSY6aI4K8LCLiGDkKfrlXC0rBgyczRupHZZGDnxqI_YZ3xZj6-SRBdsEveU997FyjhMlDIbjiG5hDyaJLoTB_wSyYcBoYUSDsqBy4Y-Yegpj7bfG1UBA3fzPjecCJqulnzmXunPVGoPhQQzwAagrdiYlOID7QL7yRshnS7gre7Bc5bcxfOseQnHdKdNdgdcHm3HkE02RRp8v3UV8P-cY51abu6w2gGOk45ah_0Xw5r5l9ILJW-H-abt4EDxECuk7pRBmd9eJqTqcL7xPUFz3QNGgAK8dmdj97E7kF50BOlsNyFr7HMS0QfELq2FNVrJmmAnJc0R_-C8rRCeNj70pyBAdZH91cK-uSwpqznKLqliOdJXiS8d_woBOGQIH5f9lcf6iANpkzJXx4&si=APenkKn5T4YN59srr511wD6k6Pufj9DEzRUvB1XJSwUeeT5afuk9OXJStp1chFik7qFY28F84v-Qc5HlqCAcfm-YiEGKKNJp2OfWCZznsUQXwKBPT6_iGSbg2GIuWRPYBjmuE1XRqgT6YCV7v6UunSV76WzembaWMg%3D%3D&sa=X&ved=2ahUKEwjghuW77cOVAxU-S_EDHXuHJrQQk8gLegQIGxAB&ictx=1"
              })
            }).catch(err => console.error("Review scheduling failed:", err));
+
+           // Recall system: stop any Active/Booked recall this visit satisfies, and
+           // (for Eye Check / Contact Lens Check visits, not Dispensing) prompt staff
+           // to set the next recall interval. ContactLensOrder recalls aren't touched
+           // here - they're satisfied by reordering, not a check-up visit, and are
+           // managed manually from the Recalls tab.
+           if (!isDispensingAppointment(appData.appointmentType)) {
+             stopMatchingRecallsAndPromptNew(id, appData).catch(err => console.error("Recall stop/prompt failed:", err));
+           }
         }
       }
 
@@ -1261,6 +1330,158 @@ export default function AdminDashboard() {
       
     } catch (err) {
       alert("Failed to update status");
+    }
+  };
+
+  // Called when an appointment is marked 'Visit Complete'. Stops any matching
+  // Active/Booked recall (Spectacles for eye checks, Contact Lenses for CL checks)
+  // and opens the "Set New Recall" prompt so staff can set the next interval.
+  const stopMatchingRecallsAndPromptNew = async (appointmentId: string, appData: any) => {
+    const inferredType = (appData.appointmentType || '').includes('Contact') ? 'ContactLenses' : 'Spectacles';
+
+    const matching = recalls.filter(r =>
+      r.recallType === inferredType &&
+      (r.status === 'Active' || r.status === 'Booked') &&
+      (
+        (appData.patientId && r.patientId === appData.patientId) ||
+        (!appData.patientId && appData.phone && r.phone === appData.phone) ||
+        (!appData.patientId && appData.email && r.email === appData.email)
+      )
+    );
+
+    for (const r of matching) {
+      await setDoc(doc(db, 'recalls', r.id), {
+        status: 'Completed',
+        stoppedReason: 'Visit Completed',
+        linkedAppointmentId: appointmentId,
+        needsNewRecall: true,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    setPendingNewRecallFor({
+      patientId: appData.patientId || null,
+      patientName: appData.patientName,
+      email: appData.email || null,
+      phone: appData.phone || null,
+      recallType: inferredType,
+      visitDate: appData.appointmentDate,
+      apptId: appointmentId
+    });
+    setNewRecallInterval(inferredType === 'ContactLenses' ? 12 : 24);
+  };
+
+  // Staff confirm the interval in the "Set New Recall" prompt -> creates the next
+  // Active recall doc for this patient/type, dated from the visit that just completed.
+  const handleConfirmNewRecall = async () => {
+    if (!pendingNewRecallFor) return;
+    setIsSavingNewRecall(true);
+    try {
+      const visitDate = new Date(pendingNewRecallFor.visitDate);
+      const nextDate = new Date(visitDate);
+      nextDate.setMonth(nextDate.getMonth() + newRecallInterval);
+
+      await addDoc(collection(db, 'recalls'), {
+        patientId: pendingNewRecallFor.patientId,
+        patientName: pendingNewRecallFor.patientName,
+        email: pendingNewRecallFor.email,
+        phone: pendingNewRecallFor.phone,
+        dob: null,
+        recallType: pendingNewRecallFor.recallType,
+        intervalMonths: newRecallInterval,
+        lastVisitDate: pendingNewRecallFor.visitDate,
+        nextRecallDate: nextDate.toISOString().split('T')[0],
+        status: 'Active',
+        stoppedReason: null,
+        linkedAppointmentId: null,
+        needsNewRecall: false,
+        stagesSent: [],
+        comms: {
+          email: { lastStage: null, lastSentAt: null, lastStatus: null, brevoMessageId: null },
+          sms: { lastStage: null, lastSentAt: null, lastStatus: null, twilioSid: null }
+        },
+        source: 'dashboard_new_recall',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Clear needsNewRecall on whichever recall(s) prompted this, if any are still flagged
+      const toClear = recalls.filter(r =>
+        r.needsNewRecall &&
+        r.recallType === pendingNewRecallFor.recallType &&
+        ((pendingNewRecallFor.patientId && r.patientId === pendingNewRecallFor.patientId) ||
+         (!pendingNewRecallFor.patientId && pendingNewRecallFor.phone && r.phone === pendingNewRecallFor.phone))
+      );
+      for (const r of toClear) {
+        await setDoc(doc(db, 'recalls', r.id), { needsNewRecall: false }, { merge: true });
+      }
+
+      setPendingNewRecallFor(null);
+    } catch (err) {
+      alert("Failed to save the new recall.");
+      console.error(err);
+    } finally {
+      setIsSavingNewRecall(false);
+    }
+  };
+
+  const handleStopRecall = async (recallId: string) => {
+    if (!confirm("Stop this recall? No further reminders will be sent for it.")) return;
+    await setDoc(doc(db, 'recalls', recallId), {
+      status: 'Stopped', stoppedReason: 'Manual', updatedAt: serverTimestamp()
+    }, { merge: true });
+  };
+
+  const handleReactivateRecall = async (recallId: string) => {
+    await setDoc(doc(db, 'recalls', recallId), {
+      status: 'Active', stoppedReason: null, updatedAt: serverTimestamp()
+    }, { merge: true });
+  };
+
+  // Manual "Send Now" - bypasses the staged schedule for a one-off nudge, using the
+  // same messaging worker + Brevo template the automated engine and rest of the
+  // dashboard already use. Logged as stage 'manual' so it shows in the recall's history
+  // without interfering with the automated stagesSent tracking.
+  const handleSendRecallNow = async (recall: any, channel: 'email' | 'sms') => {
+    const svcLabel = recall.recallType === 'ContactLenses' ? 'contact lens check'
+      : recall.recallType === 'ContactLensOrder' ? 'contact lens reorder' : 'eye test';
+    const firstName = (recall.patientName || 'there').split(' ')[0];
+
+    try {
+      if (channel === 'email') {
+        if (!recall.email) { alert('No email on file for this patient.'); return; }
+        const message = `Hi ${firstName}, this is a reminder that you're due for your ${svcLabel} at The Eye Centre. Please call us on 0116 253 2788 or book online whenever suits.`;
+        const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "send_email", templateId: 7, to_email: recall.email, patient_name: firstName,
+            subject: `Your ${svcLabel} reminder`,
+            params: { patient_name: firstName, custom_message: message, subject: `Your ${svcLabel} reminder` }
+          })
+        });
+        await addDoc(collection(db, 'recallEvents'), {
+          recallId: recall.id, patientName: recall.patientName, channel: 'email', contact: recall.email,
+          stage: 'manual', status: res.ok ? 'sent' : 'failed', providerId: null,
+          error: res.ok ? null : `http_${res.status}`, timestamp: serverTimestamp()
+        });
+        if (!res.ok) alert('Failed to send email.');
+      } else {
+        if (!recall.phone) { alert('No mobile on file for this patient.'); return; }
+        const body = `Hi ${firstName}, reminder from The Eye Centre - you're due for your ${svcLabel}. Call 0116 253 2788 or book online.`;
+        const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: recall.phone, body })
+        });
+        await addDoc(collection(db, 'recallEvents'), {
+          recallId: recall.id, patientName: recall.patientName, channel: 'sms', contact: recall.phone,
+          stage: 'manual', status: res.ok ? 'sent' : 'failed', providerId: null,
+          error: res.ok ? null : `http_${res.status}`, timestamp: serverTimestamp()
+        });
+        if (!res.ok) alert('Failed to send SMS.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Network error sending recall reminder.');
     }
   };
 
@@ -1586,6 +1807,16 @@ export default function AdminDashboard() {
         .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime())
     : [];
 
+  const activePatientRecalls = selectedChatPatient
+    ? recalls
+        .filter(r =>
+          (r.patientId && r.patientId === selectedChatPatient.id) ||
+          (r.phone && r.phone === selectedChatPatient.phone) ||
+          (r.email && r.email === selectedChatPatient.email)
+        )
+        .sort((a, b) => new Date(b.nextRecallDate || 0).getTime() - new Date(a.nextRecallDate || 0).getTime())
+    : [];
+
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(manualMsgData.email);
   const isSmsValid = manualMsgData.phone.length >= 10 && manualMsgData.body.trim().length > 0;
   const isManualValid = manualMsgType === 'SMS' 
@@ -1751,6 +1982,14 @@ export default function AdminDashboard() {
             </button>
             <button onClick={() => setView('calls')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'calls' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <PhoneCall size={18} /> Calls
+            </button>
+            <button onClick={() => setView('recalls')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'recalls' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <Bell size={18} /> Recalls
+              {recalls.filter(r => (r.status === 'Active' && r.nextRecallDate <= new Date().toISOString().split('T')[0]) || r.needsNewRecall).length > 0 && (
+                <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full shrink-0 shadow-sm">
+                  {recalls.filter(r => (r.status === 'Active' && r.nextRecallDate <= new Date().toISOString().split('T')[0]) || r.needsNewRecall).length}
+                </span>
+              )}
             </button>
             <button onClick={() => setView('settings')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'settings' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Settings size={18} /> Settings
@@ -2365,6 +2604,7 @@ export default function AdminDashboard() {
                     <div className="flex gap-6 px-6">
                        <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Communications</button>
                        <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointment Ledger</button>
+                       <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
                        <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Master Profile</button>
                     </div>
                   </div>
@@ -2732,6 +2972,59 @@ export default function AdminDashboard() {
                     </div>
                   )}
 
+                  {/* TAB: PER-PATIENT RECALLS */}
+                  {crmTab === 'recalls' && (
+                    <div className="flex-1 bg-[#f8fafc] p-6 overflow-y-auto">
+                      <div className="max-w-3xl mx-auto space-y-4">
+                        <div className="flex items-center justify-between mb-4">
+                           <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2"><Bell size={16}/> Recall Records</h4>
+                           <span className="text-xs font-bold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200">{activePatientRecalls.length} Found</span>
+                        </div>
+
+                        {activePatientRecalls.length === 0 ? (
+                          <div className="p-10 text-center bg-white border border-slate-200 rounded-2xl shadow-sm text-slate-400 font-bold">No recall records for this patient yet.</div>
+                        ) : (
+                          activePatientRecalls.map((r) => {
+                            const emailBadge = getCommsStatusBadge(r.comms?.email?.lastStatus);
+                            const smsBadge = getCommsStatusBadge(r.comms?.sms?.lastStatus);
+                            return (
+                              <div key={r.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+                                <div className="flex items-center justify-between mb-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider ${r.recallType === 'Spectacles' ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
+                                      {RECALL_TYPE_LABEL[r.recallType] || r.recallType}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 font-bold">{r.intervalMonths} month cycle</span>
+                                  </div>
+                                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${getRecallStatusColor(r.status)}`}>{r.status}</span>
+                                </div>
+                                <p className="text-sm font-bold text-slate-700 mb-3">Due {r.nextRecallDate ? new Date(r.nextRecallDate).toLocaleDateString('en-GB') : '—'}</p>
+                                <div className="flex items-center gap-4 mb-4">
+                                  <div className="flex items-center gap-1.5"><Mail size={12} className="text-slate-400" /><span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${emailBadge.className}`}>{emailBadge.label}</span></div>
+                                  <div className="flex items-center gap-1.5"><MessageSquare size={12} className="text-slate-400" /><span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${smsBadge.className}`}>{smsBadge.label}</span></div>
+                                </div>
+                                <div className="flex gap-2">
+                                  {(r.status === 'Active' || r.status === 'Lapsed') && (
+                                    <>
+                                      <button onClick={() => handleSendRecallNow(r, 'email')} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600">Send Email Now</button>
+                                      <button onClick={() => handleSendRecallNow(r, 'sms')} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600">Send SMS Now</button>
+                                    </>
+                                  )}
+                                  {r.status !== 'Stopped' && r.status !== 'Completed' && (
+                                    <button onClick={() => handleStopRecall(r.id)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600">Stop</button>
+                                  )}
+                                  {(r.status === 'Stopped' || r.status === 'Lapsed') && (
+                                    <button onClick={() => handleReactivateRecall(r.id)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600">Reactivate</button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* TAB 3: MASTER PROFILE EDITOR */}
                   {crmTab === 'profile' && (
                     <div className="flex-1 bg-[#f8fafc] p-6 overflow-y-auto">
@@ -3056,6 +3349,210 @@ export default function AdminDashboard() {
               </div>
             </div>
             <button onClick={saveConfig} className="px-10 py-4 bg-[#3F9185] text-white font-black rounded-2xl shadow-lg hover:opacity-90 transition-all">Save Changes</button>
+          </div>
+        )}
+
+        {/* --- RECALLS VIEW --- */}
+        {view === 'recalls' && (
+          <div className="glass-card rounded-[2.5rem] p-10 space-y-6">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                <Bell className="text-[#3F9185]" /> Recall System
+              </h2>
+            </div>
+
+            {/* Summary stat cards */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              {[
+                { label: 'Due Now', count: recalls.filter(r => r.status === 'Active' && r.nextRecallDate <= new Date().toISOString().split('T')[0]).length, color: 'text-blue-600 bg-blue-50 border-blue-100' },
+                { label: 'Upcoming', count: recalls.filter(r => r.status === 'Active' && r.nextRecallDate > new Date().toISOString().split('T')[0]).length, color: 'text-slate-500 bg-slate-50 border-slate-100' },
+                { label: 'Booked', count: recalls.filter(r => r.status === 'Booked').length, color: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
+                { label: 'Needs New Recall', count: recalls.filter(r => r.needsNewRecall).length, color: 'text-amber-600 bg-amber-50 border-amber-100' },
+                { label: 'Lapsed', count: recalls.filter(r => r.status === 'Lapsed').length, color: 'text-red-600 bg-red-50 border-red-100' },
+              ].map(card => (
+                <div key={card.label} className={`rounded-2xl border p-4 ${card.color}`}>
+                  <p className="text-3xl font-black">{card.count}</p>
+                  <p className="text-[10px] font-black uppercase tracking-wider mt-1">{card.label}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <div className="flex-1 min-w-[220px]">
+                <input type="text" placeholder="Search by patient name, email, or phone..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-medium" value={recallSearch} onChange={(e) => setRecallSearch(e.target.value)} />
+              </div>
+              <select className="p-3 rounded-xl border border-slate-200 outline-none text-sm font-bold text-slate-600 bg-white" value={recallStatusFilter} onChange={(e) => setRecallStatusFilter(e.target.value as any)}>
+                <option value="All">All Statuses</option>
+                <option value="Active">Active</option>
+                <option value="Booked">Booked</option>
+                <option value="Completed">Completed</option>
+                <option value="Lapsed">Lapsed</option>
+              </select>
+              <select className="p-3 rounded-xl border border-slate-200 outline-none text-sm font-bold text-slate-600 bg-white" value={recallTypeFilter} onChange={(e) => setRecallTypeFilter(e.target.value as any)}>
+                <option value="All">All Types</option>
+                <option value="Spectacles">Spectacles</option>
+                <option value="ContactLenses">Contact Lenses</option>
+                <option value="ContactLensOrder">CL Reorder</option>
+              </select>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+              <div className="max-h-[65vh] overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                    <tr>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Patient</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Type</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Due Date</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Status</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Email</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">SMS</th>
+                      <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {recalls
+                      .filter(r => recallStatusFilter === 'All' || r.status === recallStatusFilter)
+                      .filter(r => recallTypeFilter === 'All' || r.recallType === recallTypeFilter)
+                      .filter(r =>
+                        (r.patientName || '').toLowerCase().includes(recallSearch.toLowerCase()) ||
+                        (r.email || '').toLowerCase().includes(recallSearch.toLowerCase()) ||
+                        (r.phone || '').toLowerCase().includes(recallSearch.toLowerCase())
+                      )
+                      .map((r) => {
+                        const emailBadge = getCommsStatusBadge(r.comms?.email?.lastStatus);
+                        const smsBadge = getCommsStatusBadge(r.comms?.sms?.lastStatus);
+                        const isOverdue = r.status === 'Active' && r.nextRecallDate <= new Date().toISOString().split('T')[0];
+                        return (
+                          <tr key={r.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedRecallForDetail(r)}>
+                            <td className="p-4">
+                              <p className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                                {r.patientName}
+                                {r.needsNewRecall && <span title="Needs a new recall set"><AlertTriangle size={13} className="text-amber-500" /></span>}
+                              </p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{r.email || 'no email'} · {r.phone || 'no mobile'}</p>
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider ${r.recallType === 'Spectacles' ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
+                                {RECALL_TYPE_LABEL[r.recallType] || r.recallType}
+                              </span>
+                              <span className="ml-1.5 text-[10px] text-slate-400 font-bold">{r.intervalMonths}mo</span>
+                            </td>
+                            <td className={`p-4 text-xs font-bold tabular-nums ${isOverdue ? 'text-red-600' : 'text-slate-500'}`}>
+                              {r.nextRecallDate ? new Date(r.nextRecallDate).toLocaleDateString('en-GB') : '—'}
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${getRecallStatusColor(r.status)}`}>{r.status}</span>
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${emailBadge.className}`}>{emailBadge.label}</span>
+                              {r.comms?.email?.lastStage && <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase">{r.comms.email.lastStage}</p>}
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${smsBadge.className}`}>{smsBadge.label}</span>
+                              {r.comms?.sms?.lastStage && <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase">{r.comms.sms.lastStage}</p>}
+                            </td>
+                            <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex justify-end gap-1.5">
+                                {(r.status === 'Active' || r.status === 'Lapsed') && (
+                                  <>
+                                    <button onClick={() => handleSendRecallNow(r, 'email')} title="Send email now" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><Mail size={14} /></button>
+                                    <button onClick={() => handleSendRecallNow(r, 'sms')} title="Send SMS now" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><MessageSquare size={14} /></button>
+                                  </>
+                                )}
+                                {r.status !== 'Stopped' && r.status !== 'Completed' && (
+                                  <button onClick={() => handleStopRecall(r.id)} title="Stop this recall" className="p-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-500"><X size={14} /></button>
+                                )}
+                                {(r.status === 'Stopped' || r.status === 'Lapsed') && (
+                                  <button onClick={() => handleReactivateRecall(r.id)} title="Reactivate" className="p-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600"><RotateCcw size={14} /></button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    {recalls.length === 0 && (
+                      <tr><td colSpan={7} className="p-10 text-center text-slate-400 font-bold italic">No recall records yet. Run the CSV import to get started.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- RECALL DETAIL SLIDE-OVER --- */}
+        {selectedRecallForDetail && (
+          <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={() => setSelectedRecallForDetail(null)}>
+            <div className="w-full max-w-md bg-white h-full shadow-2xl p-8 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h3 className="text-xl font-black text-slate-800">{selectedRecallForDetail.patientName}</h3>
+                  <p className="text-xs font-bold text-slate-400 mt-1">{RECALL_TYPE_LABEL[selectedRecallForDetail.recallType]} · {selectedRecallForDetail.intervalMonths} month cycle</p>
+                </div>
+                <button onClick={() => setSelectedRecallForDetail(null)} className="p-2 text-slate-400 hover:text-slate-700"><X size={20} /></button>
+              </div>
+
+              <div className="space-y-4 mb-8">
+                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Status</span><span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${getRecallStatusColor(selectedRecallForDetail.status)}`}>{selectedRecallForDetail.status}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Due Date</span><span className="font-bold text-slate-700">{selectedRecallForDetail.nextRecallDate ? new Date(selectedRecallForDetail.nextRecallDate).toLocaleDateString('en-GB') : '—'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Email</span><span className="font-bold text-slate-700">{selectedRecallForDetail.email || 'None on file'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Mobile</span><span className="font-bold text-slate-700">{selectedRecallForDetail.phone || 'None on file'}</span></div>
+                {selectedRecallForDetail.stoppedReason && (
+                  <div className="flex justify-between text-sm"><span className="text-slate-400 font-bold">Stopped Reason</span><span className="font-bold text-slate-700">{selectedRecallForDetail.stoppedReason}</span></div>
+                )}
+              </div>
+
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-3">Send History</h4>
+              <div className="space-y-2">
+                {recallEvents.filter(ev => ev.recallId === selectedRecallForDetail.id).map(ev => {
+                  const badge = getCommsStatusBadge(ev.status);
+                  return (
+                    <div key={ev.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="flex items-center gap-2">
+                        {ev.channel === 'email' ? <Mail size={13} className="text-slate-400" /> : <MessageSquare size={13} className="text-slate-400" />}
+                        <div>
+                          <p className="text-xs font-bold text-slate-700 uppercase">{ev.stage}</p>
+                          <p className="text-[10px] text-slate-400">{ev.timestamp ? new Date(ev.timestamp.seconds * 1000).toLocaleString('en-GB') : ''}</p>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${badge.className}`}>{badge.label}</span>
+                    </div>
+                  );
+                })}
+                {recallEvents.filter(ev => ev.recallId === selectedRecallForDetail.id).length === 0 && (
+                  <p className="text-xs text-slate-400 italic text-center py-4">No sends yet.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- SET NEW RECALL PROMPT (after a Visit Complete) --- */}
+        {pendingNewRecallFor && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-white rounded-[2rem] shadow-2xl p-8 max-w-sm w-full">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 rounded-full bg-teal-50 flex items-center justify-center text-[#3F9185]"><Bell size={20} /></div>
+                <h3 className="text-lg font-black text-slate-800">Set Next Recall</h3>
+              </div>
+              <p className="text-sm text-slate-500 font-medium mb-6">
+                {pendingNewRecallFor.patientName}'s visit is complete. When should their next {pendingNewRecallFor.recallType === 'ContactLenses' ? 'contact lens check' : 'eye test'} recall be?
+              </p>
+              <div className="flex gap-2 mb-6">
+                {RECALL_INTERVAL_OPTIONS[pendingNewRecallFor.recallType].map((m) => (
+                  <button key={m} onClick={() => setNewRecallInterval(m)} className={`flex-1 py-3 rounded-xl font-black text-sm border transition-all ${newRecallInterval === m ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
+                    {m} Month{m !== 1 ? 's' : ''}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setPendingNewRecallFor(null)} className="flex-1 py-3 rounded-xl font-bold text-sm text-slate-500 bg-slate-50 hover:bg-slate-100">Skip for now</button>
+                <button onClick={handleConfirmNewRecall} disabled={isSavingNewRecall} className="flex-1 py-3 rounded-xl font-bold text-sm text-white bg-[#3F9185] hover:bg-teal-700 disabled:opacity-50">
+                  {isSavingNewRecall ? 'Saving...' : 'Confirm'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
