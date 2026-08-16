@@ -1450,7 +1450,7 @@ export default function AdminDashboard() {
     try {
       if (channel === 'email') {
         if (!recall.email) { alert('No email on file for this patient.'); return; }
-        const message = `Hi ${firstName}, this is a reminder that you're due for your ${svcLabel} at The Eye Centre. Please call us on 0116 253 2788 or book online whenever suits.`;
+        const message = `Hi ${firstName}, this is a reminder that you're due for your ${svcLabel} at The Eye Centre. Please call us on 0116 253 2788 or book online here: https://book.theeyecentre.com`;
         const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1467,7 +1467,7 @@ export default function AdminDashboard() {
         if (!res.ok) alert('Failed to send email.');
       } else {
         if (!recall.phone) { alert('No mobile on file for this patient.'); return; }
-        const body = `Hi ${firstName}, reminder from The Eye Centre - you're due for your ${svcLabel}. Call 0116 253 2788 or book online.`;
+        const body = `Hi ${firstName}, reminder from The Eye Centre - you're due for your ${svcLabel}. Book online: https://book.theeyecentre.com or call 0116 253 2788.`;
         const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ to: recall.phone, body })
