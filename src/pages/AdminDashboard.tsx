@@ -1425,6 +1425,32 @@ export default function AdminDashboard() {
     }
   };
 
+  // Jump from a recall record straight to that patient's CRM record. crmPatients
+  // only holds the most recently-touched 150 patients (same limit the rest of the
+  // dashboard uses), so if the master record isn't in that cache, fall back to a
+  // lightweight patient object built from the recall's own denormalized fields -
+  // matches the existing "unknown-" pattern used elsewhere for the same reason,
+  // and still works correctly since ledger/messages lookups match on phone/email
+  // as well as id.
+  const handleViewRecallPatientInCrm = (recall: any) => {
+    let patient = recall.patientId ? crmPatients.find(p => p.id === recall.patientId) : null;
+    if (!patient && recall.phone) patient = crmPatients.find(p => p.phone === recall.phone);
+    if (!patient && recall.email) patient = crmPatients.find(p => p.email === recall.email);
+    if (!patient) {
+      patient = {
+        id: recall.patientId || `unknown-${recall.phone || recall.email}`,
+        patientName: recall.patientName,
+        phone: recall.phone,
+        email: recall.email,
+        dob: recall.dob || ''
+      };
+    }
+    setSelectedChatPatient(patient);
+    setCrmTab('recalls');
+    setView('messages');
+    setSelectedRecallForDetail(null);
+  };
+
   const handleStopRecall = async (recallId: string) => {
     if (!confirm("Stop this recall? No further reminders will be sent for it.")) return;
     await setDoc(doc(db, 'recalls', recallId), {
@@ -3427,7 +3453,13 @@ export default function AdminDashboard() {
                           <tr key={r.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedRecallForDetail(r)}>
                             <td className="p-4">
                               <p className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                                {r.patientName}
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleViewRecallPatientInCrm(r); }}
+                                  className="hover:text-[#3F9185] hover:underline text-left"
+                                  title="Open this patient's CRM record"
+                                >
+                                  {r.patientName}
+                                </button>
                                 {r.needsNewRecall && <span title="Needs a new recall set"><AlertTriangle size={13} className="text-amber-500" /></span>}
                               </p>
                               <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{r.email || 'no email'} · {r.phone || 'no mobile'}</p>
@@ -3489,6 +3521,12 @@ export default function AdminDashboard() {
                 <div>
                   <h3 className="text-xl font-black text-slate-800">{selectedRecallForDetail.patientName}</h3>
                   <p className="text-xs font-bold text-slate-400 mt-1">{RECALL_TYPE_LABEL[selectedRecallForDetail.recallType]} · {selectedRecallForDetail.intervalMonths} month cycle</p>
+                  <button
+                    onClick={() => handleViewRecallPatientInCrm(selectedRecallForDetail)}
+                    className="text-xs font-bold text-[#3F9185] hover:underline mt-2 flex items-center gap-1"
+                  >
+                    <UserCog size={12} /> Open CRM record
+                  </button>
                 </div>
                 <button onClick={() => setSelectedRecallForDetail(null)} className="p-2 text-slate-400 hover:text-slate-700"><X size={20} /></button>
               </div>
