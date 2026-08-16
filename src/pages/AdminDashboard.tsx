@@ -1409,15 +1409,7 @@ export default function AdminDashboard() {
       });
 
       // Clear needsNewRecall on whichever recall(s) prompted this, if any are still flagged
-      const toClear = recalls.filter(r =>
-        r.needsNewRecall &&
-        r.recallType === pendingNewRecallFor.recallType &&
-        ((pendingNewRecallFor.patientId && r.patientId === pendingNewRecallFor.patientId) ||
-         (!pendingNewRecallFor.patientId && pendingNewRecallFor.phone && r.phone === pendingNewRecallFor.phone))
-      );
-      for (const r of toClear) {
-        await setDoc(doc(db, 'recalls', r.id), { needsNewRecall: false }, { merge: true });
-      }
+      await clearNeedsNewRecallFor(pendingNewRecallFor.patientId, pendingNewRecallFor.phone, null, pendingNewRecallFor.recallType);
 
       setPendingNewRecallFor(null);
     } catch (err) {
@@ -1468,6 +1460,21 @@ export default function AdminDashboard() {
     }
   };
 
+  // Clears the amber "needs new recall" flag on any of this patient's other
+  // recalls of the same type — reused wherever staff resolve a flagged recall
+  // by a route other than the automatic "Set New Recall" popup.
+  const clearNeedsNewRecallFor = async (patientId: string | null, phone: string | null, email: string | null, recallType: string, exceptId?: string) => {
+    const toClear = recalls.filter(r =>
+      r.id !== exceptId && r.needsNewRecall && r.recallType === recallType &&
+      ((patientId && r.patientId === patientId) ||
+       (!patientId && phone && r.phone === phone) ||
+       (!patientId && !phone && email && r.email === email))
+    );
+    for (const r of toClear) {
+      await setDoc(doc(db, 'recalls', r.id), { needsNewRecall: false }, { merge: true });
+    }
+  };
+
   const handleSaveEditRecall = async () => {
     if (!editRecallForm.patientName.trim() || !editRecallForm.nextRecallDate) { alert('Patient name and due date are required.'); return; }
     setIsSavingEditRecall(true);
@@ -1483,7 +1490,8 @@ export default function AdminDashboard() {
         updatedAt: serverTimestamp()
       };
       if (editingRecall?.id) {
-        await setDoc(doc(db, 'recalls', editingRecall.id), payload, { merge: true });
+        // Editing directly resolves it — staff has handled this recall, clear its own flag.
+        await setDoc(doc(db, 'recalls', editingRecall.id), { ...payload, needsNewRecall: false }, { merge: true });
       } else {
         await addDoc(collection(db, 'recalls'), {
           ...payload, patientId: null, dob: null, stoppedReason: null, linkedAppointmentId: null,
@@ -1491,6 +1499,9 @@ export default function AdminDashboard() {
           comms: { email: { lastStage: null, lastSentAt: null, lastStatus: null, brevoMessageId: null }, sms: { lastStage: null, lastSentAt: null, lastStatus: null, twilioSid: null } },
           source: 'dashboard_manual_create', createdAt: serverTimestamp()
         });
+        // Manually creating the "next" recall for this patient/type should clear
+        // the flag on whatever old recall(s) prompted the need for it.
+        await clearNeedsNewRecallFor(null, payload.phone, payload.email, payload.recallType);
       }
       setEditingRecall(null);
     } catch (e) { console.error(e); alert('Failed to save recall.'); }
@@ -1500,7 +1511,7 @@ export default function AdminDashboard() {
   const handleStopRecall = async (recallId: string) => {
     if (!confirm("Stop this recall? No further reminders will be sent for it.")) return;
     await setDoc(doc(db, 'recalls', recallId), {
-      status: 'Stopped', stoppedReason: 'Manual', updatedAt: serverTimestamp()
+      status: 'Stopped', stoppedReason: 'Manual', needsNewRecall: false, updatedAt: serverTimestamp()
     }, { merge: true });
   };
 
@@ -3432,7 +3443,7 @@ export default function AdminDashboard() {
               <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                 <Bell className="text-[#3F9185]" /> Recall System
               </h2>
-              <button onClick={() => openEditRecall(null)} className="px-4 py-2 bg-[#3F9185] text-white text-xs font-black rounded-xl hover:bg-teal-700"><Plus size={14}/> New Recall</button>
+              <button onClick={() => openEditRecall(null)} className="px-4 py-2 bg-[#3F9185] text-white text-xs font-black rounded-xl hover:bg-teal-700">+ New Recall</button>
             </div>
 
             {/* Summary stat cards */}
