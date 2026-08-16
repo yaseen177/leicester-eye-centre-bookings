@@ -3432,7 +3432,7 @@ export default function AdminDashboard() {
               <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                 <Bell className="text-[#3F9185]" /> Recall System
               </h2>
-              <button onClick={() => openEditRecall(null)} className="px-4 py-2 bg-[#3F9185] text-white text-xs font-black rounded-xl hover:bg-teal-700">+ New Recall</button>
+              <button onClick={() => openEditRecall(null)} className="px-4 py-2 bg-[#3F9185] text-white text-xs font-black rounded-xl hover:bg-teal-700"><Plus size={14}/> New Recall</button>
             </div>
 
             {/* Summary stat cards */}
@@ -3546,7 +3546,7 @@ export default function AdminDashboard() {
                                 {(r.status === 'Stopped' || r.status === 'Lapsed') && (
                                   <button onClick={() => handleReactivateRecall(r.id)} title="Reactivate" className="p-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600"><RotateCcw size={14} /></button>
                                 )}
-                                <button onClick={() => openEditRecall(r)} title="Edit" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><UserCog size={14} /></button>
+                                <button onClick={() => openEditRecall(r)} title="Edit" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><Edit3 size={14} /></button>
                               </div>
                             </td>
                           </tr>
