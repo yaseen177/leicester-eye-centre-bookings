@@ -1528,6 +1528,22 @@ export default function AdminDashboard() {
   // same messaging worker + Brevo template the automated engine and rest of the
   // dashboard already use. Logged as stage 'manual' so it shows in the recall's history
   // without interfering with the automated stagesSent tracking.
+  // Pulls a human-readable reason out of the messaging worker's response body -
+  // Twilio errors look like {code, message, more_info}, Brevo errors come back
+  // as {error: {code, message}}. Falls back to a truncated raw dump if the
+  // shape is unrecognised, so there's always SOMETHING more useful than a bare
+  // HTTP status code to look at.
+  const extractSendErrorMessage = async (res: Response): Promise<string> => {
+    try {
+      const data: any = await res.json();
+      const msg = data?.message || data?.error?.message || data?.error || (typeof data === 'string' ? data : null);
+      if (msg) return `${res.status}: ${msg}`;
+      return `${res.status}: ${JSON.stringify(data).slice(0, 300)}`;
+    } catch {
+      return `http_${res.status}`;
+    }
+  };
+
   const handleSendRecallNow = async (recall: any, channel: 'email' | 'sms') => {
     const svcLabel = recall.recallType === 'ContactLenses' ? 'contact lens check'
       : recall.recallType === 'ContactLensOrder' ? 'contact lens reorder' : 'eye test';
@@ -1545,12 +1561,13 @@ export default function AdminDashboard() {
             params: { patient_name: firstName, custom_message: message, subject: `Your ${svcLabel} reminder` }
           })
         });
+        const errorDetail = res.ok ? null : await extractSendErrorMessage(res);
         await addDoc(collection(db, 'recallEvents'), {
           recallId: recall.id, patientName: recall.patientName, channel: 'email', contact: recall.email,
           stage: 'manual', status: res.ok ? 'sent' : 'failed', providerId: null,
-          error: res.ok ? null : `http_${res.status}`, timestamp: serverTimestamp()
+          error: errorDetail, timestamp: serverTimestamp()
         });
-        if (!res.ok) alert('Failed to send email.');
+        if (!res.ok) alert(`Failed to send email: ${errorDetail}`);
       } else {
         if (!recall.phone) { alert('No mobile on file for this patient.'); return; }
         const cleanPhone = standardizePhone(recall.phone);
@@ -1559,12 +1576,13 @@ export default function AdminDashboard() {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ to: cleanPhone, body })
         });
+        const errorDetail = res.ok ? null : await extractSendErrorMessage(res);
         await addDoc(collection(db, 'recallEvents'), {
           recallId: recall.id, patientName: recall.patientName, channel: 'sms', contact: recall.phone,
           stage: 'manual', status: res.ok ? 'sent' : 'failed', providerId: null,
-          error: res.ok ? null : `http_${res.status}`, timestamp: serverTimestamp()
+          error: errorDetail, timestamp: serverTimestamp()
         });
-        if (!res.ok) alert('Failed to send SMS.');
+        if (!res.ok) alert(`Failed to send SMS: ${errorDetail}`);
       }
     } catch (e) {
       console.error(e);
@@ -3561,7 +3579,7 @@ export default function AdminDashboard() {
                                 {(r.status === 'Stopped' || r.status === 'Lapsed') && (
                                   <button onClick={() => handleReactivateRecall(r.id)} title="Reactivate" className="p-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600"><RotateCcw size={14} /></button>
                                 )}
-                                <button onClick={() => openEditRecall(r)} title="Edit" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><Edit3 size={14} /></button>
+                                <button onClick={() => openEditRecall(r)} title="Edit" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><UserCog size={14} /></button>
                               </div>
                             </td>
                           </tr>
@@ -3611,15 +3629,20 @@ export default function AdminDashboard() {
                 {recallEvents.filter(ev => ev.recallId === selectedRecallForDetail.id).map(ev => {
                   const badge = getCommsStatusBadge(ev.status);
                   return (
-                    <div key={ev.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                      <div className="flex items-center gap-2">
-                        {ev.channel === 'email' ? <Mail size={13} className="text-slate-400" /> : <MessageSquare size={13} className="text-slate-400" />}
-                        <div>
-                          <p className="text-xs font-bold text-slate-700 uppercase">{ev.stage}</p>
-                          <p className="text-[10px] text-slate-400">{ev.timestamp ? new Date(ev.timestamp.seconds * 1000).toLocaleString('en-GB') : ''}</p>
+                    <div key={ev.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {ev.channel === 'email' ? <Mail size={13} className="text-slate-400" /> : <MessageSquare size={13} className="text-slate-400" />}
+                          <div>
+                            <p className="text-xs font-bold text-slate-700 uppercase">{ev.stage}</p>
+                            <p className="text-[10px] text-slate-400">{ev.timestamp ? new Date(ev.timestamp.seconds * 1000).toLocaleString('en-GB') : ''}</p>
+                          </div>
                         </div>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${badge.className}`}>{badge.label}</span>
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${badge.className}`}>{badge.label}</span>
+                      {ev.error && (
+                        <p className="text-[10px] text-red-500 font-medium mt-2 pt-2 border-t border-slate-200 break-words">{ev.error}</p>
+                      )}
                     </div>
                   );
                 })}
