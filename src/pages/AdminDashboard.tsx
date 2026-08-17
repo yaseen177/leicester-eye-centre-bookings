@@ -3579,7 +3579,7 @@ export default function AdminDashboard() {
                                 {(r.status === 'Stopped' || r.status === 'Lapsed') && (
                                   <button onClick={() => handleReactivateRecall(r.id)} title="Reactivate" className="p-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600"><RotateCcw size={14} /></button>
                                 )}
-                                <button onClick={() => openEditRecall(r)} title="Edit" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><UserCog size={14} /></button>
+                                <button onClick={() => openEditRecall(r)} title="Edit" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500"><Edit3 size={14} /></button>
                               </div>
                             </td>
                           </tr>
