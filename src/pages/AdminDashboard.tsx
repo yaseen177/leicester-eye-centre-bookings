@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText } from 'lucide-react';
+import QRCode from 'qrcode';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where, arrayUnion } from 'firebase/firestore';
@@ -461,6 +462,8 @@ export default function AdminDashboard() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [orderPaymentDraft, setOrderPaymentDraft] = useState({ method: 'Cash' as PaymentMethod, amount: '' });
   const [isSendingKlarnaLink, setIsSendingKlarnaLink] = useState(false);
+  const [qrModal, setQrModal] = useState<{ orderId: string; dataUrl: string; url: string; balance: number } | null>(null);
+  const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [newFrameMakeInput, setNewFrameMakeInput] = useState('');
   const [newQuote, setNewQuote] = useState({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
   const [quoteSearchQuery, setQuoteSearchQuery] = useState('');
@@ -1121,6 +1124,11 @@ export default function AdminDashboard() {
     setIsNewOrderModalOpen(true);
   };
 
+  // Every write below folds an audit entry into the SAME setDoc call as the
+  // actual change, rather than a separate write — one round trip, and the
+  // log can never end up out of sync with what it's describing.
+  const auditEntry = (event: string, detail: string = '') => ({ id: genId(), event, detail, timestamp: new Date().toISOString() });
+
   const handleSaveOrder = async () => {
     if (!newOrder.patientName.trim()) { alert("Patient name is required."); return; }
     if (newOrder.items.some(it => !it.frameModel.trim())) { alert("Every spectacle needs a frame model entered."); return; }
@@ -1195,6 +1203,9 @@ export default function AdminDashboard() {
         payments: initialPayments,
         collectedAt: null,
         orderReadyAt: null,
+        auditLog: [
+          auditEntry('Order Created', `${finalItems.length} spectacle${finalItems.length === 1 ? '' : 's'}, total £${orderTotal.toFixed(2)}${initialPayments.length ? `, £${initAmount.toFixed(2)} paid via ${newOrder.initialPaymentMethod} at creation` : ''}`)
+        ],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -1251,9 +1262,15 @@ export default function AdminDashboard() {
   // for or fire any notification — that only ever happens via the explicit
   // markOrderReady action below, once staff have done their own final check.
   const updateItemStatus = async (order: any, itemId: string, field: 'frameStatus' | 'lensStatus', value: string) => {
+    const itemIndex = order.items.findIndex((it: any) => it.id === itemId);
     const updatedItems = order.items.map((it: any) => it.id === itemId ? { ...it, [field]: value } : it);
+    const fieldLabel = field === 'frameStatus' ? 'Frame' : 'Lens';
     try {
-      await setDoc(doc(db, "dispenseOrders", order.id), { items: updatedItems, updatedAt: serverTimestamp() }, { merge: true });
+      await setDoc(doc(db, "dispenseOrders", order.id), {
+        items: updatedItems,
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry(`${fieldLabel} Status Updated`, `Spectacle ${itemIndex + 1}: ${fieldLabel.toLowerCase()} status → "${value}"`))
+      }, { merge: true });
     } catch (e) {
       alert("Error updating status.");
     }
@@ -1264,7 +1281,11 @@ export default function AdminDashboard() {
   // customer notification fires — never automatically from item statuses.
   const markOrderReady = async (order: any) => {
     try {
-      await setDoc(doc(db, "dispenseOrders", order.id), { orderReadyAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+      await setDoc(doc(db, "dispenseOrders", order.id), {
+        orderReadyAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Order Marked Ready', 'Staff confirmed prepped for collection — notification sent to patient'))
+      }, { merge: true });
       await notifyOrderReady(order);
     } catch (e) {
       alert("Error marking order ready.");
@@ -1273,7 +1294,10 @@ export default function AdminDashboard() {
 
   const markOrderCollected = async (orderId: string) => {
     try {
-      await setDoc(doc(db, "dispenseOrders", orderId), { collectedAt: serverTimestamp() }, { merge: true });
+      await setDoc(doc(db, "dispenseOrders", orderId), {
+        collectedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Order Collected'))
+      }, { merge: true });
     } catch (e) {
       alert("Error marking as collected.");
     }
@@ -1284,11 +1308,48 @@ export default function AdminDashboard() {
     if (!amount || amount <= 0) { alert("Enter a valid payment amount."); return; }
     const record = { id: genId(), method: orderPaymentDraft.method, amount, status: 'completed', createdAt: new Date().toISOString() };
     try {
-      await setDoc(doc(db, "dispenseOrders", order.id), { payments: arrayUnion(record), updatedAt: serverTimestamp() }, { merge: true });
+      await setDoc(doc(db, "dispenseOrders", order.id), {
+        payments: arrayUnion(record),
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Payment Recorded', `£${amount.toFixed(2)} via ${orderPaymentDraft.method}`))
+      }, { merge: true });
       setOrderPaymentDraft({ method: 'Cash', amount: '' });
     } catch (e) {
       alert("Error recording payment.");
     }
+  };
+
+  // Shared by sendKlarnaLink and showKlarnaQrCode below — creates the Stripe
+  // Checkout Session via the payments Worker and records the pending
+  // payment + audit entry, without deciding how the link reaches the
+  // customer (SMS/email vs on-screen QR is the caller's job).
+  const createKlarnaCheckoutSession = async (order: any): Promise<{ url: string; balance: number } | null> => {
+    const amountPaid = (order.payments || []).filter((p: any) => p.status === 'completed').reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+    const balance = Math.round(((order.total || 0) - amountPaid) * 100) / 100;
+    if (balance <= 0) { alert("This order has no outstanding balance."); return null; }
+    if ((order.payments || []).some((p: any) => p.status === 'pending')) {
+      if (!confirm("There's already a pending Klarna/Clearpay link on this order. Create another one anyway?")) return null;
+    }
+
+    const res = await fetch("https://payments.yaseen-hussain18.workers.dev/create-checkout-session", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId: order.id,
+        amountPence: Math.round(balance * 100),
+        currency: 'gbp',
+        customerEmail: order.email || undefined,
+        customerName: order.patientName,
+        description: `The Eye Centre — Order ${order.id.slice(0, 8).toUpperCase()}`
+      })
+    });
+    if (!res.ok) { alert("Couldn't create the payment link — check the payments Worker is deployed and reachable."); return null; }
+    const { url, sessionId } = await res.json();
+    if (!url) { alert("Payments Worker didn't return a checkout URL."); return null; }
+
+    const record = { id: genId(), method: 'Klarna/Clearpay' as PaymentMethod, amount: balance, status: 'pending', stripeSessionId: sessionId, createdAt: new Date().toISOString() };
+    await setDoc(doc(db, "dispenseOrders", order.id), { payments: arrayUnion(record), updatedAt: serverTimestamp() }, { merge: true });
+
+    return { url, balance };
   };
 
   // Klarna/Clearpay run their own regulated credit checks — we never touch
@@ -1298,33 +1359,13 @@ export default function AdminDashboard() {
   // Requires a separate Cloudflare Worker deployment — see the accompanying
   // klarna-checkout-worker.js.
   const sendKlarnaLink = async (order: any) => {
-    const amountPaid = (order.payments || []).filter((p: any) => p.status === 'completed').reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
-    const balance = Math.round(((order.total || 0) - amountPaid) * 100) / 100;
-    if (balance <= 0) { alert("This order has no outstanding balance."); return; }
-    if (!order.email && !order.phone) { alert("This order has no email or phone on file — can't send a payment link."); return; }
-    if ((order.payments || []).some((p: any) => p.status === 'pending')) {
-      if (!confirm("There's already a pending Klarna/Clearpay link on this order. Send another one anyway?")) return;
-    }
+    if (!order.email && !order.phone) { alert("This order has no email or phone on file — can't send a payment link. Try Show QR Code instead."); return; }
 
     setIsSendingKlarnaLink(true);
     try {
-      const res = await fetch("https://payments.yaseen-hussain18.workers.dev/create-checkout-session", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: order.id,
-          amountPence: Math.round(balance * 100),
-          currency: 'gbp',
-          customerEmail: order.email || undefined,
-          customerName: order.patientName,
-          description: `The Eye Centre — Order ${order.id.slice(0, 8).toUpperCase()}`
-        })
-      });
-      if (!res.ok) { alert("Couldn't create the payment link — check the payments Worker is deployed and reachable."); return; }
-      const { url, sessionId } = await res.json();
-      if (!url) { alert("Payments Worker didn't return a checkout URL."); return; }
-
-      const record = { id: genId(), method: 'Klarna/Clearpay' as PaymentMethod, amount: balance, status: 'pending', stripeSessionId: sessionId, createdAt: new Date().toISOString() };
-      await setDoc(doc(db, "dispenseOrders", order.id), { payments: arrayUnion(record), updatedAt: serverTimestamp() }, { merge: true });
+      const result = await createKlarnaCheckoutSession(order);
+      if (!result) return;
+      const { url, balance } = result;
 
       const firstName = (order.patientName || '').split(' ')[0];
       const dateStr = new Date().toISOString().split('T')[0];
@@ -1344,12 +1385,41 @@ export default function AdminDashboard() {
         });
         await writeLog('SMS', order.patientName, order.phone, smsRes.ok ? 'Sent' : 'Failed', 'Klarna/Clearpay Payment Link', dateStr, '');
       }
+      await setDoc(doc(db, "dispenseOrders", order.id), {
+        auditLog: arrayUnion(auditEntry('Klarna/Clearpay Link Sent', `£${balance.toFixed(2)} — sent via ${order.email ? 'email' : ''}${order.email && order.phone ? ' & ' : ''}${order.phone ? 'SMS' : ''}`))
+      }, { merge: true });
       alert("Payment link sent to the customer's phone/email.");
     } catch (e) {
       console.error(e);
       alert("Network error sending the payment link.");
     } finally {
       setIsSendingKlarnaLink(false);
+    }
+  };
+
+  // Backup path for when the customer can't receive the SMS/email — same
+  // Checkout Session, but rendered as an on-screen QR code so staff can
+  // turn the screen/tablet round and the customer scans it on their own
+  // phone. Generated entirely client-side (no third party ever sees the
+  // live checkout URL, unlike a hosted QR-image API).
+  const showKlarnaQrCode = async (order: any) => {
+    setIsGeneratingQr(true);
+    try {
+      const result = await createKlarnaCheckoutSession(order);
+      if (!result) return;
+      const { url, balance } = result;
+
+      const dataUrl = await QRCode.toDataURL(url, { width: 320, margin: 2, color: { dark: '#1e293b', light: '#ffffff' } });
+      setQrModal({ orderId: order.id, dataUrl, url, balance });
+
+      await setDoc(doc(db, "dispenseOrders", order.id), {
+        auditLog: arrayUnion(auditEntry('Klarna/Clearpay QR Code Shown', `£${balance.toFixed(2)} — shown on-screen instead of SMS/email`))
+      }, { merge: true });
+    } catch (e) {
+      console.error(e);
+      alert("Couldn't generate the QR code.");
+    } finally {
+      setIsGeneratingQr(false);
     }
   };
 
@@ -1674,6 +1744,14 @@ export default function AdminDashboard() {
               >
                 <Smartphone size={14} /> {isSendingKlarnaLink ? 'Sending…' : 'Send Klarna/Clearpay Link'}
               </button>
+              <button
+                onClick={() => showKlarnaQrCode(order)}
+                disabled={isGeneratingQr}
+                title="If the customer can't receive SMS or email, show this on screen for them to scan"
+                className="px-3 py-2 bg-white border border-indigo-200 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-50 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <QrCode size={14} /> {isGeneratingQr ? 'Generating…' : 'Show QR Code'}
+              </button>
             </div>
           )}
         </div>
@@ -1708,6 +1786,22 @@ export default function AdminDashboard() {
             </>
           )}
         </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+          <h4 className="font-black text-slate-800 text-sm flex items-center gap-2"><ScrollText size={16} className="text-slate-400" /> Activity Log</h4>
+          <div className="max-h-48 overflow-y-auto space-y-2 pt-1">
+            {(order.auditLog || []).length === 0 && <p className="text-xs text-slate-400 italic">No activity recorded yet.</p>}
+            {[...(order.auditLog || [])].reverse().map((entry: any) => (
+              <div key={entry.id} className="text-xs border-b border-slate-50 pb-2 last:border-0">
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="font-bold text-slate-700">{entry.event}</span>
+                  <span className="text-slate-400 shrink-0 tabular-nums">{new Date(entry.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                {entry.detail && <p className="text-slate-500 mt-0.5">{entry.detail}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   };
@@ -1731,21 +1825,21 @@ export default function AdminDashboard() {
           ))}
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="max-h-[65vh] overflow-y-auto">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                 <tr>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Date</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Patient</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Items</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Total</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Balance</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Status</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Action</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Date</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Patient</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Items</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Total</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Balance</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Status</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
+              <tbody>
                 {filtered.map(order => {
                   const status = getOrderStatus(order);
                   const balance = getOrderBalance(order);
@@ -1754,23 +1848,23 @@ export default function AdminDashboard() {
                   return (
                     <Fragment key={order.id}>
                       <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>
-                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">
+                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums border border-slate-200">
                           {order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000).toLocaleDateString('en-GB') : 'Just now'}
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 border border-slate-200">
                           <p className="font-bold text-slate-800 text-sm">{order.patientName}</p>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">{order.source === 'Appointment' ? 'Clinic Booking' : 'Walk-In'}</p>
                         </td>
-                        <td className="p-4 text-xs font-bold text-slate-600">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
-                        <td className="p-4 font-black text-sm text-slate-800">£{(order.total || 0).toFixed(2)}</td>
-                        <td className="p-4 text-sm font-bold">
+                        <td className="p-4 text-xs font-bold text-slate-600 border border-slate-200">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
+                        <td className="p-4 font-black text-sm text-slate-800 border border-slate-200">£{(order.total || 0).toFixed(2)}</td>
+                        <td className="p-4 text-sm font-bold border border-slate-200">
                           {balance > 0 ? <span className="text-amber-600">£{balance.toFixed(2)}</span> : <span className="text-green-600">Paid</span>}
                           {pending > 0 && <p className="text-[10px] font-bold text-indigo-400 mt-0.5">£{pending.toFixed(2)} pending Klarna</p>}
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 border border-slate-200">
                           <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${ORDER_STATUS_STYLES[status]}`}>{status}</span>
                         </td>
-                        <td className="p-4 text-right">
+                        <td className="p-4 text-right border border-slate-200">
                           <button className="text-[#3F9185] font-bold text-xs">{isOpen ? 'Close' : 'View'}</button>
                         </td>
                       </tr>
@@ -5205,6 +5299,24 @@ export default function AdminDashboard() {
             >
               {isSavingOrder ? 'Saving…' : 'Create Order'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- KLARNA/CLEARPAY QR CODE MODAL --- */}
+      {qrModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[140] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 text-center">
+            <div className="flex justify-end">
+              <button onClick={() => setQrModal(null)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+            <h2 className="text-lg font-black text-slate-800 mb-1">Scan to pay with Klarna/Clearpay</h2>
+            <p className="text-sm font-bold text-[#3F9185] mb-4">£{qrModal.balance.toFixed(2)}</p>
+            <div className="bg-white p-3 rounded-2xl border-2 border-slate-100 inline-block">
+              <img src={qrModal.dataUrl} alt="Klarna/Clearpay payment QR code" className="w-64 h-64" />
+            </div>
+            <p className="text-xs text-slate-500 mt-4 leading-relaxed">Turn the screen towards the customer — they scan this with their phone's camera to open the payment page and pay directly.</p>
+            <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mt-4">Order Ref: {qrModal.orderId.slice(0, 8).toUpperCase()}</p>
           </div>
         </div>
       )}
