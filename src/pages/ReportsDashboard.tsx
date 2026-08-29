@@ -62,8 +62,8 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
       const rawService = app.service || app.appointmentType || app.type || '';
       const serviceName = rawService.toLowerCase().trim();
 
-      if (serviceName.includes('contact lens')) {
-          // Do nothing - exclude from financial pie chart entirely
+      if (serviceName.includes('contact lens') || serviceName === 'recheck') {
+          // Do nothing - exclude from financial pie chart entirely (no charge)
       } else if (serviceName === 'eye check private' || serviceName.includes('private')) {
           privateCount++;
       } else if (serviceName !== '') {

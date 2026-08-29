@@ -1089,6 +1089,8 @@ export default function AdminDashboard() {
         category = 'Dispensing';
       } else if (newBooking.service === 'Contact Lens Check') {
         category = 'Contact Lens Check';
+      } else if (newBooking.service === 'Recheck') {
+        category = 'Recheck';
       } else {
         if (age >= 60) category = 'Eye Check Over 60';
         else if (age < 16) category = 'Eye Check Child';
@@ -4466,6 +4468,7 @@ export default function AdminDashboard() {
                   <>
                     <option value="Eye Check">Eye Check</option>
                     <option value="Contact Lens Check">Contact Lens Check</option>
+                    <option value="Recheck">Recheck</option>
                   </>
                 )}
               </select>
