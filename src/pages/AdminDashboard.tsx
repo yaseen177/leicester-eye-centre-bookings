@@ -52,7 +52,7 @@ const VARIFOCAL_TIERS: Record<string, string> = { 'Varifocal Basic': 'basic', 'V
 type FrameStatus = 'In Stock' | 'Requested from Supplier' | 'Received';
 type LensStatus = 'Requested' | 'Received/Glazed';
 type ItemStatus = 'Awaiting Frame' | 'Awaiting Lens' | 'Ready';
-type OrderStatus = 'Awaiting Frame' | 'Awaiting Lens' | 'Ready to Collect' | 'Collected';
+type OrderStatus = 'Awaiting Frame' | 'Awaiting Lens' | 'Order Ready' | 'Collected';
 type PaymentMethod = 'Cash' | 'Debit Card' | 'Credit Card' | 'Klarna/Clearpay';
 
 const genId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
@@ -174,13 +174,25 @@ const getItemStatus = (item: any): ItemStatus => {
   return 'Ready';
 };
 
-// Whole-order status: only "Ready to Collect" once every item is ready.
+// True once every item has its frame received and lens glazed — i.e. the
+// point at which staff CAN mark the order ready. Doesn't by itself change
+// the order's status; that only happens once staff explicitly confirms via
+// markOrderReady, after their own final prep/QC check.
+const allItemsReady = (order: any): boolean => {
+  const items = order.items || [];
+  return items.length > 0 && items.every((it: any) => getItemStatus(it) === 'Ready');
+};
+
+// Whole-order status. "Order Ready" is a deliberate staff action (see
+// markOrderReady), never inferred automatically just because every item's
+// frame/lens sub-status happens to say done — glazing complete isn't the
+// same as "we've checked it over and it's genuinely ready for the patient".
 const getOrderStatus = (order: any): OrderStatus => {
   if (order.collectedAt) return 'Collected';
+  if (order.orderReadyAt) return 'Order Ready';
   const items = order.items || [];
   if (items.length === 0) return 'Awaiting Frame';
   const statuses = items.map(getItemStatus);
-  if (statuses.every((s: ItemStatus) => s === 'Ready')) return 'Ready to Collect';
   if (statuses.some((s: ItemStatus) => s === 'Awaiting Frame')) return 'Awaiting Frame';
   return 'Awaiting Lens';
 };
@@ -198,9 +210,10 @@ const getOrderBalance = (order: any): number => Math.round(((order.total || 0) -
 const ORDER_STATUS_STYLES: Record<OrderStatus, string> = {
   'Awaiting Frame': 'bg-amber-100 text-amber-700 border-amber-200',
   'Awaiting Lens': 'bg-indigo-100 text-indigo-700 border-indigo-200',
-  'Ready to Collect': 'bg-green-100 text-green-700 border-green-200',
+  'Order Ready': 'bg-green-100 text-green-700 border-green-200',
   'Collected': 'bg-slate-100 text-slate-500 border-slate-200'
 };
+
 
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls'>('diary');
@@ -329,7 +342,7 @@ export default function AdminDashboard() {
   const [crmPatients, setCrmPatients] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
-  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'profile' | 'recalls'>('chat');
+  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'orders' | 'profile' | 'recalls'>('chat');
   const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '' });
   
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
@@ -1181,7 +1194,7 @@ export default function AdminDashboard() {
         total: orderTotal,
         payments: initialPayments,
         collectedAt: null,
-        readyToCollectNotifiedAt: null,
+        orderReadyAt: null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -1205,9 +1218,10 @@ export default function AdminDashboard() {
     }
   };
 
-  // Sends the "ready to collect" email/SMS. Only ever called once per order,
-  // guarded by the Ready-to-Collect transition check in updateItemStatus.
-  const notifyReadyToCollect = async (order: any) => {
+  // Sends the "order ready" email/SMS. Only ever called from markOrderReady,
+  // i.e. once staff have explicitly confirmed the order is prepped — never
+  // inferred automatically just from item sub-statuses ticking over.
+  const notifyOrderReady = async (order: any) => {
     const firstName = (order.patientName || '').split(' ')[0];
     const dateStr = new Date().toISOString().split('T')[0];
     try {
@@ -1219,34 +1233,41 @@ export default function AdminDashboard() {
             params: { patient_name: firstName, order_ref: order.id.slice(0, 8).toUpperCase() }
           })
         });
-        await writeLog('Email', order.patientName, order.email, res.ok ? 'Sent' : 'Failed', 'Ready to Collect', dateStr, '');
+        await writeLog('Email', order.patientName, order.email, res.ok ? 'Sent' : 'Failed', 'Order Ready', dateStr, '');
       }
       if (order.phone) {
         const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ to: order.phone, body: `The Eye Centre: Great news ${firstName}, your glasses are ready to collect in-store! See you soon.` })
         });
-        await writeLog('SMS', order.patientName, order.phone, smsRes.ok ? 'Sent' : 'Failed', 'Ready to Collect', dateStr, '');
+        await writeLog('SMS', order.patientName, order.phone, smsRes.ok ? 'Sent' : 'Failed', 'Order Ready', dateStr, '');
       }
-      await setDoc(doc(db, "dispenseOrders", order.id), { readyToCollectNotifiedAt: serverTimestamp() }, { merge: true });
     } catch (e) {
-      console.error("Ready-to-collect notification failed:", e);
+      console.error("Order-ready notification failed:", e);
     }
   };
 
-  // Updates one item's frame/lens status, then checks whether the WHOLE order
-  // has just become fully ready — if so, fires the one-time notification.
+  // Updates one item's frame/lens sub-status. Deliberately does NOT check
+  // for or fire any notification — that only ever happens via the explicit
+  // markOrderReady action below, once staff have done their own final check.
   const updateItemStatus = async (order: any, itemId: string, field: 'frameStatus' | 'lensStatus', value: string) => {
-    const prevStatus = getOrderStatus(order);
     const updatedItems = order.items.map((it: any) => it.id === itemId ? { ...it, [field]: value } : it);
-    const newStatus = getOrderStatus({ ...order, items: updatedItems });
     try {
       await setDoc(doc(db, "dispenseOrders", order.id), { items: updatedItems, updatedAt: serverTimestamp() }, { merge: true });
-      if (prevStatus !== 'Ready to Collect' && newStatus === 'Ready to Collect') {
-        await notifyReadyToCollect({ ...order, items: updatedItems });
-      }
     } catch (e) {
       alert("Error updating status.");
+    }
+  };
+
+  // The explicit "Order Ready" step: staff confirm everything is glazed,
+  // fitted, and prepped for the patient. This is the ONLY place the
+  // customer notification fires — never automatically from item statuses.
+  const markOrderReady = async (order: any) => {
+    try {
+      await setDoc(doc(db, "dispenseOrders", order.id), { orderReadyAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+      await notifyOrderReady(order);
+    } catch (e) {
+      alert("Error marking order ready.");
     }
   };
 
@@ -1657,22 +1678,34 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        <div className="flex justify-between items-center">
-          {order.readyToCollectNotifiedAt && !order.collectedAt && (
-            <p className="text-xs font-bold text-green-600 flex items-center gap-1.5"><CheckCircle2 size={14}/> Patient notified — ready to collect.</p>
-          )}
-          {!order.collectedAt ? (
-            <button
-              onClick={() => markOrderCollected(order.id)}
-              disabled={getOrderStatus(order) !== 'Ready to Collect'}
-              className="ml-auto px-4 py-2.5 bg-green-500 text-white rounded-xl font-bold text-xs hover:bg-green-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Mark Collected
-            </button>
-          ) : (
-            <span className="ml-auto text-xs font-bold text-slate-400">
+        <div className="flex justify-between items-center gap-3">
+          {order.collectedAt ? (
+            <span className="text-xs font-bold text-slate-400">
               Collected {order.collectedAt?.seconds ? new Date(order.collectedAt.seconds * 1000).toLocaleDateString('en-GB') : ''}
             </span>
+          ) : order.orderReadyAt ? (
+            <>
+              <p className="text-xs font-bold text-green-600 flex items-center gap-1.5"><CheckCircle2 size={14}/> Order Ready — patient notified.</p>
+              <button
+                onClick={() => markOrderCollected(order.id)}
+                className="ml-auto px-4 py-2.5 bg-green-500 text-white rounded-xl font-bold text-xs hover:bg-green-600 transition-colors"
+              >
+                Mark Collected
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-xs font-bold text-slate-400">
+                {allItemsReady(order) ? "Everything's glazed and fitted — confirm when it's actually ready for the patient." : "Waiting on frame and/or lens before this can be marked ready."}
+              </p>
+              <button
+                onClick={() => markOrderReady(order)}
+                disabled={!allItemsReady(order)}
+                className="ml-auto px-4 py-2.5 bg-[#3F9185] text-white rounded-xl font-bold text-xs hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Mark Order Ready (notifies patient)
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1681,13 +1714,13 @@ export default function AdminDashboard() {
 
   const renderOrdersTab = () => {
     const filtered = orderStatusFilter === 'All' ? dispenseOrders : dispenseOrders.filter(o => getOrderStatus(o) === orderStatusFilter);
-    const statusCounts: Record<string, number> = { 'Awaiting Frame': 0, 'Awaiting Lens': 0, 'Ready to Collect': 0, 'Collected': 0 };
+    const statusCounts: Record<string, number> = { 'Awaiting Frame': 0, 'Awaiting Lens': 0, 'Order Ready': 0, 'Collected': 0 };
     dispenseOrders.forEach(o => { const s = getOrderStatus(o); statusCounts[s] = (statusCounts[s] || 0) + 1; });
 
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap gap-2">
-          {(['All', 'Awaiting Frame', 'Awaiting Lens', 'Ready to Collect', 'Collected'] as const).map(s => (
+          {(['All', 'Awaiting Frame', 'Awaiting Lens', 'Order Ready', 'Collected'] as const).map(s => (
             <button
               key={s}
               onClick={() => setOrderStatusFilter(s)}
@@ -2842,6 +2875,16 @@ export default function AdminDashboard() {
         .sort((a, b) => new Date(b.nextRecallDate || 0).getTime() - new Date(a.nextRecallDate || 0).getTime())
     : [];
 
+  const activePatientOrders = selectedChatPatient
+    ? dispenseOrders
+        .filter(o =>
+          (o.patientId && o.patientId === selectedChatPatient.id) ||
+          (o.phone && o.phone === selectedChatPatient.phone) ||
+          (o.email && o.email === selectedChatPatient.email)
+        )
+        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
+    : [];
+
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(manualMsgData.email);
   const isSmsValid = manualMsgData.phone.length >= 10 && manualMsgData.body.trim().length > 0;
   const isManualValid = manualMsgType === 'SMS' 
@@ -3643,6 +3686,7 @@ export default function AdminDashboard() {
                     <div className="flex gap-6 px-6">
                        <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Communications</button>
                        <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointment Ledger</button>
+                       <button onClick={() => setCrmTab('orders')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'orders' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><ShoppingBag size={14}/> Dispense Orders</button>
                        <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
                        <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Master Profile</button>
                     </div>
@@ -4003,6 +4047,61 @@ export default function AdminDashboard() {
                                     </td>
                                   </tr>
                                 ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB: PER-PATIENT DISPENSE ORDERS */}
+                  {crmTab === 'orders' && (
+                    <div className="flex-1 bg-[#f8fafc] p-6 overflow-y-auto">
+                      <div className="max-w-4xl mx-auto space-y-4">
+                        <div className="flex items-center justify-between mb-4">
+                           <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2"><ShoppingBag size={16}/> Dispense Orders</h4>
+                           <span className="text-xs font-bold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200">{activePatientOrders.length} Found</span>
+                        </div>
+
+                        {activePatientOrders.length === 0 ? (
+                           <div className="p-10 text-center bg-white border border-slate-200 rounded-2xl shadow-sm text-slate-400 font-bold">No dispense orders found for this patient.</div>
+                        ) : (
+                          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                            <table className="w-full text-left border-collapse">
+                              <thead className="bg-slate-50">
+                                <tr>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Date</th>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Items</th>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Total</th>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Balance</th>
+                                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {activePatientOrders.map((order) => {
+                                  const status = getOrderStatus(order);
+                                  const balance = getOrderBalance(order);
+                                  return (
+                                    <tr
+                                      key={order.id}
+                                      className="hover:bg-slate-50/50 transition-colors cursor-pointer"
+                                      onClick={() => { setView('dispensing'); setDispensingTab('orders'); setOrderStatusFilter('All'); setSelectedOrderId(order.id); }}
+                                    >
+                                      <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">
+                                        {order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000).toLocaleDateString('en-GB') : 'Just now'}
+                                      </td>
+                                      <td className="p-4 text-xs font-bold text-slate-600">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
+                                      <td className="p-4 font-black text-sm text-slate-800">£{(order.total || 0).toFixed(2)}</td>
+                                      <td className="p-4 text-sm font-bold">
+                                        {balance > 0 ? <span className="text-amber-600">£{balance.toFixed(2)}</span> : <span className="text-green-600">Paid</span>}
+                                      </td>
+                                      <td className="p-4 text-right">
+                                        <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${ORDER_STATUS_STYLES[status]}`}>{status}</span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>

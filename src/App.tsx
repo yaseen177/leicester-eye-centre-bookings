@@ -5,6 +5,7 @@ import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import ManageBooking from './pages/ManageBooking';
 import AddEmailPage from './pages/AddEmailPage';
+import PaymentStatusPage from './pages/PaymentStatusPage';
 import { trackPageView } from './lib/analytics';
 
 // Fires a GA4 page_view every time the in-app route changes — see
@@ -50,6 +51,8 @@ export default function App() {
           
           <Route path="/manage/:id" element={<ManageBooking />} />
           <Route path="/receipt/:id" element={<AddEmailPage />} />
+          <Route path="/payment-complete/:id" element={<PaymentStatusPage success={true} />} />
+          <Route path="/payment-cancelled/:id" element={<PaymentStatusPage success={false} />} />
         </Routes>
       </div>
     </Router>
