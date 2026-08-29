@@ -1,10 +1,55 @@
 import { useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, Calendar, AlertTriangle, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock } from 'lucide-react';
+import { FileText, Calendar, AlertTriangle, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock, ShoppingBag, Wallet, CreditCard } from 'lucide-react';
 
-export default function ReportsDashboard({ appointments }: { appointments: any[] }) {
+export default function ReportsDashboard({ appointments, orders = [] }: { appointments: any[]; orders?: any[] }) {
   const [selectedDay, setSelectedDay] = useState<string>('All');
+
+  // Dispensing order revenue — kept as its own memo, independent of the
+  // appointments-based `stats` below, since orders can exist for walk-ins
+  // with no linked appointment at all.
+  const orderStats = useMemo(() => {
+    if (!orders || orders.length === 0) return null;
+
+    let totalRevenue = 0, totalPaid = 0, totalOutstanding = 0;
+    let collectedCount = 0, pendingCount = 0;
+    const revenueByBrand: Record<string, number> = {};
+    const revenueByMethod: Record<string, number> = {};
+
+    orders.forEach((order: any) => {
+      const total = Number(order.total) || 0;
+      totalRevenue += total;
+
+      const completedPayments = (order.payments || []).filter((p: any) => p.status === 'completed');
+      const paid = completedPayments.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+      totalPaid += paid;
+      totalOutstanding += Math.max(0, total - paid);
+
+      completedPayments.forEach((p: any) => {
+        revenueByMethod[p.method] = (revenueByMethod[p.method] || 0) + (Number(p.amount) || 0);
+      });
+
+      (order.items || []).forEach((item: any) => {
+        const brand = item.frameMake || 'Unknown';
+        revenueByBrand[brand] = (revenueByBrand[brand] || 0) + (Number(item.total) || 0);
+      });
+
+      if (order.collectedAt) collectedCount++; else pendingCount++;
+    });
+
+    return {
+      orderCount: orders.length,
+      totalRevenue,
+      totalPaid,
+      totalOutstanding,
+      avgOrderValue: orders.length ? totalRevenue / orders.length : 0,
+      collectedCount,
+      pendingCount,
+      brandBreakdown: Object.entries(revenueByBrand).sort((a, b) => b[1] - a[1]).slice(0, 8) as [string, number][],
+      methodBreakdown: Object.entries(revenueByMethod).sort((a, b) => b[1] - a[1]) as [string, number][]
+    };
+  }, [orders]);
 
   const stats = useMemo(() => {
     const total = appointments.length;
@@ -281,7 +326,33 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
 
     doc.setFontSize(9);
     doc.setTextColor(150, 150, 150);
-    doc.text("CONFIDENTIAL - Internal Practice Owner Use Only", 14, 285);
+
+    if (orderStats) {
+      doc.setFontSize(14);
+      doc.setTextColor(40, 40, 40);
+      doc.text("4. Dispensing & Frame Revenue", 14, (doc as any).lastAutoTable.finalY + 15);
+
+      autoTable(doc, {
+        startY: (doc as any).lastAutoTable.finalY + 20,
+        head: [['Metric', 'Value']],
+        body: [
+          ['Total Order Value', `£${orderStats.totalRevenue.toFixed(2)} (${orderStats.orderCount} orders)`],
+          ['Outstanding Balance', `£${orderStats.totalOutstanding.toFixed(2)}`],
+          ['Average Order Value', `£${orderStats.avgOrderValue.toFixed(2)}`],
+          ['Orders Collected', `${orderStats.collectedCount} of ${orderStats.orderCount}`],
+          ...orderStats.brandBreakdown.map(([brand, rev]) => [`Revenue — ${brand}`, `£${rev.toFixed(2)}`]),
+          ...orderStats.methodBreakdown.map(([method, rev]) => [`Paid via ${method}`, `£${rev.toFixed(2)}`])
+        ],
+        theme: 'striped',
+        headStyles: { fillColor: [63, 145, 133] }
+      });
+
+      doc.setFontSize(9);
+      doc.setTextColor(150, 150, 150);
+      doc.text("CONFIDENTIAL - Internal Practice Owner Use Only", 14, (doc as any).lastAutoTable.finalY + 10);
+    } else {
+      doc.text("CONFIDENTIAL - Internal Practice Owner Use Only", 14, 285);
+    }
 
     const pdfBlob = doc.output('blob');
     const blobUrl = URL.createObjectURL(pdfBlob);
@@ -426,6 +497,82 @@ export default function ReportsDashboard({ appointments }: { appointments: any[]
           </div>
         </div>
       </div>
+
+      {/* ROW 4: DISPENSING & FRAME REVENUE */}
+      {orderStats && (
+        <div>
+          <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><ShoppingBag size={18}/> Dispensing & Frame Revenue</h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center border-b-4 border-b-[#3F9185]">
+              <div className="w-12 h-12 bg-teal-50 text-[#3F9185] rounded-full flex items-center justify-center mb-3"><Wallet size={24} /></div>
+              <p className="text-3xl font-black text-slate-800">£{orderStats.totalRevenue.toFixed(0)}</p>
+              <p className="text-sm font-bold text-slate-500 mt-1">Total Order Value</p>
+              <p className="text-xs text-slate-400 mt-1">{orderStats.orderCount} order{orderStats.orderCount === 1 ? '' : 's'}</p>
+            </div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
+              <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mb-3"><AlertTriangle size={24} /></div>
+              <p className="text-3xl font-black text-slate-800">£{orderStats.totalOutstanding.toFixed(0)}</p>
+              <p className="text-sm font-bold text-slate-500 mt-1">Outstanding Balance</p>
+              <p className="text-xs text-slate-400 mt-1">Across all open orders</p>
+            </div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
+              <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mb-3"><BarChart3 size={24} /></div>
+              <p className="text-3xl font-black text-slate-800">£{orderStats.avgOrderValue.toFixed(0)}</p>
+              <p className="text-sm font-bold text-slate-500 mt-1">Average Order Value</p>
+            </div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
+              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3"><CreditCard size={24} /></div>
+              <p className="text-3xl font-black text-slate-800">{orderStats.collectedCount}/{orderStats.orderCount}</p>
+              <p className="text-sm font-bold text-slate-500 mt-1">Orders Collected</p>
+              <p className="text-xs text-slate-400 mt-1">{orderStats.pendingCount} awaiting collection</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+              <p className="text-sm font-bold text-slate-700 mb-3">Revenue by Frame Brand</p>
+              <div className="space-y-2">
+                {orderStats.brandBreakdown.map(([brand, rev]) => {
+                  const pct = orderStats.totalRevenue > 0 ? Math.round((rev / orderStats.totalRevenue) * 100) : 0;
+                  return (
+                    <div key={brand}>
+                      <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
+                        <span>{brand}</span>
+                        <span>£{rev.toFixed(0)} ({pct}%)</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-[#3F9185] rounded-full" style={{ width: `${pct}%` }}></div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {orderStats.brandBreakdown.length === 0 && <p className="text-xs text-slate-400 italic">No dispense orders recorded yet.</p>}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+              <p className="text-sm font-bold text-slate-700 mb-3">Revenue by Payment Method</p>
+              <div className="space-y-2">
+                {orderStats.methodBreakdown.map(([method, rev]) => {
+                  const pct = orderStats.totalPaid > 0 ? Math.round((rev / orderStats.totalPaid) * 100) : 0;
+                  return (
+                    <div key={method}>
+                      <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
+                        <span>{method}</span>
+                        <span>£{rev.toFixed(0)} ({pct}%)</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-400 rounded-full" style={{ width: `${pct}%` }}></div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {orderStats.methodBreakdown.length === 0 && <p className="text-xs text-slate-400 italic">No payments recorded yet.</p>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

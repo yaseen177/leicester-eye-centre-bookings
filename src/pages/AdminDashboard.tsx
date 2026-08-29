@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
-import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where, arrayUnion } from 'firebase/firestore';
 // @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
@@ -21,6 +21,7 @@ interface ClinicScheduleConfig {
 interface ClinicConfig {
   eyeCare: ClinicScheduleConfig;
   dispensing: ClinicScheduleConfig;
+  frameMakes: string[];
 }
 
 type ClinicKey = 'eyeCare' | 'dispensing';
@@ -32,6 +33,173 @@ const isDispensingAppointment = (appointmentType?: string) => appointmentType ==
 const getSlotDuration = (clinic: ClinicKey, appointmentType: string | undefined, times: Record<string, number>) => {
   if (clinic === 'dispensing') return times.dispensing || 15;
   return appointmentType?.includes('Contact') ? times.contactLens : times.eyeCheck;
+};
+
+// ============================================================================
+// DISPENSING ORDERS — types, pricing helpers, status derivation
+// ============================================================================
+
+const DEFAULT_FRAME_MAKES = ['RayBan', 'Oakley', 'Mulberry', 'Prada', 'Vanity'];
+
+// NOTE for whoever reviews this: these index labels are inferred from the shape
+// of the existing `settings/pricing` document (5 single-vision keys, 4-length
+// varifocal arrays). Please double check the varifocal labels match what's
+// actually on the price list before relying on this in production.
+const SINGLE_VISION_INDICES = ['1.5', '1.6 Spherical', '1.6 Aspheric', '1.67', '1.74'];
+const VARIFOCAL_INDICES = ['1.5', '1.6', '1.67', '1.74'];
+const VARIFOCAL_TIERS: Record<string, string> = { 'Varifocal Basic': 'basic', 'Varifocal Elite': 'elite', 'Varifocal Individual': 'individual' };
+
+type FrameStatus = 'In Stock' | 'Requested from Supplier' | 'Received';
+type LensStatus = 'Requested' | 'Received/Glazed';
+type ItemStatus = 'Awaiting Frame' | 'Awaiting Lens' | 'Ready';
+type OrderStatus = 'Awaiting Frame' | 'Awaiting Lens' | 'Ready to Collect' | 'Collected';
+type PaymentMethod = 'Cash' | 'Debit Card' | 'Credit Card' | 'Klarna/Clearpay';
+
+const genId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+
+interface LensSpecDraft {
+  mode: 'priceList' | 'manual';
+  lensType: '' | 'Single Vision' | 'Varifocal Basic' | 'Varifocal Elite' | 'Varifocal Individual';
+  index: string;
+  coatings: { mar: boolean; blue: boolean; tint: boolean; transitions: boolean; xtractive: boolean };
+  description: string;
+  price: number;
+}
+
+const blankLensSpec = (): LensSpecDraft => ({
+  mode: 'priceList',
+  lensType: '',
+  index: '',
+  coatings: { mar: false, blue: false, tint: false, transitions: false, xtractive: false },
+  description: '',
+  price: 0
+});
+
+interface DispenseItemDraft {
+  id: string;
+  frameSource: 'New' | 'Own';
+  frameMake: string;
+  frameMakeCustom: string;
+  frameModel: string;
+  framePrice: number;
+  frameStatus: FrameStatus;
+  lensSameBothEyes: boolean;
+  lensRight: LensSpecDraft;
+  lensLeft: LensSpecDraft;
+  lensStatus: LensStatus;
+  discountType: 'none' | 'percent' | 'fixed';
+  discountValue: number;
+  discountReason: string;
+}
+
+const blankDispenseItem = (): DispenseItemDraft => ({
+  id: genId(),
+  frameSource: 'New',
+  frameMake: '',
+  frameMakeCustom: '',
+  frameModel: '',
+  framePrice: 0,
+  frameStatus: 'In Stock',
+  lensSameBothEyes: true,
+  lensRight: blankLensSpec(),
+  lensLeft: blankLensSpec(),
+  lensStatus: 'Requested',
+  discountType: 'none',
+  discountValue: 0,
+  discountReason: ''
+});
+
+// Looks up a base lens price from the settings/pricing document.
+const getPriceListPrice = (lensType: LensSpecDraft['lensType'], index: string, isOwnFrame: boolean, pricingData: any): number => {
+  if (!pricingData || !lensType || !index) return 0;
+  if (lensType === 'Single Vision') {
+    const table = isOwnFrame ? pricingData.singleVision?.own : pricingData.singleVision?.new;
+    return Number(table?.[index]) || 0;
+  }
+  const tierKey = VARIFOCAL_TIERS[lensType];
+  const idx = VARIFOCAL_INDICES.indexOf(index);
+  if (!tierKey || idx === -1) return 0;
+  const arr = isOwnFrame ? pricingData.varifocal?.[tierKey]?.own : pricingData.varifocal?.[tierKey]?.new;
+  return Number(arr?.[idx]) || 0;
+};
+
+// Sums selected coatings/extras for a lens from the settings/pricing document.
+const getCoatingsPrice = (lensType: LensSpecDraft['lensType'], coatings: LensSpecDraft['coatings'], pricingData: any): number => {
+  if (!pricingData) return 0;
+  const isVarifocal = lensType.startsWith('Varifocal');
+  let total = 0;
+  if (coatings.mar) total += Number(pricingData.coatings?.marBase) || 0;
+  if (coatings.blue) total += Number(isVarifocal ? pricingData.coatings?.blueVarifocal : pricingData.coatings?.blueBase) || 0;
+  if (coatings.tint) total += Number(pricingData.extras?.tint) || 0;
+  if (coatings.transitions) total += Number(isVarifocal ? pricingData.extras?.transitionsVarifocal : pricingData.extras?.transitions) || 0;
+  if (coatings.xtractive) total += Number(pricingData.extras?.xtractive) || 0;
+  return total;
+};
+
+// Resolves a single lens's price: either the manually typed figure, or the
+// price-list lookup + coatings for that eye.
+const computeLensPrice = (lens: LensSpecDraft, isOwnFrame: boolean, pricingData: any): number => {
+  if (lens.mode === 'manual') return Number(lens.price) || 0;
+  return getPriceListPrice(lens.lensType, lens.index, isOwnFrame, pricingData) + getCoatingsPrice(lens.lensType, lens.coatings, pricingData);
+};
+
+const applyDiscount = (subtotal: number, type: DispenseItemDraft['discountType'], value: number): number => {
+  if (type === 'percent') return Math.max(0, subtotal - subtotal * ((Number(value) || 0) / 100));
+  if (type === 'fixed') return Math.max(0, subtotal - (Number(value) || 0));
+  return subtotal;
+};
+
+const computeItemSubtotal = (item: DispenseItemDraft, pricingData: any): number => {
+  const isOwn = item.frameSource === 'Own';
+  const framePrice = isOwn ? 0 : (Number(item.framePrice) || 0);
+  const rightPrice = computeLensPrice(item.lensRight, isOwn, pricingData);
+  const leftPrice = item.lensSameBothEyes ? rightPrice : computeLensPrice(item.lensLeft, isOwn, pricingData);
+  return framePrice + rightPrice + leftPrice;
+};
+
+const computeItemTotal = (item: DispenseItemDraft, pricingData: any): number => {
+  return applyDiscount(computeItemSubtotal(item, pricingData), item.discountType, item.discountValue);
+};
+
+const computeOrderTotal = (items: DispenseItemDraft[], pricingData: any): number => {
+  return items.reduce((sum, it) => sum + computeItemTotal(it, pricingData), 0);
+};
+
+// Per-item readiness: an "Own Frame" item never blocks on frame status.
+const getItemStatus = (item: any): ItemStatus => {
+  const frameReady = item.frameSource === 'Own' || item.frameStatus === 'Received';
+  const lensReady = item.lensStatus === 'Received/Glazed';
+  if (!frameReady) return 'Awaiting Frame';
+  if (!lensReady) return 'Awaiting Lens';
+  return 'Ready';
+};
+
+// Whole-order status: only "Ready to Collect" once every item is ready.
+const getOrderStatus = (order: any): OrderStatus => {
+  if (order.collectedAt) return 'Collected';
+  const items = order.items || [];
+  if (items.length === 0) return 'Awaiting Frame';
+  const statuses = items.map(getItemStatus);
+  if (statuses.every((s: ItemStatus) => s === 'Ready')) return 'Ready to Collect';
+  if (statuses.some((s: ItemStatus) => s === 'Awaiting Frame')) return 'Awaiting Frame';
+  return 'Awaiting Lens';
+};
+
+// Only completed payments count towards the balance — a "pending" Klarna/
+// Clearpay link is money that hasn't actually landed yet.
+const getOrderAmountPaid = (order: any): number =>
+  (order.payments || []).filter((p: any) => p.status === 'completed').reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+
+const getOrderPendingAmount = (order: any): number =>
+  (order.payments || []).filter((p: any) => p.status === 'pending').reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+
+const getOrderBalance = (order: any): number => Math.round(((order.total || 0) - getOrderAmountPaid(order)) * 100) / 100;
+
+const ORDER_STATUS_STYLES: Record<OrderStatus, string> = {
+  'Awaiting Frame': 'bg-amber-100 text-amber-700 border-amber-200',
+  'Awaiting Lens': 'bg-indigo-100 text-indigo-700 border-indigo-200',
+  'Ready to Collect': 'bg-green-100 text-green-700 border-green-200',
+  'Collected': 'bg-slate-100 text-slate-500 border-slate-200'
 };
 
 export default function AdminDashboard() {
@@ -143,7 +311,8 @@ export default function AdminDashboard() {
       hours: defaultEyeCareHours,
       lunch: { start: "13:00", end: "14:00", enabled: true },
       weeklyOff: [], openDates: [], dailyOverrides: {}, closedDates: []
-    }
+    },
+    frameMakes: DEFAULT_FRAME_MAKES
   });
 
   const [activeClinic, setActiveClinic] = useState<ClinicKey>('eyeCare');
@@ -258,8 +427,28 @@ export default function AdminDashboard() {
 
   // --- DISPENSING & WALK-IN STATES ---
   const [walkInQuotes, setWalkInQuotes] = useState<any[]>([]);
-  const [dispensingTab, setDispensingTab] = useState<'walkins' | 'clinic'>('walkins');
+  const [dispensingTab, setDispensingTab] = useState<'walkins' | 'clinic' | 'orders'>('walkins');
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
+
+  // --- DISPENSING ORDERS STATE ---
+  const [dispenseOrders, setDispenseOrders] = useState<any[]>([]);
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'All' | OrderStatus>('All');
+  const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
+  const [orderLinkedAppointment, setOrderLinkedAppointment] = useState<any>(null);
+  const [orderSearchQuery, setOrderSearchQuery] = useState('');
+  const [selectedCrmPatientForOrder, setSelectedCrmPatientForOrder] = useState<any>(null);
+  const [addOrderToCrm, setAddOrderToCrm] = useState(false);
+  const [newOrder, setNewOrder] = useState({
+    patientName: '', email: '', phone: '', dob: '',
+    items: [blankDispenseItem()] as DispenseItemDraft[],
+    initialPaymentMethod: '' as '' | PaymentMethod,
+    initialPaymentAmount: ''
+  });
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [orderPaymentDraft, setOrderPaymentDraft] = useState({ method: 'Cash' as PaymentMethod, amount: '' });
+  const [isSendingKlarnaLink, setIsSendingKlarnaLink] = useState(false);
+  const [newFrameMakeInput, setNewFrameMakeInput] = useState('');
   const [newQuote, setNewQuote] = useState({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
   const [quoteSearchQuery, setQuoteSearchQuery] = useState('');
   const [selectedCrmPatientForQuote, setSelectedCrmPatientForQuote] = useState<any>(null);
@@ -393,6 +582,11 @@ export default function AdminDashboard() {
       setRecallEvents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const qDispenseOrders = query(collection(db, "dispenseOrders"), orderBy("createdAt", "desc"), limit(1000));
+    const unsubDispenseOrders = onSnapshot(qDispenseOrders, (snap) => {
+      setDispenseOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
     const normalizeClinicSchedule = (cloudData: any, prev: ClinicScheduleConfig): ClinicScheduleConfig => {
       let loadedHours = cloudData?.hours || prev.hours;
       if (loadedHours && loadedHours.start) {
@@ -427,12 +621,13 @@ export default function AdminDashboard() {
 
         setConfig(prev => ({
           eyeCare: normalizeClinicSchedule(eyeCareCloudData, prev.eyeCare),
-          dispensing: normalizeClinicSchedule(dispensingCloudData, prev.dispensing)
+          dispensing: normalizeClinicSchedule(dispensingCloudData, prev.dispensing),
+          frameMakes: (cloudData.frameMakes && cloudData.frameMakes.length > 0) ? cloudData.frameMakes : prev.frameMakes
         }));
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); };
+    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); unsubDispenseOrders(); };
   }, []);
 
   // Look up the CRM (patients collection) for each unique caller number
@@ -840,6 +1035,729 @@ export default function AdminDashboard() {
     } catch(e) {
       alert("Network error while sending voucher.");
     }
+  };
+
+  // ==========================================================================
+  // DISPENSING ORDERS — form editing, save, status, payments, Klarna/Clearpay
+  // ==========================================================================
+
+  const patchOrderItem = (itemId: string, patch: Partial<DispenseItemDraft>) => {
+    setNewOrder(prev => ({ ...prev, items: prev.items.map(it => it.id === itemId ? { ...it, ...patch } : it) }));
+  };
+
+  // Edits a lens spec for one eye. When "same for both eyes" is on, editing the
+  // right eye mirrors straight onto the left — per Abbas: default both eyes
+  // equal unless staff changes them.
+  const patchOrderItemLens = (itemId: string, eye: 'lensRight' | 'lensLeft', patch: Partial<LensSpecDraft>) => {
+    setNewOrder(prev => ({
+      ...prev,
+      items: prev.items.map(it => {
+        if (it.id !== itemId) return it;
+        const updatedEye = { ...it[eye], ...patch };
+        if (it.lensSameBothEyes && eye === 'lensRight') {
+          return { ...it, lensRight: updatedEye, lensLeft: updatedEye };
+        }
+        return { ...it, [eye]: updatedEye };
+      })
+    }));
+  };
+
+  const toggleItemSameEyes = (itemId: string) => {
+    setNewOrder(prev => ({
+      ...prev,
+      items: prev.items.map(it => {
+        if (it.id !== itemId) return it;
+        const newSame = !it.lensSameBothEyes;
+        return { ...it, lensSameBothEyes: newSame, lensLeft: newSame ? it.lensRight : it.lensLeft };
+      })
+    }));
+  };
+
+  const addOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, blankDispenseItem()] }));
+  const removeOrderItem = (itemId: string) => setNewOrder(prev => ({
+    ...prev,
+    items: prev.items.length > 1 ? prev.items.filter(it => it.id !== itemId) : prev.items
+  }));
+
+  const resetNewOrderForm = () => {
+    setNewOrder({ patientName: '', email: '', phone: '', dob: '', items: [blankDispenseItem()], initialPaymentMethod: '', initialPaymentAmount: '' });
+    setOrderLinkedAppointment(null);
+    setSelectedCrmPatientForOrder(null);
+    setOrderSearchQuery('');
+    setAddOrderToCrm(false);
+  };
+
+  // Opens the New Order modal. Pass an appointment to pre-fill and link it
+  // (clinic-booked patients); call with no argument for a walk-in.
+  const openNewOrderModal = (fromAppointment?: any) => {
+    resetNewOrderForm();
+    if (fromAppointment) {
+      setOrderLinkedAppointment(fromAppointment);
+      setNewOrder(prev => ({
+        ...prev,
+        patientName: fromAppointment.patientName || '',
+        email: fromAppointment.email || '',
+        phone: fromAppointment.phone || '',
+        dob: fromAppointment.dob || ''
+      }));
+      if (fromAppointment.patientId) {
+        const match = crmPatients.find((p: any) => p.id === fromAppointment.patientId);
+        if (match) setSelectedCrmPatientForOrder(match);
+      }
+    }
+    setIsNewOrderModalOpen(true);
+  };
+
+  const handleSaveOrder = async () => {
+    if (!newOrder.patientName.trim()) { alert("Patient name is required."); return; }
+    if (newOrder.items.some(it => !it.frameModel.trim())) { alert("Every spectacle needs a frame model entered."); return; }
+
+    setIsSavingOrder(true);
+    try {
+      const rawPhone = newOrder.phone.trim();
+      const formattedPhone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
+      let finalPatientId = selectedCrmPatientForOrder ? selectedCrmPatientForOrder.id : null;
+
+      if (addOrderToCrm) {
+        if (selectedCrmPatientForOrder && !String(selectedCrmPatientForOrder.id).startsWith('unknown-')) {
+          await setDoc(doc(db, "patients", selectedCrmPatientForOrder.id), {
+            patientName: newOrder.patientName, email: newOrder.email.toLowerCase(), phone: formattedPhone, dob: newOrder.dob
+          }, { merge: true });
+        } else {
+          const newPatientRef = await addDoc(collection(db, "patients"), {
+            patientName: newOrder.patientName, email: newOrder.email.toLowerCase(), phone: formattedPhone, dob: newOrder.dob,
+            createdAt: serverTimestamp()
+          });
+          finalPatientId = newPatientRef.id;
+        }
+      }
+
+      // Snapshot prices at save time — this deliberately does NOT recompute
+      // from live pricingData later, so a future price-list change never
+      // silently alters the value of an already-dispensed order.
+      const finalItems = newOrder.items.map(draft => {
+        const isOwn = draft.frameSource === 'Own';
+        const resolvedMake = draft.frameMake === 'Other' ? (draft.frameMakeCustom.trim() || 'Other') : draft.frameMake;
+        const rightPrice = computeLensPrice(draft.lensRight, isOwn, pricingData);
+        const leftLens = draft.lensSameBothEyes ? draft.lensRight : draft.lensLeft;
+        const leftPrice = draft.lensSameBothEyes ? rightPrice : computeLensPrice(draft.lensLeft, isOwn, pricingData);
+        const framePrice = isOwn ? 0 : (Number(draft.framePrice) || 0);
+        const subtotal = framePrice + rightPrice + leftPrice;
+        const total = applyDiscount(subtotal, draft.discountType, draft.discountValue);
+        return {
+          id: draft.id,
+          frameSource: draft.frameSource,
+          frameMake: resolvedMake,
+          frameModel: draft.frameModel.trim(),
+          framePrice,
+          frameStatus: (isOwn ? 'Received' : draft.frameStatus) as FrameStatus,
+          lensSameBothEyes: draft.lensSameBothEyes,
+          lensRight: { ...draft.lensRight, price: rightPrice },
+          lensLeft: { ...leftLens, price: leftPrice },
+          lensStatus: draft.lensStatus,
+          discountType: draft.discountType,
+          discountValue: Number(draft.discountValue) || 0,
+          discountReason: draft.discountReason.trim(),
+          subtotal,
+          total
+        };
+      });
+
+      const orderTotal = finalItems.reduce((s, it) => s + it.total, 0);
+      const initAmount = Number(newOrder.initialPaymentAmount) || 0;
+      const initialPayments = (newOrder.initialPaymentMethod && initAmount > 0)
+        ? [{ id: genId(), method: newOrder.initialPaymentMethod, amount: initAmount, status: 'completed', createdAt: new Date().toISOString() }]
+        : [];
+
+      const docRef = await addDoc(collection(db, "dispenseOrders"), {
+        patientName: newOrder.patientName,
+        email: newOrder.email.toLowerCase(),
+        phone: formattedPhone,
+        dob: newOrder.dob,
+        patientId: finalPatientId,
+        appointmentId: orderLinkedAppointment ? orderLinkedAppointment.id : null,
+        source: orderLinkedAppointment ? 'Appointment' : 'WalkIn',
+        items: finalItems,
+        total: orderTotal,
+        payments: initialPayments,
+        collectedAt: null,
+        readyToCollectNotifiedAt: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Keep the existing lightweight "Dispensed?" tracker in sync so staff
+      // don't have to double-tick it on the Sight Test Dispenses Tracking table.
+      if (orderLinkedAppointment) {
+        await setDoc(doc(db, "appointments", orderLinkedAppointment.id), { dispensed: true }, { merge: true });
+      }
+
+      resetNewOrderForm();
+      setIsNewOrderModalOpen(false);
+      setSelectedOrderId(docRef.id);
+      setDispensingTab('orders');
+      alert("Order created.");
+    } catch (err) {
+      console.error(err);
+      alert("Error saving order.");
+    } finally {
+      setIsSavingOrder(false);
+    }
+  };
+
+  // Sends the "ready to collect" email/SMS. Only ever called once per order,
+  // guarded by the Ready-to-Collect transition check in updateItemStatus.
+  const notifyReadyToCollect = async (order: any) => {
+    const firstName = (order.patientName || '').split(' ')[0];
+    const dateStr = new Date().toISOString().split('T')[0];
+    try {
+      if (order.email) {
+        const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "send_email", to_email: order.email, patient_name: firstName, templateId: 11,
+            params: { patient_name: firstName, order_ref: order.id.slice(0, 8).toUpperCase() }
+          })
+        });
+        await writeLog('Email', order.patientName, order.email, res.ok ? 'Sent' : 'Failed', 'Ready to Collect', dateStr, '');
+      }
+      if (order.phone) {
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: order.phone, body: `The Eye Centre: Great news ${firstName}, your glasses are ready to collect in-store! See you soon.` })
+        });
+        await writeLog('SMS', order.patientName, order.phone, smsRes.ok ? 'Sent' : 'Failed', 'Ready to Collect', dateStr, '');
+      }
+      await setDoc(doc(db, "dispenseOrders", order.id), { readyToCollectNotifiedAt: serverTimestamp() }, { merge: true });
+    } catch (e) {
+      console.error("Ready-to-collect notification failed:", e);
+    }
+  };
+
+  // Updates one item's frame/lens status, then checks whether the WHOLE order
+  // has just become fully ready — if so, fires the one-time notification.
+  const updateItemStatus = async (order: any, itemId: string, field: 'frameStatus' | 'lensStatus', value: string) => {
+    const prevStatus = getOrderStatus(order);
+    const updatedItems = order.items.map((it: any) => it.id === itemId ? { ...it, [field]: value } : it);
+    const newStatus = getOrderStatus({ ...order, items: updatedItems });
+    try {
+      await setDoc(doc(db, "dispenseOrders", order.id), { items: updatedItems, updatedAt: serverTimestamp() }, { merge: true });
+      if (prevStatus !== 'Ready to Collect' && newStatus === 'Ready to Collect') {
+        await notifyReadyToCollect({ ...order, items: updatedItems });
+      }
+    } catch (e) {
+      alert("Error updating status.");
+    }
+  };
+
+  const markOrderCollected = async (orderId: string) => {
+    try {
+      await setDoc(doc(db, "dispenseOrders", orderId), { collectedAt: serverTimestamp() }, { merge: true });
+    } catch (e) {
+      alert("Error marking as collected.");
+    }
+  };
+
+  const addManualPaymentToOrder = async (order: any) => {
+    const amount = Number(orderPaymentDraft.amount);
+    if (!amount || amount <= 0) { alert("Enter a valid payment amount."); return; }
+    const record = { id: genId(), method: orderPaymentDraft.method, amount, status: 'completed', createdAt: new Date().toISOString() };
+    try {
+      await setDoc(doc(db, "dispenseOrders", order.id), { payments: arrayUnion(record), updatedAt: serverTimestamp() }, { merge: true });
+      setOrderPaymentDraft({ method: 'Cash', amount: '' });
+    } catch (e) {
+      alert("Error recording payment.");
+    }
+  };
+
+  // Klarna/Clearpay run their own regulated credit checks — we never touch
+  // credit decisions here. This just creates a Stripe Checkout Session via
+  // the dedicated payments Worker and texts/emails the hosted link to the
+  // customer's own device, since staff aren't authenticated on that page.
+  // Requires a separate Cloudflare Worker deployment — see the accompanying
+  // klarna-checkout-worker.js.
+  const sendKlarnaLink = async (order: any) => {
+    const amountPaid = (order.payments || []).filter((p: any) => p.status === 'completed').reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+    const balance = Math.round(((order.total || 0) - amountPaid) * 100) / 100;
+    if (balance <= 0) { alert("This order has no outstanding balance."); return; }
+    if (!order.email && !order.phone) { alert("This order has no email or phone on file — can't send a payment link."); return; }
+    if ((order.payments || []).some((p: any) => p.status === 'pending')) {
+      if (!confirm("There's already a pending Klarna/Clearpay link on this order. Send another one anyway?")) return;
+    }
+
+    setIsSendingKlarnaLink(true);
+    try {
+      const res = await fetch("https://payments.yaseen-hussain18.workers.dev/create-checkout-session", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: order.id,
+          amountPence: Math.round(balance * 100),
+          currency: 'gbp',
+          customerEmail: order.email || undefined,
+          customerName: order.patientName,
+          description: `The Eye Centre — Order ${order.id.slice(0, 8).toUpperCase()}`
+        })
+      });
+      if (!res.ok) { alert("Couldn't create the payment link — check the payments Worker is deployed and reachable."); return; }
+      const { url, sessionId } = await res.json();
+      if (!url) { alert("Payments Worker didn't return a checkout URL."); return; }
+
+      const record = { id: genId(), method: 'Klarna/Clearpay' as PaymentMethod, amount: balance, status: 'pending', stripeSessionId: sessionId, createdAt: new Date().toISOString() };
+      await setDoc(doc(db, "dispenseOrders", order.id), { payments: arrayUnion(record), updatedAt: serverTimestamp() }, { merge: true });
+
+      const firstName = (order.patientName || '').split(' ')[0];
+      const dateStr = new Date().toISOString().split('T')[0];
+      if (order.email) {
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "send_email", to_email: order.email, patient_name: firstName, templateId: 12,
+            params: { patient_name: firstName, payment_link: url, amount: balance.toFixed(2) }
+          })
+        });
+      }
+      if (order.phone) {
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: order.phone, body: `The Eye Centre: Please complete your Klarna/Clearpay payment of £${balance.toFixed(2)} here: ${url}` })
+        });
+        await writeLog('SMS', order.patientName, order.phone, smsRes.ok ? 'Sent' : 'Failed', 'Klarna/Clearpay Payment Link', dateStr, '');
+      }
+      alert("Payment link sent to the customer's phone/email.");
+    } catch (e) {
+      console.error(e);
+      alert("Network error sending the payment link.");
+    } finally {
+      setIsSendingKlarnaLink(false);
+    }
+  };
+
+  // --- Frame Makes (Settings > Dispensing) ---
+  const addFrameMake = () => {
+    const val = newFrameMakeInput.trim();
+    if (!val || config.frameMakes.includes(val)) { setNewFrameMakeInput(''); return; }
+    setConfig({ ...config, frameMakes: [...config.frameMakes, val] });
+    setNewFrameMakeInput('');
+  };
+  const removeFrameMake = (make: string) => {
+    setConfig({ ...config, frameMakes: config.frameMakes.filter(m => m !== make) });
+  };
+
+  // --- Orders tab rendering ---
+
+  const renderLensEditor = (item: DispenseItemDraft, eye: 'lensRight' | 'lensLeft', label: string) => {
+    const lens = item[eye];
+    return (
+      <div className="bg-slate-50 rounded-lg p-3 space-y-2">
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] font-black uppercase text-slate-400">{label}</span>
+          <div className="flex gap-1">
+            <button type="button" onClick={() => patchOrderItemLens(item.id, eye, { mode: 'priceList' })} className={`px-2 py-1 rounded text-[9px] font-black uppercase transition-all ${lens.mode === 'priceList' ? 'bg-[#3F9185] text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>Price List</button>
+            <button type="button" onClick={() => patchOrderItemLens(item.id, eye, { mode: 'manual' })} className={`px-2 py-1 rounded text-[9px] font-black uppercase transition-all ${lens.mode === 'manual' ? 'bg-[#3F9185] text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>Manual</button>
+          </div>
+        </div>
+
+        {lens.mode === 'priceList' ? (
+          <>
+            <select
+              value={lens.lensType}
+              onChange={e => patchOrderItemLens(item.id, eye, { lensType: e.target.value as LensSpecDraft['lensType'], index: '' })}
+              className="w-full p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold"
+            >
+              <option value="">Select lens type…</option>
+              <option value="Single Vision">Single Vision</option>
+              <option value="Varifocal Basic">Varifocal Basic</option>
+              <option value="Varifocal Elite">Varifocal Elite</option>
+              <option value="Varifocal Individual">Varifocal Individual</option>
+            </select>
+            {lens.lensType && (
+              <select
+                value={lens.index}
+                onChange={e => patchOrderItemLens(item.id, eye, { index: e.target.value })}
+                className="w-full p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold"
+              >
+                <option value="">Select index…</option>
+                {(lens.lensType === 'Single Vision' ? SINGLE_VISION_INDICES : VARIFOCAL_INDICES).map(idx => (
+                  <option key={idx} value={idx}>{idx}</option>
+                ))}
+              </select>
+            )}
+            <div className="grid grid-cols-2 gap-1.5">
+              {([['mar','MAR'],['blue','Blue Filter'],['tint','Tint'],['transitions','Transitions'],['xtractive','Xtractive']] as const).map(([key, labelText]) => (
+                <label key={key} className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={lens.coatings[key]}
+                    onChange={e => patchOrderItemLens(item.id, eye, { coatings: { ...lens.coatings, [key]: e.target.checked } })}
+                    className="accent-[#3F9185]"
+                  />
+                  {labelText}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs font-black text-slate-700 text-right">£{computeLensPrice(lens, item.frameSource === 'Own', pricingData).toFixed(2)}</p>
+          </>
+        ) : (
+          <>
+            <input
+              type="text" placeholder="e.g. 1.5 stock with MAR"
+              value={lens.description}
+              onChange={e => patchOrderItemLens(item.id, eye, { description: e.target.value })}
+              className="w-full p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold"
+            />
+            <input
+              type="number" placeholder="Price (£)" step="0.01"
+              value={lens.price || ''}
+              onChange={e => patchOrderItemLens(item.id, eye, { price: Number(e.target.value) || 0 })}
+              className="w-full p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold"
+            />
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderOrderItemCard = (item: DispenseItemDraft, idx: number) => {
+    const isOwn = item.frameSource === 'Own';
+    const itemSubtotal = computeItemSubtotal(item, pricingData);
+    const itemTotal = computeItemTotal(item, pricingData);
+    return (
+      <div key={item.id} className="border border-slate-200 rounded-2xl p-4 space-y-4 bg-white">
+        <div className="flex justify-between items-center">
+          <h4 className="font-black text-slate-800 text-sm">Spectacle {idx + 1}</h4>
+          {newOrder.items.length > 1 && (
+            <button onClick={() => removeOrderItem(item.id)} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button onClick={() => patchOrderItem(item.id, { frameSource: 'New' })} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition-all ${!isOwn ? 'bg-[#3F9185] text-white' : 'bg-slate-50 text-slate-400 border border-slate-200'}`}>New Frame</button>
+          <button onClick={() => patchOrderItem(item.id, { frameSource: 'Own' })} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition-all ${isOwn ? 'bg-[#3F9185] text-white' : 'bg-slate-50 text-slate-400 border border-slate-200'}`}>Patient's Own Frame</button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Frame Make</label>
+            <select
+              value={item.frameMake}
+              onChange={e => patchOrderItem(item.id, { frameMake: e.target.value })}
+              className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+            >
+              <option value="">Select make…</option>
+              {config.frameMakes.map(m => <option key={m} value={m}>{m}</option>)}
+              <option value="Other">Other</option>
+            </select>
+            {item.frameMake === 'Other' && (
+              <input
+                type="text" placeholder="Type the make"
+                value={item.frameMakeCustom}
+                onChange={e => patchOrderItem(item.id, { frameMakeCustom: e.target.value })}
+                className="w-full mt-2 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+              />
+            )}
+          </div>
+          <div>
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Frame Model</label>
+            <input
+              type="text" placeholder="e.g. 0AX3135 size 51"
+              value={item.frameModel}
+              onChange={e => patchOrderItem(item.id, { frameModel: e.target.value })}
+              className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+            />
+          </div>
+        </div>
+
+        {!isOwn && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Frame Price (£)</label>
+              <input
+                type="number" step="0.01" placeholder="0.00"
+                value={item.framePrice || ''}
+                onChange={e => patchOrderItem(item.id, { framePrice: Number(e.target.value) || 0 })}
+                className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Frame Status</label>
+              <select
+                value={item.frameStatus}
+                onChange={e => patchOrderItem(item.id, { frameStatus: e.target.value as FrameStatus })}
+                className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+              >
+                <option value="In Stock">In Stock (physically in store)</option>
+                <option value="Requested from Supplier">Requested from Supplier</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        <div>
+          <div className="flex justify-between items-center mb-2">
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Lenses</label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={item.lensSameBothEyes} onChange={() => toggleItemSameEyes(item.id)} className="accent-[#3F9185] w-4 h-4" />
+              <span className="text-[10px] font-bold text-slate-500">Same for both eyes</span>
+            </label>
+          </div>
+          <div className={`grid ${item.lensSameBothEyes ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
+            {renderLensEditor(item, 'lensRight', item.lensSameBothEyes ? 'Both Eyes' : 'Right Eye')}
+            {!item.lensSameBothEyes && renderLensEditor(item, 'lensLeft', 'Left Eye')}
+          </div>
+        </div>
+
+        <div className="border-t border-slate-100 pt-4 space-y-3">
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1 flex items-center gap-1.5"><Percent size={12}/> Discount (this item)</label>
+          <div className="grid grid-cols-3 gap-2">
+            <select
+              value={item.discountType}
+              onChange={e => patchOrderItem(item.id, { discountType: e.target.value as DispenseItemDraft['discountType'] })}
+              className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 outline-none text-xs font-bold"
+            >
+              <option value="none">No discount</option>
+              <option value="percent">% off</option>
+              <option value="fixed">£ off</option>
+            </select>
+            <input
+              type="number" placeholder="Value" disabled={item.discountType === 'none'}
+              value={item.discountValue || ''}
+              onChange={e => patchOrderItem(item.id, { discountValue: Number(e.target.value) || 0 })}
+              className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 outline-none text-xs font-bold disabled:opacity-40"
+            />
+            <input
+              type="text" placeholder="Reason (optional)" disabled={item.discountType === 'none'}
+              value={item.discountReason}
+              onChange={e => patchOrderItem(item.id, { discountReason: e.target.value })}
+              className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 outline-none text-xs font-bold disabled:opacity-40"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center text-sm pt-2">
+          <span className="text-slate-400 font-bold">Subtotal £{itemSubtotal.toFixed(2)}</span>
+          <span className="font-black text-slate-800">Item Total: £{itemTotal.toFixed(2)}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderOrderDetail = (order: any) => {
+    const balance = getOrderBalance(order);
+    return (
+      <div className="p-6 space-y-6">
+        <div className="grid md:grid-cols-2 gap-4 text-xs font-bold text-slate-500">
+          <p>Contact: {order.email || 'No email'} · {order.phone || 'No phone'}</p>
+          <p className="md:text-right">Order ID: {order.id}</p>
+        </div>
+
+        <div className="space-y-3">
+          {(order.items || []).map((item: any, idx: number) => {
+            const itemStatus = getItemStatus(item);
+            return (
+              <div key={item.id} className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+                <div className="flex justify-between items-start gap-3">
+                  <div>
+                    <p className="font-black text-slate-800 text-sm">Spectacle {idx + 1}: {item.frameMake} — {item.frameModel}</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+                      {item.frameSource === 'Own' ? "Patient's Own Frame" : 'New Frame'} · £{(item.total || 0).toFixed(2)}
+                      {item.discountType !== 'none' && item.discountValue > 0 && (
+                        <span className="text-green-600 ml-1 normal-case">
+                          (−{item.discountType === 'percent' ? `${item.discountValue}%` : `£${item.discountValue}`}{item.discountReason ? `: ${item.discountReason}` : ''})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <span className={`shrink-0 px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider border ${itemStatus === 'Ready' ? 'bg-green-100 text-green-700 border-green-200' : itemStatus === 'Awaiting Lens' ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                    {itemStatus}
+                  </span>
+                </div>
+
+                <div className="text-xs text-slate-500 font-medium space-y-0.5">
+                  <p><span className="font-bold text-slate-600">Right lens:</span> {item.lensRight?.mode === 'manual' ? (item.lensRight.description || '—') : `${item.lensRight?.lensType || ''} ${item.lensRight?.index || ''}`.trim() || '—'}</p>
+                  {!item.lensSameBothEyes && (
+                    <p><span className="font-bold text-slate-600">Left lens:</span> {item.lensLeft?.mode === 'manual' ? (item.lensLeft.description || '—') : `${item.lensLeft?.lensType || ''} ${item.lensLeft?.index || ''}`.trim() || '—'}</p>
+                  )}
+                  {item.lensSameBothEyes && <p className="italic">Both eyes the same.</p>}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-400">Frame Status</label>
+                    {item.frameSource === 'Own' ? (
+                      <p className="text-xs font-bold text-slate-500 mt-1.5">N/A — patient's own frame</p>
+                    ) : (
+                      <select
+                        value={item.frameStatus}
+                        onChange={e => updateItemStatus(order, item.id, 'frameStatus', e.target.value)}
+                        className="w-full mt-1 p-2 rounded-lg bg-slate-50 border border-slate-200 outline-none text-xs font-bold text-slate-700"
+                      >
+                        <option value="In Stock">In Stock</option>
+                        <option value="Requested from Supplier">Requested from Supplier</option>
+                        <option value="Received">Received</option>
+                      </select>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-400">Lens Status</label>
+                    <select
+                      value={item.lensStatus}
+                      onChange={e => updateItemStatus(order, item.id, 'lensStatus', e.target.value)}
+                      className="w-full mt-1 p-2 rounded-lg bg-slate-50 border border-slate-200 outline-none text-xs font-bold text-slate-700"
+                    >
+                      <option value="Requested">Requested</option>
+                      <option value="Received/Glazed">Received/Glazed</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+          <h4 className="font-black text-slate-800 text-sm flex items-center gap-2"><Wallet size={16} className="text-[#3F9185]" /> Payments</h4>
+          {(order.payments || []).length === 0 && <p className="text-xs text-slate-400 italic">No payments recorded yet.</p>}
+          {(order.payments || []).map((p: any) => (
+            <div key={p.id} className="flex justify-between items-center text-xs font-bold text-slate-600 border-b border-slate-50 pb-2">
+              <span>{p.method} {p.status === 'pending' && <span className="text-indigo-500 ml-1">(pending — link sent, awaiting confirmation)</span>}</span>
+              <span>£{Number(p.amount).toFixed(2)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between items-center pt-2 font-black text-sm">
+            <span className="text-slate-700">Balance Due</span>
+            <span className={balance > 0 ? 'text-amber-600' : 'text-green-600'}>£{balance.toFixed(2)}</span>
+          </div>
+
+          {balance > 0 && (
+            <div className="flex gap-2 pt-2 flex-wrap items-center">
+              <select
+                value={orderPaymentDraft.method}
+                onChange={e => setOrderPaymentDraft({ ...orderPaymentDraft, method: e.target.value as PaymentMethod })}
+                className="p-2 rounded-lg bg-slate-50 border border-slate-200 outline-none text-xs font-bold"
+              >
+                <option value="Cash">Cash</option>
+                <option value="Debit Card">Debit Card</option>
+                <option value="Credit Card">Credit Card</option>
+              </select>
+              <input
+                type="number" placeholder="Amount" step="0.01"
+                value={orderPaymentDraft.amount}
+                onChange={e => setOrderPaymentDraft({ ...orderPaymentDraft, amount: e.target.value })}
+                className="w-28 p-2 rounded-lg bg-slate-50 border border-slate-200 outline-none text-xs font-bold"
+              />
+              <button onClick={() => addManualPaymentToOrder(order)} className="px-3 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors">Record Payment</button>
+              <button
+                onClick={() => sendKlarnaLink(order)}
+                disabled={isSendingKlarnaLink}
+                className="px-3 py-2 bg-indigo-500 text-white rounded-lg text-xs font-bold hover:bg-indigo-600 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Smartphone size={14} /> {isSendingKlarnaLink ? 'Sending…' : 'Send Klarna/Clearpay Link'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-between items-center">
+          {order.readyToCollectNotifiedAt && !order.collectedAt && (
+            <p className="text-xs font-bold text-green-600 flex items-center gap-1.5"><CheckCircle2 size={14}/> Patient notified — ready to collect.</p>
+          )}
+          {!order.collectedAt ? (
+            <button
+              onClick={() => markOrderCollected(order.id)}
+              disabled={getOrderStatus(order) !== 'Ready to Collect'}
+              className="ml-auto px-4 py-2.5 bg-green-500 text-white rounded-xl font-bold text-xs hover:bg-green-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Mark Collected
+            </button>
+          ) : (
+            <span className="ml-auto text-xs font-bold text-slate-400">
+              Collected {order.collectedAt?.seconds ? new Date(order.collectedAt.seconds * 1000).toLocaleDateString('en-GB') : ''}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderOrdersTab = () => {
+    const filtered = orderStatusFilter === 'All' ? dispenseOrders : dispenseOrders.filter(o => getOrderStatus(o) === orderStatusFilter);
+    const statusCounts: Record<string, number> = { 'Awaiting Frame': 0, 'Awaiting Lens': 0, 'Ready to Collect': 0, 'Collected': 0 };
+    dispenseOrders.forEach(o => { const s = getOrderStatus(o); statusCounts[s] = (statusCounts[s] || 0) + 1; });
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          {(['All', 'Awaiting Frame', 'Awaiting Lens', 'Ready to Collect', 'Collected'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setOrderStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wide border transition-all ${orderStatusFilter === s ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+            >
+              {s}{s !== 'All' && statusCounts[s] ? ` (${statusCounts[s]})` : ''}
+            </button>
+          ))}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+          <div className="max-h-[65vh] overflow-y-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                <tr>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Date</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Patient</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Items</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Total</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Balance</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">Status</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b border-slate-100 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filtered.map(order => {
+                  const status = getOrderStatus(order);
+                  const balance = getOrderBalance(order);
+                  const pending = getOrderPendingAmount(order);
+                  const isOpen = selectedOrderId === order.id;
+                  return (
+                    <Fragment key={order.id}>
+                      <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>
+                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">
+                          {order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000).toLocaleDateString('en-GB') : 'Just now'}
+                        </td>
+                        <td className="p-4">
+                          <p className="font-bold text-slate-800 text-sm">{order.patientName}</p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">{order.source === 'Appointment' ? 'Clinic Booking' : 'Walk-In'}</p>
+                        </td>
+                        <td className="p-4 text-xs font-bold text-slate-600">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
+                        <td className="p-4 font-black text-sm text-slate-800">£{(order.total || 0).toFixed(2)}</td>
+                        <td className="p-4 text-sm font-bold">
+                          {balance > 0 ? <span className="text-amber-600">£{balance.toFixed(2)}</span> : <span className="text-green-600">Paid</span>}
+                          {pending > 0 && <p className="text-[10px] font-bold text-indigo-400 mt-0.5">£{pending.toFixed(2)} pending Klarna</p>}
+                        </td>
+                        <td className="p-4">
+                          <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${ORDER_STATUS_STYLES[status]}`}>{status}</span>
+                        </td>
+                        <td className="p-4 text-right">
+                          <button className="text-[#3F9185] font-bold text-xs">{isOpen ? 'Close' : 'View'}</button>
+                        </td>
+                      </tr>
+                      {isOpen && (
+                        <tr>
+                          <td colSpan={7} className="p-0 bg-slate-50/50">
+                            {renderOrderDetail(order)}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {filtered.length === 0 && <tr><td colSpan={7} className="p-10 text-center text-slate-400 font-bold italic">No orders yet — click "+ New Order" to log the first dispense.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const toMins = (t: string) => {
@@ -2411,9 +3329,20 @@ export default function AdminDashboard() {
                   + Record Walk-In Quote
                 </button>
               )}
+              {dispensingTab === 'orders' && (
+                <button onClick={() => openNewOrderModal()} className="bg-[#3F9185] text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition-all shadow-md">
+                  <ShoppingBag size={16} /> + New Order
+                </button>
+              )}
             </div>
 
             <div className="flex gap-4 border-b border-slate-200 pb-4 mb-6">
+              <button 
+                onClick={() => setDispensingTab('orders')} 
+                className={`pb-2 px-2 font-black text-sm transition-all border-b-2 ${dispensingTab === 'orders' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              >
+                Orders
+              </button>
               <button 
                 onClick={() => setDispensingTab('walkins')} 
                 className={`pb-2 px-2 font-black text-sm transition-all border-b-2 ${dispensingTab === 'walkins' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
@@ -2424,9 +3353,11 @@ export default function AdminDashboard() {
                 onClick={() => setDispensingTab('clinic')} 
                 className={`pb-2 px-2 font-black text-sm transition-all border-b-2 ${dispensingTab === 'clinic' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
               >
-                Sight Test Dispenes Tracking
+                Sight Test Dispenses Tracking
               </button>
             </div>
+
+            {dispensingTab === 'orders' && renderOrdersTab()}
 
             {dispensingTab === 'walkins' && (
               <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
@@ -2530,16 +3461,17 @@ export default function AdminDashboard() {
                                 onChange={() => toggleClinicDispenseField(app.id, 'dispensed', !!app.dispensed)} 
                               />
                             </td>
-                            <td className="p-4 text-right">
+                            <td className="p-4 text-right space-x-2">
+                              <button onClick={() => openNewOrderModal(app)} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors shadow-sm inline-flex items-center gap-1.5">
+                                <ShoppingBag size={12}/> Create Order
+                              </button>
                               {app.voucherSent ? (
                                 <span className="px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700">Voucher Sent</span>
                               ) : canSendVoucher ? (
                                 <button onClick={() => handleSendDispenseVoucher(app.id, "appointments", app.email, app.patientName, true)} className="px-3 py-1.5 bg-[#3F9185] text-white rounded-lg text-xs font-bold hover:bg-teal-600 transition-colors shadow-sm inline-flex items-center gap-1.5">
                                   <Tag size={12}/> Send £10 Off
                                 </button>
-                              ) : (
-                                <span className="text-[10px] font-bold text-slate-300 uppercase">N/A</span>
-                              )}
+                              ) : null}
                             </td>
                           </tr>
                         );
@@ -3403,6 +4335,32 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
+              {activeClinic === 'dispensing' && (
+                <div className="space-y-4 md:col-span-2">
+                  <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Glasses size={18}/> Frame Makes</h3>
+                  <p className="text-xs font-medium text-slate-500 -mt-2">These appear as options when staff log a new dispense order. "Other" is always available and lets staff type a custom make.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {config.frameMakes.map(make => (
+                      <span key={make} className="inline-flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700">
+                        {make}
+                        <button onClick={() => removeFrameMake(make)} className="text-slate-300 hover:text-red-500 transition-colors"><X size={14} /></button>
+                      </span>
+                    ))}
+                    <span className="inline-flex items-center gap-2 bg-slate-100 border border-dashed border-slate-300 rounded-xl px-3 py-2 text-sm font-bold text-slate-400">Other (always shown)</span>
+                  </div>
+                  <div className="flex gap-2 max-w-sm">
+                    <input
+                      type="text" placeholder="Add a frame make e.g. Gucci"
+                      className="flex-1 p-3 rounded-xl bg-slate-50 outline-none border border-slate-200 focus:border-[#3F9185] text-sm font-bold"
+                      value={newFrameMakeInput}
+                      onChange={e => setNewFrameMakeInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addFrameMake(); } }}
+                    />
+                    <button onClick={addFrameMake} className="px-4 py-2 bg-[#3F9185] text-white rounded-xl font-bold text-sm hover:opacity-90 transition-all">Add</button>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-4">
                 <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><Activity size={18}/> Clinic Hours</h3>
                 <div className="space-y-3">
@@ -3776,7 +4734,7 @@ export default function AdminDashboard() {
         )}
 
         {/* --- REPORTS VIEW --- */}
-        {view === 'reports' && <ReportsDashboard appointments={appointments} />}
+        {view === 'reports' && <ReportsDashboard appointments={appointments} orders={dispenseOrders} />}
 
         {/* --- PRICING CONFIG VIEW --- */}
         {view === 'pricing' && !pricingData && (
@@ -4038,6 +4996,115 @@ export default function AdminDashboard() {
               className="w-full py-4 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all bg-[#3F9185] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
                Save Quote Record
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- NEW DISPENSE ORDER MODAL --- */}
+      {isNewOrderModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><ShoppingBag size={20} className="text-[#3F9185]"/> New Dispense Order</h2>
+              <button onClick={() => { setIsNewOrderModalOpen(false); resetNewOrderForm(); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+
+            {orderLinkedAppointment && (
+              <div className="mb-4 p-3 bg-indigo-50 rounded-xl border border-indigo-100 flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-700 flex items-center gap-2">
+                  <LinkIcon size={14}/> Linked to clinic appointment: {orderLinkedAppointment.appointmentDate ? new Date(orderLinkedAppointment.appointmentDate).toLocaleDateString('en-GB') : ''} — {orderLinkedAppointment.appointmentType}
+                </span>
+                <button onClick={() => setOrderLinkedAppointment(null)} className="text-[10px] text-red-500 font-bold hover:underline shrink-0 ml-2">Unlink</button>
+              </div>
+            )}
+
+            {!orderLinkedAppointment && (
+              <div className="mb-6 p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Search Master CRM Patient (Optional)</label>
+                <input
+                  type="text" placeholder="Search by name, email or phone..."
+                  className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+                  value={orderSearchQuery}
+                  onChange={e => { setOrderSearchQuery(e.target.value); performCloudSearch(e.target.value); }}
+                />
+                {orderSearchQuery && (
+                  <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+                    {cloudSearchResults.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          setSelectedCrmPatientForOrder(p);
+                          setNewOrder(prev => ({ ...prev, patientName: p.patientName || '', email: p.email || '', phone: p.phone || '', dob: p.dob || '' }));
+                          setOrderSearchQuery('');
+                        }}
+                        className="w-full text-left p-2 text-sm hover:bg-indigo-50 font-medium"
+                      >
+                        {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedCrmPatientForOrder && (
+                  <div className="mt-3 flex items-center justify-between bg-white p-3 rounded-lg border border-indigo-200 shadow-sm">
+                    <span className="text-sm font-bold text-indigo-900 flex items-center gap-2"><LinkIcon size={14}/> Linked to: {selectedCrmPatientForOrder.patientName}</span>
+                    <button onClick={() => setSelectedCrmPatientForOrder(null)} className="text-xs text-red-500 font-bold hover:underline">Unlink</button>
+                  </div>
+                )}
+                <label className="flex items-center gap-2 mt-3 cursor-pointer ml-1">
+                  <input type="checkbox" checked={addOrderToCrm} onChange={e => setAddOrderToCrm(e.target.checked)} className="accent-indigo-500 w-4 h-4" />
+                  <span className="text-xs font-bold text-indigo-700">{selectedCrmPatientForOrder ? 'Update CRM details' : 'Save as new CRM Master Profile'}</span>
+                </label>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <input placeholder="First & Last Name" className="p-4 bg-slate-50 rounded-xl outline-none col-span-2 font-bold text-sm" value={newOrder.patientName} onChange={e => setNewOrder({...newOrder, patientName: e.target.value})} />
+              <input placeholder="Phone" className="p-4 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newOrder.phone} onChange={e => setNewOrder({...newOrder, phone: e.target.value})} />
+              <input type="email" placeholder="Email" className="p-4 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newOrder.email} onChange={e => setNewOrder({...newOrder, email: e.target.value.toLowerCase()})} />
+            </div>
+
+            <div className="space-y-4 mb-4">
+              {newOrder.items.map((item, idx) => renderOrderItemCard(item, idx))}
+            </div>
+
+            <button onClick={addOrderItem} className="w-full py-3 mb-6 border-2 border-dashed border-slate-200 rounded-xl font-bold text-sm text-slate-400 hover:border-[#3F9185] hover:text-[#3F9185] transition-all flex items-center justify-center gap-2">
+              <Plus size={16}/> Add Another Spectacle
+            </button>
+
+            <div className="bg-slate-50 rounded-2xl p-5 mb-6 space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="font-black text-slate-800">Order Total</span>
+                <span className="font-black text-xl text-[#3F9185]">£{computeOrderTotal(newOrder.items, pricingData).toFixed(2)}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={newOrder.initialPaymentMethod}
+                  onChange={e => setNewOrder({...newOrder, initialPaymentMethod: e.target.value as '' | PaymentMethod})}
+                  className="p-3 rounded-xl bg-white border border-slate-200 outline-none text-xs font-bold"
+                >
+                  <option value="">No payment taken yet</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Debit Card">Debit Card</option>
+                  <option value="Credit Card">Credit Card</option>
+                </select>
+                <input
+                  type="number" step="0.01" placeholder="Amount paid now (£)"
+                  disabled={!newOrder.initialPaymentMethod}
+                  value={newOrder.initialPaymentAmount}
+                  onChange={e => setNewOrder({...newOrder, initialPaymentAmount: e.target.value})}
+                  className="p-3 rounded-xl bg-white border border-slate-200 outline-none text-xs font-bold disabled:opacity-40"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium">Klarna/Clearpay payment links can be sent once the order is created — from the order's Payments panel in the Orders tab.</p>
+            </div>
+
+            <button
+              onClick={handleSaveOrder}
+              disabled={isSavingOrder || !newOrder.patientName.trim() || newOrder.items.some(it => !it.frameModel.trim())}
+              className="w-full py-4 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all bg-[#3F9185] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSavingOrder ? 'Saving…' : 'Create Order'}
             </button>
           </div>
         </div>
