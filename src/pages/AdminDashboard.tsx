@@ -1830,13 +1830,13 @@ export default function AdminDashboard() {
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                 <tr>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Date</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Patient</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Items</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Total</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Balance</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Status</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200 text-right">Action</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Date</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Patient</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Items</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Total</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Balance</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Status</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -1845,31 +1845,36 @@ export default function AdminDashboard() {
                   const balance = getOrderBalance(order);
                   const pending = getOrderPendingAmount(order);
                   const isOpen = selectedOrderId === order.id;
+                  // The bold divider always sits under the LAST row of this
+                  // order's block — the detail row when open, the summary
+                  // row when it's not — so the line between one order and
+                  // the next never disappears, expanded or collapsed.
+                  const closingBorder = isOpen ? '' : 'border-b-2 border-slate-300';
                   return (
                     <Fragment key={order.id}>
-                      <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>
-                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums border border-slate-200">
+                      <tr className={`hover:bg-slate-50/50 transition-colors cursor-pointer ${closingBorder}`} onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>
+                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">
                           {order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000).toLocaleDateString('en-GB') : 'Just now'}
                         </td>
-                        <td className="p-4 border border-slate-200">
+                        <td className="p-4">
                           <p className="font-bold text-slate-800 text-sm">{order.patientName}</p>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">{order.source === 'Appointment' ? 'Clinic Booking' : 'Walk-In'}</p>
                         </td>
-                        <td className="p-4 text-xs font-bold text-slate-600 border border-slate-200">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
-                        <td className="p-4 font-black text-sm text-slate-800 border border-slate-200">£{(order.total || 0).toFixed(2)}</td>
-                        <td className="p-4 text-sm font-bold border border-slate-200">
+                        <td className="p-4 text-xs font-bold text-slate-600">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
+                        <td className="p-4 font-black text-sm text-slate-800">£{(order.total || 0).toFixed(2)}</td>
+                        <td className="p-4 text-sm font-bold">
                           {balance > 0 ? <span className="text-amber-600">£{balance.toFixed(2)}</span> : <span className="text-green-600">Paid</span>}
                           {pending > 0 && <p className="text-[10px] font-bold text-indigo-400 mt-0.5">£{pending.toFixed(2)} pending Klarna</p>}
                         </td>
-                        <td className="p-4 border border-slate-200">
+                        <td className="p-4">
                           <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${ORDER_STATUS_STYLES[status]}`}>{status}</span>
                         </td>
-                        <td className="p-4 text-right border border-slate-200">
+                        <td className="p-4 text-right">
                           <button className="text-[#3F9185] font-bold text-xs">{isOpen ? 'Close' : 'View'}</button>
                         </td>
                       </tr>
                       {isOpen && (
-                        <tr>
+                        <tr className="border-b-2 border-slate-300">
                           <td colSpan={7} className="p-0 bg-slate-50/50">
                             {renderOrderDetail(order)}
                           </td>
