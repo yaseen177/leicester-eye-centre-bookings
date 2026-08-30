@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw } from 'lucide-react';
 import QRCode from 'qrcode';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
@@ -215,9 +215,65 @@ const ORDER_STATUS_STYLES: Record<OrderStatus, string> = {
   'Collected': 'bg-slate-100 text-slate-500 border-slate-200'
 };
 
+// ============================================================================
+// CONTACT LENS DIRECT DEBITS — types, one-time migration seed, status styles
+// ============================================================================
+
+// Pulled from the "CL Standing order payments" sheet: name + lens type only.
+// Deliberately NOT importing the "z" column, the price column, or any of the
+// monthly tracking history -- Abbas flagged those as ambiguous/unreliable,
+// and a Direct Debit amount needs to be a number staff actively confirm,
+// never one inferred from messy historical notes.
+const CL_STANDING_ORDER_SEED: { name: string; lensType: string }[] = [
+  { name: 'A.W.Fraser', lensType: 'air optix' },
+  { name: 'Anthony Mitchell', lensType: 'biofinity' },
+  { name: 'anup patel', lensType: 'biofinity biofinity toric' },
+  { name: 'Bethany Bodycote', lensType: 'biofinity' },
+  { name: 'Bowmer', lensType: 'biofinity m/f' },
+  { name: 'Cathy Loughead', lensType: 'biofinity' },
+  { name: 'Claire Prestwich', lensType: 'biofinity toric biofinty m/f' },
+  { name: 'Debbie Thorpe', lensType: 'biofinity toric/biofinity m.f' },
+  { name: "Donna & Darren O'Connor", lensType: 'acu oasys/biofinity' },
+  { name: 'Drew Murray', lensType: 'acu oasys toric acu oas' },
+  { name: 'Edward Harrigan', lensType: 'biofinity toric ac oasys m/f' },
+  { name: 'gemma lamb', lensType: 'biofinity' },
+  { name: 'Gina Samuel/Richards', lensType: 'live' },
+  { name: 'Hemlata Chauhan', lensType: 'biofiny m/f' },
+  { name: 'Hollie Brightmore', lensType: 'biofinity' },
+  { name: 'Ivor Reaney X', lensType: 'proclear dailies' },
+  { name: 'Joy McNeil', lensType: 'proclear toric acu oasys m/f' },
+  { name: 'Keith Webster', lensType: 'myday' },
+  { name: 'Keith.Rowe', lensType: 'biofinity toric' },
+  { name: 'L.Railton X', lensType: 'acu oasys m/f' },
+  { name: "Liam O'Driscoll", lensType: 'acu oasys m/f dailies' },
+  { name: 'Lusia Bojarska-Thomas', lensType: 'live' },
+  { name: 'M Keen / s keen / lloyds', lensType: 'Biofintity Toric m/f' },
+  { name: 'Mary.Dilustro / shapero X', lensType: 'biofinity m/f' },
+  { name: 'Matthew Topham', lensType: 'acu oasys m/f' },
+  { name: 'Michelle Mouzer', lensType: 'biofinity' },
+  { name: 'Richard Bandy', lensType: 'acu oasys m/f dailies' },
+  { name: 'Robert Fox', lensType: 'acu oasys biofinity m/f toric' },
+  { name: 'Robert.McBurney', lensType: 'clarity' },
+  { name: 'Ryszard Procinski', lensType: 'biofinity m/f' },
+  { name: 'Suzanne Ripper', lensType: 'biofinity m/f' },
+  { name: 'V.Hall/Crowfoot', lensType: 'acy oasys' },
+  { name: 'kallisha Bangura', lensType: 'biofinity toric XR' }
+];
+
+type ClSubscriptionStatus = 'Needs Setup' | 'Mandate Sent' | 'Active' | 'Payment Failed' | 'Paused' | 'Cancelled';
+
+const CL_STATUS_STYLES: Record<ClSubscriptionStatus, string> = {
+  'Needs Setup': 'bg-slate-100 text-slate-500 border-slate-200',
+  'Mandate Sent': 'bg-indigo-100 text-indigo-700 border-indigo-200',
+  'Active': 'bg-green-100 text-green-700 border-green-200',
+  'Payment Failed': 'bg-red-100 text-red-700 border-red-200',
+  'Paused': 'bg-amber-100 text-amber-700 border-amber-200',
+  'Cancelled': 'bg-slate-100 text-slate-400 border-slate-200'
+};
+
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits'>('diary');
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -465,6 +521,18 @@ export default function AdminDashboard() {
   const [qrModal, setQrModal] = useState<{ orderId: string; dataUrl: string; url: string; balance: number } | null>(null);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [newFrameMakeInput, setNewFrameMakeInput] = useState('');
+
+  // --- CONTACT LENS DIRECT DEBITS STATE ---
+  const [clSubscriptions, setClSubscriptions] = useState<any[]>([]);
+  const [clStatusFilter, setClStatusFilter] = useState<'All' | ClSubscriptionStatus>('All');
+  const [selectedClId, setSelectedClId] = useState<string | null>(null);
+  const [isNewClModalOpen, setIsNewClModalOpen] = useState(false);
+  const [clSearchQuery, setClSearchQuery] = useState('');
+  const [selectedCrmPatientForCl, setSelectedCrmPatientForCl] = useState<any>(null);
+  const [newCl, setNewCl] = useState({ patientName: '', email: '', phone: '', lensType: '', monthlyAmount: '', deliveryMethod: 'Collect' as 'Collect' | 'DPD', deliveryAddress: '' });
+  const [isSavingCl, setIsSavingCl] = useState(false);
+  const [clSetupDraft, setClSetupDraft] = useState<{ monthlyAmount: string; deliveryMethod: 'Collect' | 'DPD'; deliveryAddress: string }>({ monthlyAmount: '', deliveryMethod: 'Collect', deliveryAddress: '' });
+  const [isSendingMandate, setIsSendingMandate] = useState(false);
   const [newQuote, setNewQuote] = useState({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
   const [quoteSearchQuery, setQuoteSearchQuery] = useState('');
   const [selectedCrmPatientForQuote, setSelectedCrmPatientForQuote] = useState<any>(null);
@@ -603,6 +671,11 @@ export default function AdminDashboard() {
       setDispenseOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const qClSubscriptions = query(collection(db, "clSubscriptions"), orderBy("patientName", "asc"), limit(1000));
+    const unsubClSubscriptions = onSnapshot(qClSubscriptions, (snap) => {
+      setClSubscriptions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
     const normalizeClinicSchedule = (cloudData: any, prev: ClinicScheduleConfig): ClinicScheduleConfig => {
       let loadedHours = cloudData?.hours || prev.hours;
       if (loadedHours && loadedHours.start) {
@@ -643,7 +716,7 @@ export default function AdminDashboard() {
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); unsubDispenseOrders(); };
+    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); unsubDispenseOrders(); unsubClSubscriptions(); };
   }, []);
 
   // Look up the CRM (patients collection) for each unique caller number
@@ -1434,6 +1507,246 @@ export default function AdminDashboard() {
     setConfig({ ...config, frameMakes: config.frameMakes.filter(m => m !== make) });
   };
 
+  // ==========================================================================
+  // CONTACT LENS DIRECT DEBITS — one-time migration, setup, mandate, billing
+  // ==========================================================================
+
+  // One-time seed from the old standing-order sheet. Every record lands as
+  // "Needs Setup" — name and lens type only, since that's all the sheet
+  // reliably gave us. Staff complete contact details, confirm a monthly
+  // amount, and choose delivery before any mandate link goes out.
+  const importClSeed = async () => {
+    if (!confirm(`Import ${CL_STANDING_ORDER_SEED.length} customers from the old standing order sheet? This only brings in name + lens type — you'll need to add contact details and confirm the monthly amount for each before sending a Direct Debit mandate.`)) return;
+    try {
+      const batch = writeBatch(db);
+      CL_STANDING_ORDER_SEED.forEach(({ name, lensType }) => {
+        const ref = doc(collection(db, "clSubscriptions"));
+        batch.set(ref, {
+          patientName: name,
+          lensType,
+          email: '',
+          phone: '',
+          patientId: null,
+          monthlyAmount: null,
+          deliveryMethod: 'Collect',
+          deliveryAddress: '',
+          status: 'Needs Setup' as ClSubscriptionStatus,
+          stripeCustomerId: null,
+          stripeSubscriptionId: null,
+          stripeCheckoutSessionId: null,
+          needsReorder: false,
+          lastCollectionStatus: null,
+          lastCollectionAmount: null,
+          lastCollectionDate: null,
+          nextCollectionDate: null,
+          source: 'CSV Import',
+          auditLog: [auditEntry('Imported from Standing Order Sheet', lensType)],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+      alert(`Imported ${CL_STANDING_ORDER_SEED.length} customers. Open each one to add contact details, confirm the monthly amount, and send their Direct Debit mandate.`);
+    } catch (e) {
+      console.error(e);
+      alert("Error importing the standing order sheet.");
+    }
+  };
+
+  const resetNewClForm = () => {
+    setNewCl({ patientName: '', email: '', phone: '', lensType: '', monthlyAmount: '', deliveryMethod: 'Collect', deliveryAddress: '' });
+    setSelectedCrmPatientForCl(null);
+    setClSearchQuery('');
+  };
+
+  const openNewClModal = () => {
+    resetNewClForm();
+    setIsNewClModalOpen(true);
+  };
+
+  const handleSaveNewCl = async () => {
+    if (!newCl.patientName.trim()) { alert("Patient name is required."); return; }
+    if (!newCl.lensType.trim()) { alert("Lens type is required."); return; }
+    const amount = Number(newCl.monthlyAmount);
+    if (!amount || amount <= 0) { alert("Enter a valid monthly amount."); return; }
+
+    setIsSavingCl(true);
+    try {
+      const rawPhone = newCl.phone.trim();
+      const formattedPhone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
+
+      await addDoc(collection(db, "clSubscriptions"), {
+        patientName: newCl.patientName,
+        lensType: newCl.lensType,
+        email: newCl.email.toLowerCase(),
+        phone: formattedPhone,
+        patientId: selectedCrmPatientForCl ? selectedCrmPatientForCl.id : null,
+        monthlyAmount: amount,
+        deliveryMethod: newCl.deliveryMethod,
+        deliveryAddress: newCl.deliveryAddress,
+        status: 'Needs Setup' as ClSubscriptionStatus,
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        stripeCheckoutSessionId: null,
+        needsReorder: false,
+        lastCollectionStatus: null,
+        lastCollectionAmount: null,
+        lastCollectionDate: null,
+        nextCollectionDate: null,
+        source: 'Manual',
+        auditLog: [auditEntry('Customer Added', `${newCl.lensType} — £${amount.toFixed(2)}/month`)],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      resetNewClForm();
+      setIsNewClModalOpen(false);
+      alert("Customer added — open their record to send a Direct Debit mandate.");
+    } catch (e) {
+      console.error(e);
+      alert("Error saving customer.");
+    } finally {
+      setIsSavingCl(false);
+    }
+  };
+
+  // Saves the setup fields (amount/delivery, whatever's been filled in) for
+  // a "Needs Setup" record — the completion step before a mandate can be sent.
+  const saveClSetupDetails = async (cl: any) => {
+    const amount = Number(clSetupDraft.monthlyAmount);
+    if (!amount || amount <= 0) { alert("Enter a valid monthly amount before saving."); return; }
+    if (clSetupDraft.deliveryMethod === 'DPD' && !clSetupDraft.deliveryAddress.trim()) { alert("Enter a delivery address for DPD dispatch."); return; }
+    try {
+      await setDoc(doc(db, "clSubscriptions", cl.id), {
+        monthlyAmount: amount,
+        deliveryMethod: clSetupDraft.deliveryMethod,
+        deliveryAddress: clSetupDraft.deliveryAddress,
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Setup Details Confirmed', `£${amount.toFixed(2)}/month, ${clSetupDraft.deliveryMethod}`))
+      }, { merge: true });
+      alert("Saved. You can now send the Direct Debit mandate link.");
+    } catch (e) {
+      alert("Error saving details.");
+    }
+  };
+
+  const linkClCrmPatient = async (cl: any, patient: any) => {
+    try {
+      await setDoc(doc(db, "clSubscriptions", cl.id), {
+        patientId: patient.id,
+        email: patient.email || cl.email,
+        phone: patient.phone || cl.phone,
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Linked to CRM Patient', patient.patientName))
+      }, { merge: true });
+    } catch (e) {
+      alert("Error linking patient.");
+    }
+  };
+
+  // Creates the Stripe Checkout Session (mode: subscription) that collects
+  // the Bacs Direct Debit mandate AND creates the recurring subscription in
+  // one hosted step, then texts/emails the link to the customer's own
+  // device — same reasoning as the Klarna flow: the admin login doesn't
+  // survive a full-page redirect, so we never send staff's own browser there.
+  const sendMandateLink = async (cl: any) => {
+    if (!cl.monthlyAmount || cl.monthlyAmount <= 0) { alert("Confirm a monthly amount before sending the mandate link."); return; }
+    if (!cl.email && !cl.phone) { alert("This customer has no email or phone on file — link them to a CRM patient or add contact details first."); return; }
+
+    setIsSendingMandate(true);
+    try {
+      const res = await fetch("https://payments.yaseen-hussain18.workers.dev/create-mandate-session", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clSubscriptionId: cl.id,
+          monthlyAmountPence: Math.round(cl.monthlyAmount * 100),
+          customerEmail: cl.email || undefined,
+          customerName: cl.patientName,
+          description: `The Eye Centre — Contact Lens Direct Debit (${cl.lensType})`
+        })
+      });
+      if (!res.ok) { alert("Couldn't create the mandate link — check the payments Worker is deployed and reachable."); return; }
+      const { url, sessionId } = await res.json();
+      if (!url) { alert("Payments Worker didn't return a mandate URL."); return; }
+
+      await setDoc(doc(db, "clSubscriptions", cl.id), {
+        status: 'Mandate Sent' as ClSubscriptionStatus,
+        stripeCheckoutSessionId: sessionId,
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Mandate Link Sent', `£${Number(cl.monthlyAmount).toFixed(2)}/month`))
+      }, { merge: true });
+
+      const firstName = (cl.patientName || '').split(' ')[0];
+      const dateStr = new Date().toISOString().split('T')[0];
+      if (cl.email) {
+        await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "send_email", to_email: cl.email, patient_name: firstName, templateId: 14,
+            params: { patient_name: firstName, mandate_link: url, amount: Number(cl.monthlyAmount).toFixed(2), lens_type: cl.lensType }
+          })
+        });
+      }
+      if (cl.phone) {
+        const smsRes = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: cl.phone, body: `The Eye Centre: Please set up your new Direct Debit for contact lenses (£${Number(cl.monthlyAmount).toFixed(2)}/month) here: ${url}` })
+        });
+        await writeLog('SMS', cl.patientName, cl.phone, smsRes.ok ? 'Sent' : 'Failed', 'CL Direct Debit Mandate Link', dateStr, '');
+      }
+      alert("Mandate link sent to the customer's phone/email.");
+    } catch (e) {
+      console.error(e);
+      alert("Network error sending the mandate link.");
+    } finally {
+      setIsSendingMandate(false);
+    }
+  };
+
+  const toggleClReordered = async (cl: any) => {
+    try {
+      await setDoc(doc(db, "clSubscriptions", cl.id), {
+        needsReorder: !cl.needsReorder,
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry(cl.needsReorder ? 'Marked Reordered' : 'Reorder Reopened'))
+      }, { merge: true });
+    } catch (e) {
+      alert("Error updating reorder status.");
+    }
+  };
+
+  // Actually cancels the live Stripe subscription via the Worker — this
+  // deliberately does NOT just flip a local Firestore flag, because that
+  // would show "Cancelled" in the dashboard while Stripe kept collecting
+  // from the customer's bank account every month regardless.
+  const cancelClSubscription = async (cl: any) => {
+    if (!cl.stripeSubscriptionId) {
+      // No live subscription yet (still mid-setup) — safe to just cancel locally.
+      if (!confirm(`Cancel ${cl.patientName}'s Direct Debit setup? No mandate has been collected yet, so there's nothing to cancel on Stripe's side.`)) return;
+      await setDoc(doc(db, "clSubscriptions", cl.id), {
+        status: 'Cancelled' as ClSubscriptionStatus,
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Cancelled', 'No live Stripe subscription — cancelled locally'))
+      }, { merge: true });
+      return;
+    }
+    if (!confirm(`Cancel ${cl.patientName}'s Direct Debit? This stops future monthly collections via Stripe. This can't be undone from here — they'd need to set up a fresh mandate to restart.`)) return;
+    try {
+      const res = await fetch("https://payments.yaseen-hussain18.workers.dev/cancel-subscription", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscriptionId: cl.stripeSubscriptionId })
+      });
+      if (!res.ok) { alert("Couldn't cancel via Stripe — check the payments Worker is deployed and reachable."); return; }
+      await setDoc(doc(db, "clSubscriptions", cl.id), {
+        status: 'Cancelled' as ClSubscriptionStatus,
+        updatedAt: serverTimestamp(),
+        auditLog: arrayUnion(auditEntry('Cancelled', 'Stripe subscription cancelled — no further collections'))
+      }, { merge: true });
+    } catch (e) {
+      alert("Network error cancelling the subscription.");
+    }
+  };
+
   // --- Orders tab rendering ---
 
   const renderLensEditor = (item: DispenseItemDraft, eye: 'lensRight' | 'lensLeft', label: string) => {
@@ -1830,13 +2143,13 @@ export default function AdminDashboard() {
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                 <tr>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Date</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Patient</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Items</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Total</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Balance</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Status</th>
-                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300 text-right">Action</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Date</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Patient</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Items</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Total</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Balance</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200">Status</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border border-slate-200 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -1845,36 +2158,31 @@ export default function AdminDashboard() {
                   const balance = getOrderBalance(order);
                   const pending = getOrderPendingAmount(order);
                   const isOpen = selectedOrderId === order.id;
-                  // The bold divider always sits under the LAST row of this
-                  // order's block — the detail row when open, the summary
-                  // row when it's not — so the line between one order and
-                  // the next never disappears, expanded or collapsed.
-                  const closingBorder = isOpen ? '' : 'border-b-2 border-slate-300';
                   return (
                     <Fragment key={order.id}>
-                      <tr className={`hover:bg-slate-50/50 transition-colors cursor-pointer ${closingBorder}`} onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>
-                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums">
+                      <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>
+                        <td className="p-4 text-xs font-bold text-slate-500 tabular-nums border border-slate-200">
                           {order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000).toLocaleDateString('en-GB') : 'Just now'}
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 border border-slate-200">
                           <p className="font-bold text-slate-800 text-sm">{order.patientName}</p>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">{order.source === 'Appointment' ? 'Clinic Booking' : 'Walk-In'}</p>
                         </td>
-                        <td className="p-4 text-xs font-bold text-slate-600">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
-                        <td className="p-4 font-black text-sm text-slate-800">£{(order.total || 0).toFixed(2)}</td>
-                        <td className="p-4 text-sm font-bold">
+                        <td className="p-4 text-xs font-bold text-slate-600 border border-slate-200">{(order.items || []).length} spectacle{(order.items || []).length === 1 ? '' : 's'}</td>
+                        <td className="p-4 font-black text-sm text-slate-800 border border-slate-200">£{(order.total || 0).toFixed(2)}</td>
+                        <td className="p-4 text-sm font-bold border border-slate-200">
                           {balance > 0 ? <span className="text-amber-600">£{balance.toFixed(2)}</span> : <span className="text-green-600">Paid</span>}
                           {pending > 0 && <p className="text-[10px] font-bold text-indigo-400 mt-0.5">£{pending.toFixed(2)} pending Klarna</p>}
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 border border-slate-200">
                           <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${ORDER_STATUS_STYLES[status]}`}>{status}</span>
                         </td>
-                        <td className="p-4 text-right">
+                        <td className="p-4 text-right border border-slate-200">
                           <button className="text-[#3F9185] font-bold text-xs">{isOpen ? 'Close' : 'View'}</button>
                         </td>
                       </tr>
                       {isOpen && (
-                        <tr className="border-b-2 border-slate-300">
+                        <tr>
                           <td colSpan={7} className="p-0 bg-slate-50/50">
                             {renderOrderDetail(order)}
                           </td>
@@ -1884,6 +2192,247 @@ export default function AdminDashboard() {
                   );
                 })}
                 {filtered.length === 0 && <tr><td colSpan={7} className="p-10 text-center text-slate-400 font-bold italic">No orders yet — click "+ New Order" to log the first dispense.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // --- CL Direct Debits rendering ---
+
+  const renderClDetail = (cl: any) => {
+    const needsSetup = cl.status === 'Needs Setup';
+    return (
+      <div className="p-6 space-y-6">
+        <div className="grid md:grid-cols-2 gap-4 text-xs font-bold text-slate-500">
+          <p>Contact: {cl.email || 'No email'} · {cl.phone || 'No phone'}</p>
+          <p className="md:text-right">Lens: {cl.lensType}</p>
+        </div>
+
+        {!cl.patientId && (
+          <div className="bg-indigo-50 rounded-xl border border-indigo-100 p-4 space-y-2">
+            <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Link to CRM Patient (for contact details)</label>
+            <input
+              type="text" placeholder="Search by name, email or phone..."
+              className="w-full p-3 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+              value={selectedClId === cl.id ? clSearchQuery : ''}
+              onChange={e => { setSelectedClId(cl.id); setClSearchQuery(e.target.value); performCloudSearch(e.target.value); }}
+            />
+            {selectedClId === cl.id && clSearchQuery && (
+              <div className="max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+                {cloudSearchResults.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => { linkClCrmPatient(cl, p); setClSearchQuery(''); }}
+                    className="w-full text-left p-2 text-sm hover:bg-indigo-50 font-medium"
+                  >
+                    {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {needsSetup ? (
+          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+            <h4 className="font-black text-slate-800 text-sm">Confirm setup details</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Monthly Amount (£)</label>
+                <input
+                  type="number" step="0.01" placeholder="0.00"
+                  defaultValue={cl.monthlyAmount || ''}
+                  onChange={e => setClSetupDraft({ ...clSetupDraft, monthlyAmount: e.target.value })}
+                  className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Delivery</label>
+                <select
+                  defaultValue={cl.deliveryMethod || 'Collect'}
+                  onChange={e => setClSetupDraft({ ...clSetupDraft, deliveryMethod: e.target.value as 'Collect' | 'DPD' })}
+                  className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+                >
+                  <option value="Collect">Collect In-Store</option>
+                  <option value="DPD">DPD Dispatch</option>
+                </select>
+              </div>
+            </div>
+            {clSetupDraft.deliveryMethod === 'DPD' && (
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Delivery Address</label>
+                <input
+                  type="text" placeholder="Full delivery address"
+                  defaultValue={cl.deliveryAddress || ''}
+                  onChange={e => setClSetupDraft({ ...clSetupDraft, deliveryAddress: e.target.value })}
+                  className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold"
+                />
+              </div>
+            )}
+            <button onClick={() => saveClSetupDetails(cl)} className="px-4 py-2.5 bg-slate-800 text-white rounded-xl font-bold text-xs hover:bg-slate-900 transition-colors">
+              Save Details
+            </button>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-slate-200 p-4 grid grid-cols-3 gap-4 text-center">
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">Monthly Amount</p>
+              <p className="text-lg font-black text-slate-800 mt-1">£{Number(cl.monthlyAmount || 0).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">Delivery</p>
+              <p className="text-sm font-bold text-slate-700 mt-1.5">{cl.deliveryMethod}{cl.deliveryMethod === 'DPD' && cl.deliveryAddress ? ` — ${cl.deliveryAddress}` : ''}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">Last Collection</p>
+              <p className={`text-sm font-bold mt-1.5 ${cl.lastCollectionStatus === 'failed' ? 'text-red-600' : cl.lastCollectionStatus === 'paid' ? 'text-green-600' : 'text-slate-400'}`}>
+                {cl.lastCollectionStatus ? `${cl.lastCollectionStatus === 'paid' ? 'Paid' : 'Failed'} ${cl.lastCollectionDate?.seconds ? new Date(cl.lastCollectionDate.seconds * 1000).toLocaleDateString('en-GB') : ''}` : 'None yet'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {cl.status === 'Needs Setup' && (
+          <button
+            onClick={() => sendMandateLink({ ...cl, monthlyAmount: Number(clSetupDraft.monthlyAmount) || cl.monthlyAmount })}
+            disabled={isSendingMandate || (!cl.monthlyAmount && !clSetupDraft.monthlyAmount)}
+            className="w-full px-4 py-3 bg-indigo-500 text-white rounded-xl font-bold text-sm hover:bg-indigo-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Smartphone size={16} /> {isSendingMandate ? 'Sending…' : 'Send Direct Debit Mandate Link'}
+          </button>
+        )}
+        {cl.status === 'Mandate Sent' && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-center justify-between">
+            <p className="text-xs font-bold text-indigo-700">Mandate link sent — waiting for the customer to complete setup on their end.</p>
+            <button onClick={() => sendMandateLink(cl)} disabled={isSendingMandate} className="px-3 py-2 bg-white border border-indigo-200 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors disabled:opacity-50">
+              Resend Link
+            </button>
+          </div>
+        )}
+        {cl.status === 'Active' && (
+          <div className="flex items-center justify-between gap-3">
+            <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-4 py-2.5">
+              <input type="checkbox" checked={!!cl.needsReorder} onChange={() => toggleClReordered(cl)} className="accent-[#3F9185] w-4 h-4" />
+              <span className="text-xs font-bold text-slate-700">{cl.needsReorder ? 'Needs reordering from supplier' : 'Reordered — nothing outstanding'}</span>
+            </label>
+          </div>
+        )}
+        {cl.status === 'Payment Failed' && (
+          <div className="bg-red-50 border border-red-100 rounded-xl p-4">
+            <p className="text-xs font-bold text-red-700">Last collection failed — the customer's been notified. Check in with them before their next order goes out.</p>
+          </div>
+        )}
+
+        {(cl.status === 'Active' || cl.status === 'Payment Failed' || cl.status === 'Mandate Sent') && (
+          <button onClick={() => cancelClSubscription(cl)} className="text-xs font-bold text-red-500 hover:underline">
+            Cancel this Direct Debit
+          </button>
+        )}
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+          <h4 className="font-black text-slate-800 text-sm flex items-center gap-2"><ScrollText size={16} className="text-slate-400" /> Activity Log</h4>
+          <div className="max-h-48 overflow-y-auto space-y-2 pt-1">
+            {(cl.auditLog || []).length === 0 && <p className="text-xs text-slate-400 italic">No activity recorded yet.</p>}
+            {[...(cl.auditLog || [])].reverse().map((entry: any) => (
+              <div key={entry.id} className="text-xs border-b border-slate-50 pb-2 last:border-0">
+                <div className="flex justify-between items-baseline gap-2">
+                  <span className="font-bold text-slate-700">{entry.event}</span>
+                  <span className="text-slate-400 shrink-0 tabular-nums">{new Date(entry.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                {entry.detail && <p className="text-slate-500 mt-0.5">{entry.detail}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderClDirectDebitsView = () => {
+    const filtered = clStatusFilter === 'All' ? clSubscriptions : clSubscriptions.filter(c => c.status === clStatusFilter);
+    const statusCounts: Record<string, number> = { 'Needs Setup': 0, 'Mandate Sent': 0, 'Active': 0, 'Payment Failed': 0, 'Paused': 0, 'Cancelled': 0 };
+    clSubscriptions.forEach(c => { statusCounts[c.status] = (statusCounts[c.status] || 0) + 1; });
+    const reorderCount = clSubscriptions.filter(c => c.needsReorder).length;
+
+    return (
+      <div className="p-8">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-2xl font-black text-slate-800">Contact Lens Direct Debits</h2>
+            <p className="text-sm font-bold text-slate-400 mt-1">{clSubscriptions.length} customers{reorderCount > 0 ? ` · ${reorderCount} awaiting reorder` : ''}</p>
+          </div>
+          <div className="flex gap-2">
+            {clSubscriptions.length === 0 && (
+              <button onClick={importClSeed} className="bg-white border border-slate-200 text-slate-600 px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-slate-50 transition-all">
+                <Upload size={16} /> Import Standing Order Sheet
+              </button>
+            )}
+            <button onClick={openNewClModal} className="bg-[#3F9185] text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition-all shadow-md">
+              <Plus size={16} /> + Add Customer
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 mb-4">
+          {(['All', 'Needs Setup', 'Mandate Sent', 'Active', 'Payment Failed', 'Cancelled'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setClStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wide border transition-all ${clStatusFilter === s ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+            >
+              {s}{s !== 'All' && statusCounts[s] ? ` (${statusCounts[s]})` : ''}
+            </button>
+          ))}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="max-h-[65vh] overflow-y-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                <tr>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Patient</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Lens</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Monthly £</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Delivery</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300">Status</th>
+                  <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider border-b-2 border-slate-300 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(cl => {
+                  const isOpen = selectedClId === cl.id;
+                  const closingBorder = isOpen ? '' : 'border-b-2 border-slate-300';
+                  return (
+                    <Fragment key={cl.id}>
+                      <tr className={`hover:bg-slate-50/50 transition-colors cursor-pointer ${closingBorder}`} onClick={() => setSelectedClId(isOpen ? null : cl.id)}>
+                        <td className="p-4">
+                          <p className="font-bold text-slate-800 text-sm">{cl.patientName}</p>
+                          {cl.needsReorder && <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mt-0.5">Needs Reorder</p>}
+                        </td>
+                        <td className="p-4 text-xs font-bold text-slate-600">{cl.lensType}</td>
+                        <td className="p-4 font-black text-sm text-slate-800">{cl.monthlyAmount ? `£${Number(cl.monthlyAmount).toFixed(2)}` : '—'}</td>
+                        <td className="p-4 text-xs font-bold text-slate-600">{cl.deliveryMethod}</td>
+                        <td className="p-4">
+                          <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${CL_STATUS_STYLES[cl.status as ClSubscriptionStatus]}`}>{cl.status}</span>
+                        </td>
+                        <td className="p-4 text-right">
+                          <button className="text-[#3F9185] font-bold text-xs">{isOpen ? 'Close' : 'View'}</button>
+                        </td>
+                      </tr>
+                      {isOpen && (
+                        <tr className="border-b-2 border-slate-300">
+                          <td colSpan={6} className="p-0 bg-slate-50/50">
+                            {renderClDetail(cl)}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {filtered.length === 0 && <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold italic">No customers here yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -3136,6 +3685,9 @@ export default function AdminDashboard() {
             <button onClick={() => setView('dispensing')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'dispensing' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Glasses size={18} /> Dispensing
             </button>
+            <button onClick={() => setView('clDirectDebits')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'clDirectDebits' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <RefreshCw size={18} /> CL Direct Debits
+            </button>
             <button onClick={() => setView('messages')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'messages' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <User size={18} /> CRM & Patients
               {totalUnreadMessages > 0 && (
@@ -3624,6 +4176,13 @@ export default function AdminDashboard() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* --- CONTACT LENS DIRECT DEBITS VIEW --- */}
+        {view === 'clDirectDebits' && (
+          <div className="glass-card rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-hidden">
+            {renderClDirectDebitsView()}
           </div>
         )}
 
@@ -5303,6 +5862,74 @@ export default function AdminDashboard() {
               className="w-full py-4 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all bg-[#3F9185] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSavingOrder ? 'Saving…' : 'Create Order'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- NEW CL DIRECT DEBIT CUSTOMER MODAL --- */}
+      {isNewClModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><RefreshCw size={20} className="text-[#3F9185]"/> Add Direct Debit Customer</h2>
+              <button onClick={() => { setIsNewClModalOpen(false); resetNewClForm(); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+
+            <div className="mb-6 p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+              <label className="text-[10px] font-black uppercase text-indigo-400 ml-1">Search Master CRM Patient (Optional)</label>
+              <input
+                type="text" placeholder="Search by name, email or phone..."
+                className="w-full p-3 mt-1 rounded-xl bg-white border border-indigo-200 outline-none focus:border-indigo-400 text-sm font-bold text-indigo-900"
+                value={clSearchQuery}
+                onChange={e => { setClSearchQuery(e.target.value); performCloudSearch(e.target.value); }}
+              />
+              {clSearchQuery && (
+                <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-indigo-100 shadow-sm">
+                  {cloudSearchResults.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedCrmPatientForCl(p);
+                        setNewCl(prev => ({ ...prev, patientName: p.patientName || '', email: p.email || '', phone: p.phone || '' }));
+                        setClSearchQuery('');
+                      }}
+                      className="w-full text-left p-2 text-sm hover:bg-indigo-50 font-medium"
+                    >
+                      {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedCrmPatientForCl && (
+                <div className="mt-3 flex items-center justify-between bg-white p-3 rounded-lg border border-indigo-200 shadow-sm">
+                  <span className="text-sm font-bold text-indigo-900 flex items-center gap-2"><LinkIcon size={14}/> Linked to: {selectedCrmPatientForCl.patientName}</span>
+                  <button onClick={() => setSelectedCrmPatientForCl(null)} className="text-xs text-red-500 font-bold hover:underline">Unlink</button>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <input placeholder="First & Last Name" className="p-4 bg-slate-50 rounded-xl outline-none col-span-2 font-bold text-sm" value={newCl.patientName} onChange={e => setNewCl({...newCl, patientName: e.target.value})} />
+              <input placeholder="Phone" className="p-4 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newCl.phone} onChange={e => setNewCl({...newCl, phone: e.target.value})} />
+              <input type="email" placeholder="Email" className="p-4 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newCl.email} onChange={e => setNewCl({...newCl, email: e.target.value.toLowerCase()})} />
+              <input placeholder="Lens Type e.g. biofinity toric" className="p-4 bg-slate-50 rounded-xl outline-none col-span-2 font-bold text-sm" value={newCl.lensType} onChange={e => setNewCl({...newCl, lensType: e.target.value})} />
+              <input type="number" step="0.01" placeholder="Monthly Amount (£)" className="p-4 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newCl.monthlyAmount} onChange={e => setNewCl({...newCl, monthlyAmount: e.target.value})} />
+              <select value={newCl.deliveryMethod} onChange={e => setNewCl({...newCl, deliveryMethod: e.target.value as 'Collect' | 'DPD'})} className="p-4 bg-slate-50 rounded-xl outline-none font-bold text-sm">
+                <option value="Collect">Collect In-Store</option>
+                <option value="DPD">DPD Dispatch</option>
+              </select>
+              {newCl.deliveryMethod === 'DPD' && (
+                <input placeholder="Delivery Address" className="p-4 bg-slate-50 rounded-xl outline-none col-span-2 font-bold text-sm" value={newCl.deliveryAddress} onChange={e => setNewCl({...newCl, deliveryAddress: e.target.value})} />
+              )}
+            </div>
+
+            <button
+              onClick={handleSaveNewCl}
+              disabled={isSavingCl || !newCl.patientName.trim() || !newCl.lensType.trim() || !newCl.monthlyAmount}
+              className="w-full py-4 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all bg-[#3F9185] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSavingCl ? 'Saving…' : 'Add Customer'}
             </button>
           </div>
         </div>
