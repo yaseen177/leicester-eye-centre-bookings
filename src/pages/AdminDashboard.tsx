@@ -19,10 +19,17 @@ interface ClinicScheduleConfig {
   closedDates: string[];
 }
 
+interface OptometristConfig {
+  name: string;
+  gocNumber: string;
+  signatureDataUrl: string;
+}
+
 interface ClinicConfig {
   eyeCare: ClinicScheduleConfig;
   dispensing: ClinicScheduleConfig;
   frameMakes: string[];
+  optometrist: OptometristConfig;
 }
 
 type ClinicKey = 'eyeCare' | 'dispensing';
@@ -271,6 +278,38 @@ const CL_STATUS_STYLES: Record<ClSubscriptionStatus, string> = {
   'Cancelled': 'bg-slate-100 text-slate-400 border-slate-200'
 };
 
+// ============================================================================
+// PRESCRIPTIONS — types, blank-record helpers, status styles
+// ============================================================================
+
+type PrescriptionType = 'The Eye Centre' | 'External';
+type RxStatus = 'Changed' | 'Stable' | 'No Rx';
+
+const RX_STATUS_STYLES: Record<RxStatus, string> = {
+  'Changed': 'bg-amber-100 text-amber-700 border-amber-200',
+  'Stable': 'bg-green-100 text-green-700 border-green-200',
+  'No Rx': 'bg-slate-100 text-slate-500 border-slate-200'
+};
+
+interface EyeRxDraft {
+  sph: string;
+  cyl: string;
+  axis: string;
+  readingAdd: string;
+  intermediateAdd: string;
+  hPrism: string;
+  hBase: '' | 'In' | 'Out';
+  vPrism: string;
+  vBase: '' | 'Up' | 'Down';
+  balance: boolean;
+  va: string;
+}
+
+const blankEyeRx = (): EyeRxDraft => ({
+  sph: '', cyl: '', axis: '', readingAdd: '', intermediateAdd: '',
+  hPrism: '', hBase: '', vPrism: '', vBase: '', balance: false, va: ''
+});
+
 
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits'>('diary');
@@ -382,7 +421,8 @@ export default function AdminDashboard() {
       lunch: { start: "13:00", end: "14:00", enabled: true },
       weeklyOff: [], openDates: [], dailyOverrides: {}, closedDates: []
     },
-    frameMakes: DEFAULT_FRAME_MAKES
+    frameMakes: DEFAULT_FRAME_MAKES,
+    optometrist: { name: 'Mohammad Abbas Hussain', gocNumber: '01-39821', signatureDataUrl: '' }
   });
 
   const [activeClinic, setActiveClinic] = useState<ClinicKey>('eyeCare');
@@ -399,7 +439,7 @@ export default function AdminDashboard() {
   const [crmPatients, setCrmPatients] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
-  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'orders' | 'profile' | 'recalls'>('chat');
+  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'orders' | 'prescriptions' | 'profile' | 'recalls'>('chat');
   const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '' });
   
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
@@ -497,7 +537,7 @@ export default function AdminDashboard() {
 
   // --- DISPENSING & WALK-IN STATES ---
   const [walkInQuotes, setWalkInQuotes] = useState<any[]>([]);
-  const [dispensingTab, setDispensingTab] = useState<'walkins' | 'clinic' | 'orders'>('walkins');
+  const [dispensingTab, setDispensingTab] = useState<'walkins' | 'clinic' | 'orders' | 'prescriptions'>('walkins');
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
 
   // --- DISPENSING ORDERS STATE ---
@@ -533,6 +573,30 @@ export default function AdminDashboard() {
   const [isSavingCl, setIsSavingCl] = useState(false);
   const [clSetupDraft, setClSetupDraft] = useState<{ monthlyAmount: string; deliveryMethod: 'Collect' | 'DPD'; deliveryAddress: string }>({ monthlyAmount: '', deliveryMethod: 'Collect', deliveryAddress: '' });
   const [isSendingMandate, setIsSendingMandate] = useState(false);
+
+  // --- PRESCRIPTIONS STATE ---
+  const [prescriptions, setPrescriptions] = useState<any[]>([]);
+  const [isNewRxModalOpen, setIsNewRxModalOpen] = useState(false);
+  const [rxModalPatient, setRxModalPatient] = useState<{ id: string | null; name: string } | null>(null);
+  const [rxModalAppointmentId, setRxModalAppointmentId] = useState<string | null>(null);
+  const [newRx, setNewRx] = useState({
+    type: 'The Eye Centre' as PrescriptionType,
+    externalSource: '',
+    dateIssued: new Date().toISOString().split('T')[0],
+    dateExpiry: '',
+    rxStatus: 'Stable' as RxStatus,
+    right: blankEyeRx(),
+    left: blankEyeRx(),
+    sameBothEyes: false,
+    vaBinocular: '',
+    notes: ''
+  });
+  const [isSavingRx, setIsSavingRx] = useState(false);
+  const [printRx, setPrintRx] = useState<any>(null);
+  const [rxSearchQuery, setRxSearchQuery] = useState('');
+  const [selectedPatientForRx, setSelectedPatientForRx] = useState<any>(null);
+  const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [isSignatureDrawn, setIsSignatureDrawn] = useState(false);
   const [newQuote, setNewQuote] = useState({ patientName: '', email: '', phone: '', quoteValue: '', notes: '' });
   const [quoteSearchQuery, setQuoteSearchQuery] = useState('');
   const [selectedCrmPatientForQuote, setSelectedCrmPatientForQuote] = useState<any>(null);
@@ -676,6 +740,11 @@ export default function AdminDashboard() {
       setClSubscriptions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const qPrescriptions = query(collection(db, "prescriptions"), orderBy("dateIssued", "desc"), limit(2000));
+    const unsubPrescriptions = onSnapshot(qPrescriptions, (snap) => {
+      setPrescriptions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
     const normalizeClinicSchedule = (cloudData: any, prev: ClinicScheduleConfig): ClinicScheduleConfig => {
       let loadedHours = cloudData?.hours || prev.hours;
       if (loadedHours && loadedHours.start) {
@@ -711,12 +780,13 @@ export default function AdminDashboard() {
         setConfig(prev => ({
           eyeCare: normalizeClinicSchedule(eyeCareCloudData, prev.eyeCare),
           dispensing: normalizeClinicSchedule(dispensingCloudData, prev.dispensing),
-          frameMakes: (cloudData.frameMakes && cloudData.frameMakes.length > 0) ? cloudData.frameMakes : prev.frameMakes
+          frameMakes: (cloudData.frameMakes && cloudData.frameMakes.length > 0) ? cloudData.frameMakes : prev.frameMakes,
+          optometrist: cloudData.optometrist ? { ...prev.optometrist, ...cloudData.optometrist } : prev.optometrist
         }));
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); unsubDispenseOrders(); unsubClSubscriptions(); };
+    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); unsubDispenseOrders(); unsubClSubscriptions(); unsubPrescriptions(); };
   }, []);
 
   // Look up the CRM (patients collection) for each unique caller number
@@ -799,6 +869,16 @@ export default function AdminDashboard() {
       }
     }
   }, [selectedChatPatient?.id, view, crmTab, commsType]);
+
+  // Triggers the browser print dialog once the print-only view has had a
+  // beat to render. #rx-print-area / .no-print in index.css do the actual
+  // hiding of everything else on the page during print.
+  useEffect(() => {
+    if (printRx) {
+      const timer = setTimeout(() => window.print(), 150);
+      return () => clearTimeout(timer);
+    }
+  }, [printRx]);
 
   // --- CSV PARSING & ANALYSIS ENGINE ---
   const parseCSV = (str: string) => {
@@ -1747,6 +1827,156 @@ export default function AdminDashboard() {
     }
   };
 
+  // ==========================================================================
+  // PRESCRIPTIONS — signature pad, form editing, save, print
+  // ==========================================================================
+
+  const isSigDrawingRef = useRef(false);
+
+  const getSigCanvasPoint = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const startSignatureDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    isSigDrawingRef.current = true;
+    const { x, y } = getSigCanvasPoint(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const drawSignature = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isSigDrawingRef.current) return;
+    const canvas = signatureCanvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const { x, y } = getSigCanvasPoint(e);
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    setIsSignatureDrawn(true);
+  };
+
+  const stopSignatureDraw = () => { isSigDrawingRef.current = false; };
+
+  const clearSignaturePad = () => {
+    const canvas = signatureCanvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setIsSignatureDrawn(false);
+  };
+
+  const saveSignature = async () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas || !isSignatureDrawn) { alert("Draw a signature first."); return; }
+    const dataUrl = canvas.toDataURL('image/png');
+    const updatedConfig = { ...config, optometrist: { ...config.optometrist, signatureDataUrl: dataUrl } };
+    setConfig(updatedConfig);
+    try {
+      await setDoc(doc(db, "settings", "clinicConfig"), updatedConfig);
+      alert("Signature saved.");
+    } catch (e) {
+      alert("Error saving signature.");
+    }
+  };
+
+  const resetNewRxForm = () => {
+    setNewRx({
+      type: 'The Eye Centre', externalSource: '', dateIssued: new Date().toISOString().split('T')[0], dateExpiry: '',
+      rxStatus: 'Stable', right: blankEyeRx(), left: blankEyeRx(), sameBothEyes: false, vaBinocular: '', notes: ''
+    });
+    setRxModalPatient(null);
+    setRxModalAppointmentId(null);
+  };
+
+  // Opens the prescription form for a given patient. Pass an appointmentId
+  // when launching from a completed sight test, so the record links back
+  // and (if marked "Changed") keeps the existing prescriptionChanged flag
+  // on that appointment in sync rather than tracking it in two places.
+  const openNewRxModal = (patient: { id: string | null; name: string }, appointmentId?: string) => {
+    resetNewRxForm();
+    setRxModalPatient(patient);
+    setRxModalAppointmentId(appointmentId || null);
+    setIsNewRxModalOpen(true);
+  };
+
+  // Mirrors patchOrderItemLens's "same for both eyes" mirroring: editing the
+  // right eye while sameBothEyes is on also updates the left, until staff
+  // switch it off to enter genuinely different values per eye.
+  const patchEyeRx = (eye: 'right' | 'left', patch: Partial<EyeRxDraft>) => {
+    setNewRx(prev => {
+      const updatedEye = { ...prev[eye], ...patch };
+      if (prev.sameBothEyes && eye === 'right') {
+        return { ...prev, right: updatedEye, left: updatedEye };
+      }
+      return { ...prev, [eye]: updatedEye };
+    });
+  };
+
+  const toggleRxSameEyes = () => {
+    setNewRx(prev => {
+      const newSame = !prev.sameBothEyes;
+      return { ...prev, sameBothEyes: newSame, left: newSame ? prev.right : prev.left };
+    });
+  };
+
+  const handleSaveRx = async () => {
+    if (!rxModalPatient || !rxModalPatient.id) { alert("This prescription needs to be linked to a CRM patient first."); return; }
+    if (!newRx.dateIssued) { alert("Date issued is required."); return; }
+    if (newRx.type === 'The Eye Centre' && !config.optometrist.name.trim()) { alert("Set up the optometrist's name in Settings first."); return; }
+
+    setIsSavingRx(true);
+    try {
+      await addDoc(collection(db, "prescriptions"), {
+        patientId: rxModalPatient.id,
+        patientName: rxModalPatient.name,
+        appointmentId: rxModalAppointmentId,
+        type: newRx.type,
+        externalSource: newRx.type === 'External' ? newRx.externalSource.trim() : '',
+        // Snapshotted at save time, same reasoning as dispense-order pricing —
+        // if the optometrist or their signature changes later in Settings,
+        // this prescription still correctly shows who actually signed it.
+        optometristName: newRx.type === 'The Eye Centre' ? config.optometrist.name : '',
+        optometristGoc: newRx.type === 'The Eye Centre' ? config.optometrist.gocNumber : '',
+        optometristSignature: newRx.type === 'The Eye Centre' ? config.optometrist.signatureDataUrl : '',
+        dateIssued: newRx.dateIssued,
+        dateExpiry: newRx.dateExpiry,
+        rxStatus: newRx.rxStatus,
+        right: newRx.right,
+        left: newRx.left,
+        sameBothEyes: newRx.sameBothEyes,
+        vaBinocular: newRx.vaBinocular,
+        notes: newRx.notes.trim(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Keeps the existing Rx-changed voucher trigger on the Sight Test
+      // Dispenses Tracking table in sync, rather than tracking the same
+      // concept in two disconnected places.
+      if (rxModalAppointmentId && newRx.rxStatus === 'Changed') {
+        await setDoc(doc(db, "appointments", rxModalAppointmentId), { prescriptionChanged: true }, { merge: true });
+      }
+
+      resetNewRxForm();
+      setIsNewRxModalOpen(false);
+      alert("Prescription saved.");
+    } catch (e) {
+      console.error(e);
+      alert("Error saving prescription.");
+    } finally {
+      setIsSavingRx(false);
+    }
+  };
+
   // --- Orders tab rendering ---
 
   const renderLensEditor = (item: DispenseItemDraft, eye: 'lensRight' | 'lensLeft', label: string) => {
@@ -2440,6 +2670,274 @@ export default function AdminDashboard() {
       </div>
     );
   };
+
+  // --- Prescriptions rendering ---
+
+  const renderEyeRxFields = (eye: 'right' | 'left', label: string) => {
+    const rx = newRx[eye];
+    return (
+      <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+        <p className="text-[10px] font-black uppercase text-slate-400">{label}</p>
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Sph</label>
+            <input type="text" placeholder="+0.00" value={rx.sph} onChange={e => patchEyeRx(eye, { sph: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+          </div>
+          <div>
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Cyl</label>
+            <input type="text" placeholder="-0.00" value={rx.cyl} onChange={e => patchEyeRx(eye, { cyl: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+          </div>
+          <div>
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Axis</label>
+            <input type="text" placeholder="0-180" value={rx.axis} onChange={e => patchEyeRx(eye, { axis: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Reading Add</label>
+            <input type="text" placeholder="+0.00" value={rx.readingAdd} onChange={e => patchEyeRx(eye, { readingAdd: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+          </div>
+          <div>
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Intermediate Add</label>
+            <input type="text" placeholder="+0.00" value={rx.intermediateAdd} onChange={e => patchEyeRx(eye, { intermediateAdd: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex gap-1">
+            <div className="flex-1">
+              <label className="text-[9px] font-black uppercase text-slate-400 ml-1">H Prism</label>
+              <input type="text" placeholder="0.00" value={rx.hPrism} onChange={e => patchEyeRx(eye, { hPrism: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+            </div>
+            <div className="w-20">
+              <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Base</label>
+              <select value={rx.hBase} onChange={e => patchEyeRx(eye, { hBase: e.target.value as EyeRxDraft['hBase'] })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold">
+                <option value="">—</option>
+                <option value="In">In</option>
+                <option value="Out">Out</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-1">
+            <div className="flex-1">
+              <label className="text-[9px] font-black uppercase text-slate-400 ml-1">V Prism</label>
+              <input type="text" placeholder="0.00" value={rx.vPrism} onChange={e => patchEyeRx(eye, { vPrism: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+            </div>
+            <div className="w-20">
+              <label className="text-[9px] font-black uppercase text-slate-400 ml-1">Base</label>
+              <select value={rx.vBase} onChange={e => patchEyeRx(eye, { vBase: e.target.value as EyeRxDraft['vBase'] })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold">
+                <option value="">—</option>
+                <option value="Up">Up</option>
+                <option value="Down">Down</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <div className="flex-1">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-1">VA</label>
+            <input type="text" placeholder="6/6" value={rx.va} onChange={e => patchEyeRx(eye, { va: e.target.value })} className="w-full mt-1 p-2 rounded-lg bg-white border border-slate-200 outline-none text-xs font-bold" />
+          </div>
+          <label className="flex items-center gap-1.5 cursor-pointer pt-4">
+            <input type="checkbox" checked={rx.balance} onChange={e => patchEyeRx(eye, { balance: e.target.checked })} className="accent-[#3F9185] w-4 h-4" />
+            <span className="text-[10px] font-bold text-slate-500">Balance</span>
+          </label>
+        </div>
+      </div>
+    );
+  };
+
+  const renderRxFormBody = () => (
+    <div className="space-y-5">
+      <div className="flex gap-2">
+        <button onClick={() => setNewRx({ ...newRx, type: 'The Eye Centre' })} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition-all ${newRx.type === 'The Eye Centre' ? 'bg-[#3F9185] text-white' : 'bg-slate-50 text-slate-400 border border-slate-200'}`}>The Eye Centre Rx</button>
+        <button onClick={() => setNewRx({ ...newRx, type: 'External' })} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition-all ${newRx.type === 'External' ? 'bg-[#3F9185] text-white' : 'bg-slate-50 text-slate-400 border border-slate-200'}`}>External Rx</button>
+      </div>
+
+      {newRx.type === 'The Eye Centre' ? (
+        <p className="text-xs font-bold text-slate-500 bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+          Will be signed by <strong>{config.optometrist.name || 'no optometrist set — check Settings'}</strong>{config.optometrist.gocNumber ? ` (GOC ${config.optometrist.gocNumber})` : ''}.
+        </p>
+      ) : (
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Issuing Practice</label>
+          <input type="text" placeholder="e.g. Specsavers Leicester" value={newRx.externalSource} onChange={e => setNewRx({ ...newRx, externalSource: e.target.value })} className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold" />
+        </div>
+      )}
+
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date Issued</label>
+          <input type="date" value={newRx.dateIssued} onChange={e => setNewRx({ ...newRx, dateIssued: e.target.value })} className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold" />
+        </div>
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Expiry Date</label>
+          <input type="date" value={newRx.dateExpiry} onChange={e => setNewRx({ ...newRx, dateExpiry: e.target.value })} className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold" />
+        </div>
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Rx Status</label>
+          <select value={newRx.rxStatus} onChange={e => setNewRx({ ...newRx, rxStatus: e.target.value as RxStatus })} className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold">
+            <option value="Changed">Changed</option>
+            <option value="Stable">Stable</option>
+            <option value="No Rx">No Rx</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={newRx.sameBothEyes} onChange={toggleRxSameEyes} className="accent-[#3F9185] w-4 h-4" />
+          <span className="text-xs font-bold text-slate-500">Same for both eyes</span>
+        </label>
+      </div>
+      <div className={`grid ${newRx.sameBothEyes ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
+        {renderEyeRxFields('right', newRx.sameBothEyes ? 'Both Eyes' : 'Right (R)')}
+        {!newRx.sameBothEyes && renderEyeRxFields('left', 'Left (L)')}
+      </div>
+
+      <div>
+        <label className="text-[10px] font-black uppercase text-slate-400 ml-1">VA Binocular</label>
+        <input type="text" placeholder="6/6" value={newRx.vaBinocular} onChange={e => setNewRx({ ...newRx, vaBinocular: e.target.value })} className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-bold" />
+      </div>
+
+      <div>
+        <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Notes (optional)</label>
+        <textarea value={newRx.notes} onChange={e => setNewRx({ ...newRx, notes: e.target.value })} rows={2} className="w-full mt-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none text-sm font-medium resize-none" />
+      </div>
+    </div>
+  );
+
+  // Shared between the CRM tab and the Dispensing tab — same list, same
+  // actions, just fed a different filtered array depending on context.
+  const renderPrescriptionList = (list: any[], patient: { id: string | null; name: string } | null) => (
+    <div className="space-y-3">
+      {list.length === 0 && <p className="text-sm text-slate-400 italic text-center py-6">No prescriptions on file yet.</p>}
+      {list.map(rx => (
+        <div key={rx.id} className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-black text-slate-800 text-sm">{rx.dateIssued ? new Date(rx.dateIssued).toLocaleDateString('en-GB') : '—'}</span>
+              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${RX_STATUS_STYLES[rx.rxStatus as RxStatus]}`}>{rx.rxStatus}</span>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{rx.type === 'External' ? `External${rx.externalSource ? ` — ${rx.externalSource}` : ''}` : 'The Eye Centre'}</span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-1">
+              R: {rx.right?.sph || '—'} / {rx.right?.cyl || '—'} × {rx.right?.axis || '—'}
+              {rx.sameBothEyes ? '' : ` &nbsp; L: ${rx.left?.sph || '—'} / ${rx.left?.cyl || '—'} × ${rx.left?.axis || '—'}`}
+              {rx.dateExpiry ? ` · Expires ${new Date(rx.dateExpiry).toLocaleDateString('en-GB')}` : ''}
+            </p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={() => setPrintRx(rx)} className="px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition-colors flex items-center gap-1.5">
+              <FileText size={14}/> Print
+            </button>
+          </div>
+        </div>
+      ))}
+      {patient && (
+        <button onClick={() => openNewRxModal(patient)} className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl font-bold text-sm text-slate-400 hover:border-[#3F9185] hover:text-[#3F9185] transition-all flex items-center justify-center gap-2">
+          <Plus size={16}/> Add Prescription
+        </button>
+      )}
+    </div>
+  );
+
+  // The actual printable prescription — logo/letterhead, patient + optom
+  // details, the Rx table, signature, Rx status. Rendered both inside the
+  // on-screen preview modal and (invisibly, until print time) into
+  // #rx-print-area — see index.css for how that split actually shows only
+  // this content when window.print() fires.
+  const renderRxPrintContent = (rx: any) => {
+    const patientDob = crmPatients.find((p: any) => p.id === rx.patientId)?.dob;
+    const eyeRow = (label: string, eye: any) => (
+      <tr>
+        <td className="p-2 border border-slate-300 font-bold text-slate-700">{label}</td>
+        <td className="p-2 border border-slate-300">{eye?.sph || '—'}</td>
+        <td className="p-2 border border-slate-300">{eye?.cyl || '—'}</td>
+        <td className="p-2 border border-slate-300">{eye?.axis || '—'}</td>
+        <td className="p-2 border border-slate-300">{eye?.readingAdd || '—'}</td>
+        <td className="p-2 border border-slate-300">{eye?.intermediateAdd || '—'}</td>
+        <td className="p-2 border border-slate-300">{eye?.hPrism ? `${eye.hPrism}${eye.hBase ? ` ${eye.hBase}` : ''}` : '—'}</td>
+        <td className="p-2 border border-slate-300">{eye?.vPrism ? `${eye.vPrism}${eye.vBase ? ` ${eye.vBase}` : ''}` : '—'}</td>
+        <td className="p-2 border border-slate-300 text-center">{eye?.balance ? '✓' : ''}</td>
+        <td className="p-2 border border-slate-300">{eye?.va || '—'}</td>
+      </tr>
+    );
+
+    return (
+      <div className="p-8 text-slate-800" style={{ fontFamily: 'Arial, sans-serif' }}>
+        <div className="flex justify-between items-start border-b-4 pb-4 mb-6" style={{ borderColor: '#3F9185' }}>
+          <img src="/logo.png" alt="The Eye Centre" className="h-14 w-auto" />
+          <div className="text-right text-xs text-slate-500 font-medium leading-relaxed">
+            <p className="font-black text-slate-800 text-sm">The Eye Centre</p>
+            <p>56 High Street, Leicester LE1 5YN</p>
+            <p>0116 253 2788</p>
+          </div>
+        </div>
+
+        <h1 className="text-xl font-black text-center mb-6 uppercase tracking-wide" style={{ color: '#3F9185' }}>Spectacle Prescription</h1>
+
+        <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
+          <div>
+            <p><span className="font-bold text-slate-500">Patient:</span> {rx.patientName}</p>
+            {patientDob && <p><span className="font-bold text-slate-500">Date of Birth:</span> {new Date(patientDob).toLocaleDateString('en-GB')}</p>}
+          </div>
+          <div className="text-right">
+            <p><span className="font-bold text-slate-500">Date Issued:</span> {rx.dateIssued ? new Date(rx.dateIssued).toLocaleDateString('en-GB') : '—'}</p>
+            <p><span className="font-bold text-slate-500">Expiry Date:</span> {rx.dateExpiry ? new Date(rx.dateExpiry).toLocaleDateString('en-GB') : '—'}</p>
+          </div>
+        </div>
+
+        <table className="w-full border-collapse text-xs mb-6">
+          <thead>
+            <tr style={{ backgroundColor: '#f0fdfa' }}>
+              <th className="p-2 border border-slate-300 text-left">Eye</th>
+              <th className="p-2 border border-slate-300 text-left">Sph</th>
+              <th className="p-2 border border-slate-300 text-left">Cyl</th>
+              <th className="p-2 border border-slate-300 text-left">Axis</th>
+              <th className="p-2 border border-slate-300 text-left">Reading Add</th>
+              <th className="p-2 border border-slate-300 text-left">Intermediate Add</th>
+              <th className="p-2 border border-slate-300 text-left">H Prism/Base</th>
+              <th className="p-2 border border-slate-300 text-left">V Prism/Base</th>
+              <th className="p-2 border border-slate-300 text-left">Balance</th>
+              <th className="p-2 border border-slate-300 text-left">VA</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rx.sameBothEyes ? eyeRow('R & L', rx.right) : (
+              <>
+                {eyeRow('R', rx.right)}
+                {eyeRow('L', rx.left)}
+              </>
+            )}
+          </tbody>
+        </table>
+
+        <p className="text-sm mb-6"><span className="font-bold text-slate-500">VA Binocular:</span> {rx.vaBinocular || '—'}</p>
+
+        {rx.notes && (
+          <div className="mb-6 text-sm">
+            <p className="font-bold text-slate-500">Notes:</p>
+            <p className="whitespace-pre-wrap">{rx.notes}</p>
+          </div>
+        )}
+
+        <div className="flex justify-between items-end pt-6 border-t border-slate-200">
+          <div className="text-xs text-slate-500">
+            {rx.type === 'The Eye Centre' ? (
+              <>
+                {rx.optometristSignature && <img src={rx.optometristSignature} alt="Signature" className="h-12 mb-1" />}
+                <p className="font-bold text-slate-700">{rx.optometristName}</p>
+                <p>GOC {rx.optometristGoc}</p>
+              </>
+            ) : (
+              <p className="font-bold text-slate-700">External prescription{rx.externalSource ? ` — ${rx.externalSource}` : ''}</p>
+            )}
+          </div>
+          <span className={`px-3 py-1.5 rounded text-xs font-black uppercase tracking-wider border ${RX_STATUS_STYLES[rx.rxStatus as RxStatus]}`}>{rx.rxStatus}</span>
+        </div>
+      </div>
+    );
+  };
+
 
   const toMins = (t: string) => {
     const [h, m] = t.split(':').map(Number);
@@ -3533,6 +4031,21 @@ export default function AdminDashboard() {
         .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
     : [];
 
+  // Prescriptions are only ever matched by patientId — unlike orders/recalls,
+  // a prescription genuinely doesn't mean anything without a real CRM link
+  // (see handleSaveRx), so there's no phone/email fallback match needed here.
+  const activePatientPrescriptions = selectedChatPatient
+    ? prescriptions
+        .filter(rx => rx.patientId === selectedChatPatient.id)
+        .sort((a, b) => new Date(b.dateIssued || 0).getTime() - new Date(a.dateIssued || 0).getTime())
+    : [];
+
+  const dispensingRxPrescriptions = selectedPatientForRx
+    ? prescriptions
+        .filter(rx => rx.patientId === selectedPatientForRx.id)
+        .sort((a, b) => new Date(b.dateIssued || 0).getTime() - new Date(a.dateIssued || 0).getTime())
+    : [];
+
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(manualMsgData.email);
   const isSmsValid = manualMsgData.phone.length >= 10 && manualMsgData.body.trim().length > 0;
   const isManualValid = manualMsgType === 'SMS' 
@@ -4049,6 +4562,12 @@ export default function AdminDashboard() {
               >
                 Sight Test Dispenses Tracking
               </button>
+              <button 
+                onClick={() => setDispensingTab('prescriptions')} 
+                className={`pb-2 px-2 font-black text-sm transition-all border-b-2 ${dispensingTab === 'prescriptions' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              >
+                Patient Prescriptions
+              </button>
             </div>
 
             {dispensingTab === 'orders' && renderOrdersTab()}
@@ -4159,6 +4678,9 @@ export default function AdminDashboard() {
                               <button onClick={() => openNewOrderModal(app)} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors shadow-sm inline-flex items-center gap-1.5">
                                 <ShoppingBag size={12}/> Create Order
                               </button>
+                              <button onClick={() => openNewRxModal({ id: app.patientId || null, name: app.patientName }, app.id)} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm inline-flex items-center gap-1.5">
+                                <FileText size={12}/> Add Prescription
+                              </button>
                               {app.voucherSent ? (
                                 <span className="px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700">Voucher Sent</span>
                               ) : canSendVoucher ? (
@@ -4174,6 +4696,46 @@ export default function AdminDashboard() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )}
+
+            {dispensingTab === 'prescriptions' && (
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+                <div className="max-w-md mb-6">
+                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Find a Patient</label>
+                  <input
+                    type="text" placeholder="Search by name, email or phone..."
+                    className="w-full p-3 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold"
+                    value={rxSearchQuery}
+                    onChange={e => { setRxSearchQuery(e.target.value); performCloudSearch(e.target.value); }}
+                  />
+                  {rxSearchQuery && !selectedPatientForRx && (
+                    <div className="mt-2 max-h-40 overflow-y-auto bg-white rounded-lg border border-slate-200 shadow-sm">
+                      {cloudSearchResults.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => { setSelectedPatientForRx(p); setRxSearchQuery(''); }}
+                          className="w-full text-left p-3 text-sm hover:bg-slate-50 font-medium border-b border-slate-50 last:border-0"
+                        >
+                          {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                        </button>
+                      ))}
+                      {cloudSearchResults.length === 0 && <p className="p-3 text-xs text-slate-400 italic">No matches.</p>}
+                    </div>
+                  )}
+                </div>
+
+                {selectedPatientForRx ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-4 bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+                      <span className="text-sm font-bold text-indigo-900 flex items-center gap-2"><User size={14}/> {selectedPatientForRx.patientName}</span>
+                      <button onClick={() => setSelectedPatientForRx(null)} className="text-xs text-red-500 font-bold hover:underline">Change Patient</button>
+                    </div>
+                    {renderPrescriptionList(dispensingRxPrescriptions, { id: selectedPatientForRx.id, name: selectedPatientForRx.patientName })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400 italic text-center py-10">Search for a patient above to view or add their prescriptions.</p>
+                )}
               </div>
             )}
           </div>
@@ -4345,6 +4907,7 @@ export default function AdminDashboard() {
                        <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Communications</button>
                        <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointment Ledger</button>
                        <button onClick={() => setCrmTab('orders')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'orders' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><ShoppingBag size={14}/> Dispense Orders</button>
+                       <button onClick={() => setCrmTab('prescriptions')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'prescriptions' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText size={14}/> Prescriptions</button>
                        <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
                        <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Master Profile</button>
                     </div>
@@ -4768,6 +5331,16 @@ export default function AdminDashboard() {
                     </div>
                   )}
 
+                  {/* TAB: PER-PATIENT PRESCRIPTIONS */}
+                  {crmTab === 'prescriptions' && (
+                    <div className="flex-1 bg-[#f8fafc] p-6 overflow-y-auto">
+                      <div className="max-w-3xl mx-auto">
+                        <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2 mb-4"><FileText size={16}/> Prescriptions</h4>
+                        {renderPrescriptionList(activePatientPrescriptions, selectedChatPatient ? { id: selectedChatPatient.id, name: selectedChatPatient.patientName } : null)}
+                      </div>
+                    </div>
+                  )}
+
                   {/* TAB: PER-PATIENT RECALLS */}
                   {crmTab === 'recalls' && (
                     <div className="flex-1 bg-[#f8fafc] p-6 overflow-y-auto">
@@ -5091,6 +5664,49 @@ export default function AdminDashboard() {
                   )}
                 </div>
               </div>
+
+              {activeClinic === 'eyeCare' && (
+                <div className="space-y-4 md:col-span-2">
+                  <h3 className="font-bold text-[#3F9185] flex items-center gap-2"><UserCog size={18}/> Optometrist</h3>
+                  <p className="text-xs font-medium text-slate-500 -mt-2">Used on "The Eye Centre" prescriptions — snapshotted onto each prescription at the time it's saved, so changing this later doesn't alter prescriptions already issued.</p>
+                  <div className="grid grid-cols-2 gap-4 max-w-xl">
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Name</label>
+                      <input type="text" value={config.optometrist.name} onChange={e => setConfig({...config, optometrist: {...config.optometrist, name: e.target.value}})} className="w-full mt-1 p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">GOC Number</label>
+                      <input type="text" value={config.optometrist.gocNumber} onChange={e => setConfig({...config, optometrist: {...config.optometrist, gocNumber: e.target.value}})} className="w-full mt-1 p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                    </div>
+                  </div>
+
+                  <div className="max-w-xl">
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Signature</label>
+                    {config.optometrist.signatureDataUrl && (
+                      <div className="mt-2 mb-3">
+                        <p className="text-[10px] font-bold text-slate-400 mb-1">Current signature (used on prescriptions):</p>
+                        <img src={config.optometrist.signatureDataUrl} alt="Current signature" className="h-16 border border-slate-200 rounded-lg bg-white p-2" />
+                      </div>
+                    )}
+                    <p className="text-[10px] font-bold text-slate-400 mb-1">Draw a new signature below to replace it:</p>
+                    <canvas
+                      ref={signatureCanvasRef}
+                      width={400}
+                      height={120}
+                      onPointerDown={startSignatureDraw}
+                      onPointerMove={drawSignature}
+                      onPointerUp={stopSignatureDraw}
+                      onPointerLeave={stopSignatureDraw}
+                      className="border-2 border-dashed border-slate-300 rounded-xl bg-white touch-none cursor-crosshair"
+                      style={{ width: '400px', height: '120px' }}
+                    />
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={clearSignaturePad} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl font-bold text-xs hover:bg-slate-50 transition-colors">Clear</button>
+                      <button onClick={saveSignature} className="px-4 py-2 bg-[#3F9185] text-white rounded-xl font-bold text-xs hover:opacity-90 transition-all">Save Signature</button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {activeClinic === 'dispensing' && (
                 <div className="space-y-4 md:col-span-2">
@@ -5934,6 +6550,85 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* --- NEW/EDIT PRESCRIPTION MODAL --- */}
+      {isNewRxModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-xl font-black text-slate-800">Add Prescription</h2>
+                {rxModalPatient && <p className="text-xs font-bold text-slate-400 mt-0.5">For {rxModalPatient.name}</p>}
+              </div>
+              <button onClick={() => { setIsNewRxModalOpen(false); resetNewRxForm(); }} className="text-slate-400 hover:text-red-500 transition-colors"><X size={24} /></button>
+            </div>
+
+            {!rxModalPatient?.id && (
+              <div className="mb-6 p-4 bg-amber-50 rounded-xl border border-amber-100">
+                <label className="text-[10px] font-black uppercase text-amber-600 ml-1">Link to a CRM Patient Before Saving</label>
+                <p className="text-xs text-amber-700 font-medium mt-1 mb-2">This appointment isn't linked to a CRM patient record yet — search and select one below.</p>
+                <input
+                  type="text" placeholder="Search by name, email or phone..."
+                  className="w-full p-3 rounded-xl bg-white border border-amber-200 outline-none focus:border-amber-400 text-sm font-bold"
+                  value={rxSearchQuery}
+                  onChange={e => { setRxSearchQuery(e.target.value); performCloudSearch(e.target.value); }}
+                />
+                {rxSearchQuery && (
+                  <div className="mt-2 max-h-32 overflow-y-auto bg-white rounded-lg border border-amber-100 shadow-sm">
+                    {cloudSearchResults.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => { setRxModalPatient({ id: p.id, name: p.patientName }); setRxSearchQuery(''); }}
+                        className="w-full text-left p-2 text-sm hover:bg-amber-50 font-medium"
+                      >
+                        {p.patientName} - <span className="text-slate-500 text-xs">{p.phone} {p.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {renderRxFormBody()}
+
+            <button
+              onClick={handleSaveRx}
+              disabled={isSavingRx || !newRx.dateIssued}
+              className="w-full mt-6 py-4 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all bg-[#3F9185] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSavingRx ? 'Saving…' : 'Save Prescription'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- PRESCRIPTION PRINT VIEW --- */}
+      {/* Rendered even when there's no on-screen modal open around it -- the
+          @media print rules in index.css hide everything on the page except
+          #rx-print-area, so this is invisible on screen until window.print()
+          fires (see the printRx useEffect above), at which point it's the
+          only thing that shows up in the print/PDF output. */}
+      {printRx && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[150] p-4 no-print">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="flex justify-between items-center p-4 border-b border-slate-100">
+              <span className="font-black text-slate-800">Prescription Preview</span>
+              <div className="flex gap-2">
+                <button onClick={() => window.print()} className="px-4 py-2 bg-[#3F9185] text-white rounded-xl font-bold text-xs hover:opacity-90 transition-all flex items-center gap-1.5">
+                  <FileText size={14}/> Print
+                </button>
+                <button onClick={() => setPrintRx(null)} className="text-slate-400 hover:text-red-500 transition-colors p-2"><X size={20} /></button>
+              </div>
+            </div>
+            <div className="p-2">
+              {renderRxPrintContent(printRx)}
+            </div>
+          </div>
+        </div>
+      )}
+      <div id="rx-print-area" className="hidden">
+        {printRx && renderRxPrintContent(printRx)}
+      </div>
 
       {/* --- KLARNA/CLEARPAY QR CODE MODAL --- */}
       {qrModal && (

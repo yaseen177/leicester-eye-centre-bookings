@@ -58,3 +58,25 @@ body {
     border-radius: 1.5rem !important;
   }
 }
+
+/* Prescription printing: hide the whole app chrome, show only the
+   #rx-print-area content. Anything else on the page (modals, sidebars,
+   the app shell) gets suppressed for the duration of the print. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #rx-print-area, #rx-print-area * {
+    visibility: visible;
+  }
+  #rx-print-area {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
