@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw } from 'lucide-react';
 import QRCode from 'qrcode';
+import AddressFinder, { blankAddress } from '../components/AddressFinder';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where, arrayUnion } from 'firebase/firestore';
@@ -397,7 +398,7 @@ export default function AdminDashboard() {
   
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [newBooking, setNewBooking] = useState({
-    firstName: '', lastName: '', email: '', phone: '', dob: '', service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+    firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(), service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
   });
 
   const defaultEyeCareHours = { 
@@ -440,7 +441,7 @@ export default function AdminDashboard() {
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
   const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'orders' | 'prescriptions' | 'profile' | 'recalls'>('chat');
-  const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '' });
+  const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '', address: blankAddress() });
   
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
   const [outboundSMS, setOutboundSMS] = useState('');
@@ -834,7 +835,8 @@ export default function AdminDashboard() {
         patientName: selectedChatPatient.patientName || '',
         email: selectedChatPatient.email || '',
         phone: selectedChatPatient.phone || '',
-        dob: selectedChatPatient.dob || ''
+        dob: selectedChatPatient.dob || '',
+        address: selectedChatPatient.address?.verified ? selectedChatPatient.address : blankAddress()
       });
       setCrmTab('chat'); 
       setReplyingToMessage(null); 
@@ -1070,6 +1072,7 @@ export default function AdminDashboard() {
           email: editProfileData.email,
           phone: editProfileData.phone,
           dob: editProfileData.dob,
+          address: editProfileData.address,
           createdAt: serverTimestamp()
         });
         currentMasterId = newPatientRef.id;
@@ -1078,7 +1081,8 @@ export default function AdminDashboard() {
           patientName: editProfileData.patientName,
           email: editProfileData.email,
           phone: editProfileData.phone,
-          dob: editProfileData.dob
+          dob: editProfileData.dob,
+          address: editProfileData.address
         }, { merge: true });
       }
 
@@ -1088,6 +1092,7 @@ export default function AdminDashboard() {
           email: editProfileData.email,
           phone: editProfileData.phone,
           dob: editProfileData.dob,
+          address: editProfileData.address,
           patientId: currentMasterId
         }, { merge: true });
       }
@@ -2846,7 +2851,9 @@ export default function AdminDashboard() {
   // #rx-print-area — see index.css for how that split actually shows only
   // this content when window.print() fires.
   const renderRxPrintContent = (rx: any) => {
-    const patientDob = crmPatients.find((p: any) => p.id === rx.patientId)?.dob;
+    const rxPatient = crmPatients.find((p: any) => p.id === rx.patientId);
+    const patientDob = rxPatient?.dob;
+    const patientAddress = rxPatient?.address?.verified ? rxPatient.address : null;
     const eyeRow = (label: string, eye: any) => (
       <tr>
         <td className="p-2 border border-slate-300 font-bold text-slate-700">{label}</td>
@@ -2879,6 +2886,9 @@ export default function AdminDashboard() {
           <div>
             <p><span className="font-bold text-slate-500">Patient:</span> {rx.patientName}</p>
             {patientDob && <p><span className="font-bold text-slate-500">Date of Birth:</span> {new Date(patientDob).toLocaleDateString('en-GB')}</p>}
+            {patientAddress && (
+              <p><span className="font-bold text-slate-500">Address:</span> {[patientAddress.line1, patientAddress.line2, patientAddress.town, patientAddress.postcode].filter(Boolean).join(', ')}</p>
+            )}
           </div>
           <div className="text-right">
             <p><span className="font-bold text-slate-500">Date Issued:</span> {rx.dateIssued ? new Date(rx.dateIssued).toLocaleDateString('en-GB') : '—'}</p>
@@ -3207,6 +3217,7 @@ export default function AdminDashboard() {
         email: newBooking.email,
         phone: formattedPhone,
         dob: newBooking.dob,
+        address: newBooking.address,
         appointmentType: category,
         appointmentDate: selectedDate,
         appointmentTime: newBooking.time,
@@ -3225,7 +3236,8 @@ export default function AdminDashboard() {
             patientName: `${newBooking.firstName} ${newBooking.lastName}`,
             email: newBooking.email,
             phone: formattedPhone,
-            dob: newBooking.dob
+            dob: newBooking.dob,
+            address: newBooking.address
          }, { merge: true });
       }
 
@@ -3287,7 +3299,7 @@ export default function AdminDashboard() {
       setBookingSearchQuery('');
       setUpdateCrmOnBook(false);
       setNewBooking({
-        firstName: '', lastName: '', email: '', phone: '', dob: '', service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+        firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(), service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
       });
       alert("Appointment successfully booked and linked!");
     } catch (err) {
@@ -3884,7 +3896,7 @@ export default function AdminDashboard() {
                   onClick={() => {
                     if (!isLunchSlot && !isDateClosed()) {
                       setNewBooking({
-                        firstName: '', lastName: '', email: '', phone: '', dob: '', 
+                        firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(),
                         service: activeClinic === 'dispensing' ? 'Dispensing' : 'Eye Check', time: timeStr, 
                         inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
                       });
@@ -4897,6 +4909,9 @@ export default function AdminDashboard() {
                             {selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-') && (
                                <span className="text-[10px] font-black bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md uppercase tracking-wider">CRM Master</span>
                             )}
+                            {!selectedChatPatient.address?.verified && (
+                               <button onClick={() => setCrmTab('profile')} className="text-[10px] font-black bg-amber-100 text-amber-700 px-2 py-1 rounded-md uppercase tracking-wider hover:bg-amber-200 transition-colors">No Address on File</button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -5448,6 +5463,13 @@ export default function AdminDashboard() {
                                  onChange={e => setEditProfileData({...editProfileData, email: e.target.value.toLowerCase()})}
                                  className="w-full p-4 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-800"
                                />
+                             </div>
+
+                             <div>
+                               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Address</label>
+                               <div className="mt-1">
+                                 <AddressFinder value={editProfileData.address} onChange={addr => setEditProfileData({...editProfileData, address: addr})} />
+                               </div>
                              </div>
                            </div>
                            
@@ -7005,7 +7027,8 @@ export default function AdminDashboard() {
                              lastName: names.slice(1).join(' ') || '',
                              email: p.email || '',
                              phone: p.phone || '',
-                             dob: p.dob || ''
+                             dob: p.dob || '',
+                             address: p.address?.verified ? p.address : blankAddress()
                            }));
                            setBookingSearchQuery('');
                          }}
@@ -7064,6 +7087,13 @@ export default function AdminDashboard() {
               <div>
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
                 <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.dob} onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Address</label>
+                <div className="mt-1">
+                  <AddressFinder value={newBooking.address} onChange={addr => setNewBooking({...newBooking, address: addr})} />
+                </div>
               </div>
               
               <select className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={newBooking.service} onChange={e => setNewBooking({...newBooking, service: e.target.value})}>
@@ -7135,7 +7165,7 @@ export default function AdminDashboard() {
 
             <div className="flex gap-3 mt-8">
               <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
-              <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+              <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || !newBooking.address.verified || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
                 Confirm Booking
               </button>
             </div>
