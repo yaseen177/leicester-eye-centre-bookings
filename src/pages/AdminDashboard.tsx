@@ -1313,7 +1313,7 @@ export default function AdminDashboard() {
         const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            type: "send_email", to_email: order.email, patient_name: firstName, templateId: 11,
+            type: "send_email", to_email: order.email, patient_name: firstName, templateId: 13, // "Order Ready" in Brevo
             params: { patient_name: firstName, order_ref: order.id.slice(0, 8).toUpperCase() }
           })
         });
@@ -1446,7 +1446,7 @@ export default function AdminDashboard() {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            type: "send_email", to_email: order.email, patient_name: firstName, templateId: 12,
+            type: "send_email", to_email: order.email, patient_name: firstName, templateId: 14, // "Klarna/Clearpay Payment Link" in Brevo
             params: { patient_name: firstName, payment_link: url, amount: balance.toFixed(2) }
           })
         });
@@ -1682,7 +1682,7 @@ export default function AdminDashboard() {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            type: "send_email", to_email: cl.email, patient_name: firstName, templateId: 14,
+            type: "send_email", to_email: cl.email, patient_name: firstName, templateId: 16, // "CL Direct Debit Mandate Link" in Brevo
             params: { patient_name: firstName, mandate_link: url, amount: Number(cl.monthlyAmount).toFixed(2), lens_type: cl.lensType }
           })
         });
