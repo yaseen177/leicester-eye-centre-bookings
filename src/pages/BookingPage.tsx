@@ -3,6 +3,7 @@ import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders } from '../lib/reminders';
 import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
+import AddressFinder, { blankAddress } from '../components/AddressFinder';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
@@ -45,6 +46,7 @@ export default function BookingPage() {
     email: '',
     phone: '',
     dob: '',
+    address: blankAddress(),
     inFullTimeEducation: false,
     onBenefits: false,
     isDiabetic: false,
@@ -347,6 +349,7 @@ export default function BookingPage() {
         email: booking.email.toLowerCase(),
         phone: formattedPhone, 
         dob: booking.dob,
+        address: booking.address,
         appointmentType: getCategory(),
         appointmentDate: booking.date,
         appointmentTime: booking.time,
@@ -532,6 +535,13 @@ export default function BookingPage() {
             <div>
               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
               <input type="date" className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" onChange={e => setBooking({...booking, dob: e.target.value})} />
+            </div>
+
+            <div>
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Address (Optional)</label>
+              <div className="mt-1">
+                <AddressFinder value={booking.address} onChange={addr => setBooking({...booking, address: addr})} />
+              </div>
             </div>
             
             {booking.service === 'Eye Check' && booking.dob && (

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw } from 'lucide-react';
 import QRCode from 'qrcode';
-import AddressFinder, { blankAddress } from '../components/AddressFinder';
+import AddressFinder, { blankAddress, type AddressValue } from '../components/AddressFinder';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where, arrayUnion } from 'firebase/firestore';
@@ -499,6 +499,14 @@ export default function AdminDashboard() {
   const [editRecallForm, setEditRecallForm] = useState({ patientId: null as string | null, patientName: '', email: '', phone: '', recallType: 'Spectacles', intervalMonths: 12, nextRecallDate: '', status: 'Active' });
   const [newRecallSearchQuery, setNewRecallSearchQuery] = useState('');
   const [isSavingEditRecall, setIsSavingEditRecall] = useState(false);
+
+  // "Complete Visit" gate: staff can't finish an Eye Check / Contact Lens
+  // Check appointment until prescription (Eye Check only), recall, and a
+  // verified address are all in place. null = gate closed.
+  const [completionGateAppt, setCompletionGateAppt] = useState<any>(null);
+  const [recallSetInGate, setRecallSetInGate] = useState(false);
+  const [isConfirmingCompletion, setIsConfirmingCompletion] = useState(false);
+
 
   const RECALL_TYPE_LABEL: Record<string, string> = {
     Spectacles: 'Spectacles',
@@ -3394,6 +3402,20 @@ export default function AdminDashboard() {
       if (appt) await confirmAppointmentAdmin(appt);
       return;
     }
+
+    // Completing an Eye Check / Contact Lens Check visit now requires
+    // prescription (Eye Check only), recall, and a verified address to all
+    // be in place first — opens the gate instead of completing immediately.
+    // Dispensing appointments (never had recall logic anyway) and
+    // already-complete appointments skip straight to the normal path below.
+    if (newStatus === 'Visit Complete') {
+      const appt = appointments.find(a => a.id === id);
+      if (appt && appt.status !== 'Visit Complete' && !isDispensingAppointment(appt.appointmentType)) {
+        openCompletionGate(id, appt);
+        return;
+      }
+    }
+
     try {
       const appRef = doc(db, "appointments", id);
       const appSnap = await getDoc(appRef);
@@ -3417,27 +3439,7 @@ export default function AdminDashboard() {
         
         if (newStatus === 'Visit Complete' && appData.status !== 'Visit Complete') {
            updatePayload.completedAt = serverTimestamp();
-
-           await fetch("https://twilio.yaseen-hussain18.workers.dev/schedule-review", {
-             method: "POST",
-             headers: { "Content-Type": "application/json" },
-             body: JSON.stringify({
-               appointmentId: id,
-               email: appData.email || null,
-               phone: appData.phone || null,
-               patientName: appData.patientName ? appData.patientName.split(' ')[0] : 'there',
-               reviewLink: "https://www.google.com/search?sca_esv=05e9b9d0eac2d55a&rlz=1CDGOYI_enGB1088GB1088&hl=en-GB&sxsrf=APpeQntpMKdzO9SDte-MCG_ZRfLgKl4KBg:1783540324328&q=the+eye+centre+leicester+reviews&uds=AJ5uw1_dDM0QRrBvstcLgcNOdWNUTp49nD5ZGFiPqYDS57Mh_l8Marhi0sbANwKRftiz0PBKSX-G1_gD37-l5blZLXw-Lfl2V7KKV3AmFKGhSY3GtXj9pR5m3j379YBlpeVlCwUXF9lfE4X6SfSiET0xdcb2zIe_M_004dt2LjxRIYk5dtQCkiepolzg9PHdSY6aI4K8LCLiGDkKfrlXC0rBgyczRupHZZGDnxqI_YZ3xZj6-SRBdsEveU997FyjhMlDIbjiG5hDyaJLoTB_wSyYcBoYUSDsqBy4Y-Yegpj7bfG1UBA3fzPjecCJqulnzmXunPVGoPhQQzwAagrdiYlOID7QL7yRshnS7gre7Bc5bcxfOseQnHdKdNdgdcHm3HkE02RRp8v3UV8P-cY51abu6w2gGOk45ah_0Xw5r5l9ILJW-H-abt4EDxECuk7pRBmd9eJqTqcL7xPUFz3QNGgAK8dmdj97E7kF50BOlsNyFr7HMS0QfELq2FNVrJmmAnJc0R_-C8rRCeNj70pyBAdZH91cK-uSwpqznKLqliOdJXiS8d_woBOGQIH5f9lcf6iANpkzJXx4&si=APenkKn5T4YN59srr511wD6k6Pufj9DEzRUvB1XJSwUeeT5afuk9OXJStp1chFik7qFY28F84v-Qc5HlqCAcfm-YiEGKKNJp2OfWCZznsUQXwKBPT6_iGSbg2GIuWRPYBjmuE1XRqgT6YCV7v6UunSV76WzembaWMg%3D%3D&sa=X&ved=2ahUKEwjghuW77cOVAxU-S_EDHXuHJrQQk8gLegQIGxAB&ictx=1"
-             })
-           }).catch(err => console.error("Review scheduling failed:", err));
-
-           // Recall system: stop any Active/Booked recall this visit satisfies, and
-           // (for Eye Check / Contact Lens Check visits, not Dispensing) prompt staff
-           // to set the next recall interval. ContactLensOrder recalls aren't touched
-           // here - they're satisfied by reordering, not a check-up visit, and are
-           // managed manually from the Recalls tab.
-           if (!isDispensingAppointment(appData.appointmentType)) {
-             stopMatchingRecallsAndPromptNew(id, appData).catch(err => console.error("Recall stop/prompt failed:", err));
-           }
+           await fireReviewSchedule(id, appData);
         }
       }
 
@@ -3448,9 +3450,42 @@ export default function AdminDashboard() {
     }
   };
 
+  // Extracted from the old direct-completion path so both the Dispensing
+  // (ungated) and gated completion flows fire the same review-request webhook.
+  const fireReviewSchedule = async (id: string, appData: any) => {
+    await fetch("https://twilio.yaseen-hussain18.workers.dev/schedule-review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appointmentId: id,
+        email: appData.email || null,
+        phone: appData.phone || null,
+        patientName: appData.patientName ? appData.patientName.split(' ')[0] : 'there',
+        reviewLink: "https://www.google.com/search?sca_esv=05e9b9d0eac2d55a&rlz=1CDGOYI_enGB1088GB1088&hl=en-GB&sxsrf=APpeQntpMKdzO9SDte-MCG_ZRfLgKl4KBg:1783540324328&q=the+eye+centre+leicester+reviews&uds=AJ5uw1_dDM0QRrBvstcLgcNOdWNUTp49nD5ZGFiPqYDS57Mh_l8Marhi0sbANwKRftiz0PBKSX-G1_gD37-l5blZLXw-Lfl2V7KKV3AmFKGhSY3GtXj9pR5m3j379YBlpeVlCwUXF9lfE4X6SfSiET0xdcb2zIe_M_004dt2LjxRIYk5dtQCkiepolzg9PHdSY6aI4K8LCLiGDkKfrlXC0rBgyczRupHZZGDnxqI_YZ3xZj6-SRBdsEveU997FyjhMlDIbjiG5hDyaJLoTB_wSyYcBoYUSDsqBy4Y-Yegpj7bfG1UBA3fzPjecCJqulnzmXunPVGoPhQQzwAagrdiYlOID7QL7yRshnS7gre7Bc5bcxfOseQnHdKdNdgdcHm3HkE02RRp8v3UV8P-cY51abu6w2gGOk45ah_0Xw5r5l9ILJW-H-abt4EDxECuk7pRBmd9eJqTqcL7xPUFz3QNGgAK8dmdj97E7kF50BOlsNyFr7HMS0QfELq2FNVrJmmAnJc0R_-C8rRCeNj70pyBAdZH91cK-uSwpqznKLqliOdJXiS8d_woBOGQIH5f9lcf6iANpkzJXx4&si=APenkKn5T4YN59srr511wD6k6Pufj9DEzRUvB1XJSwUeeT5afuk9OXJStp1chFik7qFY28F84v-Qc5HlqCAcfm-YiEGKKNJp2OfWCZznsUQXwKBPT6_iGSbg2GIuWRPYBjmuE1XRqgT6YCV7v6UunSV76WzembaWMg%3D%3D&sa=X&ved=2ahUKEwjghuW77cOVAxU-S_EDHXuHJrQQk8gLegQIGxAB&ictx=1"
+      })
+    }).catch(err => console.error("Review scheduling failed:", err));
+  };
+
+  // Opens the "Complete Visit" gate. Fetches a fresh copy of the appointment
+  // (matching the old pattern) and immediately stops any matching recall,
+  // same timing as the old flow — just moved earlier, before completion
+  // rather than after, since setting the new recall is now a precondition.
+  const openCompletionGate = async (id: string, apptFromList: any) => {
+    try {
+      const appSnap = await getDoc(doc(db, "appointments", id));
+      const appData = appSnap.exists() ? { id, ...appSnap.data() } : apptFromList;
+      setCompletionGateAppt(appData);
+      setRecallSetInGate(false);
+      await stopMatchingRecallsAndPromptNew(id, appData);
+    } catch (err) {
+      console.error("Failed to open completion gate:", err);
+      alert("Couldn't load this appointment's details — try again.");
+    }
+  };
+
   // Called when an appointment is marked 'Visit Complete'. Stops any matching
   // Active/Booked recall (Spectacles for eye checks, Contact Lenses for CL checks)
-  // and opens the "Set New Recall" prompt so staff can set the next interval.
+  // and populates pendingNewRecallFor for the gate's recall panel.
   const stopMatchingRecallsAndPromptNew = async (appointmentId: string, appData: any) => {
     const inferredType = (appData.appointmentType || '').includes('Contact') ? 'ContactLenses' : 'Spectacles';
 
@@ -3486,8 +3521,11 @@ export default function AdminDashboard() {
     setNewRecallInterval(inferredType === 'ContactLenses' ? 12 : 24);
   };
 
-  // Staff confirm the interval in the "Set New Recall" prompt -> creates the next
-  // Active recall doc for this patient/type, dated from the visit that just completed.
+  // Staff confirm the interval in the "Complete Visit" gate's recall panel ->
+  // creates the next Active recall doc for this patient/type, dated from the
+  // visit that's about to complete. Leaves pendingNewRecallFor populated
+  // (unlike its old standalone-popup behaviour) so the gate can keep showing
+  // which recall type/interval was set.
   const handleConfirmNewRecall = async () => {
     if (!pendingNewRecallFor) return;
     setIsSavingNewRecall(true);
@@ -3523,12 +3561,86 @@ export default function AdminDashboard() {
       // Clear needsNewRecall on whichever recall(s) prompted this, if any are still flagged
       await clearNeedsNewRecallFor(pendingNewRecallFor.patientId, pendingNewRecallFor.phone, null, pendingNewRecallFor.recallType);
 
-      setPendingNewRecallFor(null);
+      setRecallSetInGate(true);
     } catch (err) {
       alert("Failed to save the new recall.");
       console.error(err);
     } finally {
       setIsSavingNewRecall(false);
+    }
+  };
+
+  // Address for the gate: prefers whatever's already on the appointment
+  // itself, falling back to the matched/linked CRM patient's record — a
+  // walk-in with no CRM link yet can still have entered one directly on
+  // the appointment (e.g. via the admin New Booking form).
+  const getGateAddressValue = (appt: any): AddressValue | null => {
+    if (appt?.address?.verified) return appt.address;
+    const patient = crmPatients.find((p: any) =>
+      (appt?.patientId && p.id === appt.patientId) ||
+      (appt?.phone && p.phone === appt.phone) ||
+      (appt?.email && p.email === appt.email)
+    );
+    return patient?.address?.verified ? patient.address : null;
+  };
+
+  // Saves a newly-verified address onto the gate appointment, and onto the
+  // matched CRM patient too if there is one, so it's not just stuck on this
+  // one appointment record.
+  const saveGateAddress = async (addr: AddressValue) => {
+    if (!completionGateAppt) return;
+    try {
+      await setDoc(doc(db, "appointments", completionGateAppt.id), { address: addr }, { merge: true });
+      const patient = crmPatients.find((p: any) =>
+        (completionGateAppt.patientId && p.id === completionGateAppt.patientId) ||
+        (completionGateAppt.phone && p.phone === completionGateAppt.phone) ||
+        (completionGateAppt.email && p.email === completionGateAppt.email)
+      );
+      if (patient) {
+        await setDoc(doc(db, "patients", patient.id), { address: addr }, { merge: true });
+      }
+      setCompletionGateAppt({ ...completionGateAppt, address: addr });
+    } catch (e) {
+      alert("Error saving address.");
+    }
+  };
+
+  // Whether this appointment type needs a prescription recorded before it
+  // can complete — Eye Checks only. Contact Lens Checks produce a CL
+  // prescription (base curve/diameter/brand), a different format this
+  // system doesn't record yet, so they're not gated on the spectacle Rx form.
+  const gateNeedsPrescription = (appt: any) => !(appt?.appointmentType || '').includes('Contact');
+
+  const isGateSatisfied = (appt: any) => {
+    if (!appt) return false;
+    const hasRx = !gateNeedsPrescription(appt) || prescriptions.some(rx => rx.appointmentId === appt.id);
+    const hasRecall = recallSetInGate;
+    const hasAddress = !!getGateAddressValue(appt);
+    return hasRx && hasRecall && hasAddress;
+  };
+
+  // The actual completion, held back until isGateSatisfied() is true —
+  // same Firestore writes (status, completedAt, review-request webhook)
+  // the old direct path did, just deferred until the three requirements
+  // are met instead of firing immediately on status selection.
+  const confirmCompletionFromGate = async () => {
+    if (!completionGateAppt || !isGateSatisfied(completionGateAppt)) return;
+    setIsConfirmingCompletion(true);
+    try {
+      await setDoc(doc(db, "appointments", completionGateAppt.id), {
+        status: 'Visit Complete',
+        completedAt: serverTimestamp()
+      }, { merge: true });
+      await fireReviewSchedule(completionGateAppt.id, completionGateAppt);
+
+      setCompletionGateAppt(null);
+      setPendingNewRecallFor(null);
+      setRecallSetInGate(false);
+    } catch (err) {
+      alert("Failed to complete the visit.");
+      console.error(err);
+    } finally {
+      setIsConfirmingCompletion(false);
     }
   };
 
@@ -6101,27 +6213,76 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* --- SET NEW RECALL PROMPT (after a Visit Complete) --- */}        {pendingNewRecallFor && (
+        {/* --- COMPLETE VISIT GATE --- */}
+        {/* Replaces the old standalone "Set Next Recall" popup. Staff can't
+            finish an Eye Check / Contact Lens Check visit until prescription
+            (Eye Check only), recall, and a verified address are all in
+            place — each row has its own inline way to satisfy it right here,
+            no need to leave the gate and come back. */}
+        {completionGateAppt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-white rounded-[2rem] shadow-2xl p-8 max-w-sm w-full">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-full bg-teal-50 flex items-center justify-center text-[#3F9185]"><Bell size={20} /></div>
-                <h3 className="text-lg font-black text-slate-800">Set Next Recall</h3>
+            <div className="bg-white rounded-[2rem] shadow-2xl p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-10 h-10 rounded-full bg-teal-50 flex items-center justify-center text-[#3F9185]"><CheckCircle2 size={20} /></div>
+                <h3 className="text-lg font-black text-slate-800">Complete {completionGateAppt.patientName}'s Visit</h3>
               </div>
-              <p className="text-sm text-slate-500 font-medium mb-6">
-                {pendingNewRecallFor.patientName}'s visit is complete. When should their next {pendingNewRecallFor.recallType === 'ContactLenses' ? 'contact lens check' : 'eye test'} recall be?
-              </p>
-              <div className="flex gap-2 mb-6">
-                {RECALL_INTERVAL_OPTIONS[pendingNewRecallFor.recallType].map((m) => (
-                  <button key={m} onClick={() => setNewRecallInterval(m)} className={`flex-1 py-3 rounded-xl font-black text-sm border transition-all ${newRecallInterval === m ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
-                    {m} Month{m !== 1 ? 's' : ''}
-                  </button>
-                ))}
+              <p className="text-sm text-slate-500 font-medium mb-6 ml-[52px]">These three need to be in place before this visit can be marked complete.</p>
+
+              <div className="space-y-4">
+                {gateNeedsPrescription(completionGateAppt) && (
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-black text-slate-700 flex items-center gap-2"><FileText size={16}/> Prescription</span>
+                      {prescriptions.some(rx => rx.appointmentId === completionGateAppt.id) ? (
+                        <span className="text-xs font-black text-green-600 flex items-center gap-1"><CheckCircle2 size={14}/> Recorded</span>
+                      ) : (
+                        <button onClick={() => openNewRxModal({ id: completionGateAppt.patientId || null, name: completionGateAppt.patientName }, completionGateAppt.id)} className="px-3 py-1.5 bg-[#3F9185] text-white rounded-lg text-xs font-bold hover:opacity-90 transition-all">
+                          Add Prescription
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-black text-slate-700 flex items-center gap-2"><Bell size={16}/> Next Recall</span>
+                    {recallSetInGate && <span className="text-xs font-black text-green-600 flex items-center gap-1"><CheckCircle2 size={14}/> Set</span>}
+                  </div>
+                  {!recallSetInGate && pendingNewRecallFor && (
+                    <>
+                      <p className="text-xs text-slate-500 font-medium mb-3">When should their next {pendingNewRecallFor.recallType === 'ContactLenses' ? 'contact lens check' : 'eye test'} recall be?</p>
+                      <div className="flex gap-2 mb-3">
+                        {RECALL_INTERVAL_OPTIONS[pendingNewRecallFor.recallType].map((m) => (
+                          <button key={m} onClick={() => setNewRecallInterval(m)} className={`flex-1 py-2.5 rounded-xl font-black text-xs border transition-all ${newRecallInterval === m ? 'bg-[#3F9185] text-white border-[#3F9185]' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
+                            {m} Month{m !== 1 ? 's' : ''}
+                          </button>
+                        ))}
+                      </div>
+                      <button onClick={handleConfirmNewRecall} disabled={isSavingNewRecall} className="w-full py-2.5 rounded-xl font-bold text-xs text-white bg-[#3F9185] hover:bg-teal-700 disabled:opacity-50">
+                        {isSavingNewRecall ? 'Saving…' : 'Set Recall'}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-black text-slate-700 flex items-center gap-2"><UserCog size={16}/> Address</span>
+                    {getGateAddressValue(completionGateAppt) && <span className="text-xs font-black text-green-600 flex items-center gap-1"><CheckCircle2 size={14}/> On File</span>}
+                  </div>
+                  {!getGateAddressValue(completionGateAppt) && (
+                    <AddressFinder value={completionGateAppt.address?.verified ? completionGateAppt.address : blankAddress()} onChange={saveGateAddress} />
+                  )}
+                </div>
               </div>
-              <div className="flex gap-3">
-                <button onClick={() => setPendingNewRecallFor(null)} className="flex-1 py-3 rounded-xl font-bold text-sm text-slate-500 bg-slate-50 hover:bg-slate-100">Skip for now</button>
-                <button onClick={handleConfirmNewRecall} disabled={isSavingNewRecall} className="flex-1 py-3 rounded-xl font-bold text-sm text-white bg-[#3F9185] hover:bg-teal-700 disabled:opacity-50">
-                  {isSavingNewRecall ? 'Saving...' : 'Confirm'}
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => { setCompletionGateAppt(null); setPendingNewRecallFor(null); setRecallSetInGate(false); }} className="flex-1 py-3 rounded-xl font-bold text-sm text-slate-500 bg-slate-50 hover:bg-slate-100">
+                  Not Yet
+                </button>
+                <button onClick={confirmCompletionFromGate} disabled={!isGateSatisfied(completionGateAppt) || isConfirmingCompletion} className="flex-1 py-3 rounded-xl font-bold text-sm text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                  {isConfirmingCompletion ? 'Completing…' : 'Complete Visit'}
                 </button>
               </div>
             </div>
@@ -7090,7 +7251,7 @@ export default function AdminDashboard() {
               </div>
 
               <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Address</label>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Address (Optional — will be required before this visit can be marked Completed)</label>
                 <div className="mt-1">
                   <AddressFinder value={newBooking.address} onChange={addr => setNewBooking({...newBooking, address: addr})} />
                 </div>
@@ -7165,7 +7326,7 @@ export default function AdminDashboard() {
 
             <div className="flex gap-3 mt-8">
               <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
-              <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || !newBooking.address.verified || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+              <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
                 Confirm Booking
               </button>
             </div>
