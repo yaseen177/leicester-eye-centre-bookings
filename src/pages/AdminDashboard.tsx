@@ -3643,10 +3643,15 @@ export default function AdminDashboard() {
   };
 
   // Whether this appointment type needs a prescription recorded before it
-  // can complete — Eye Checks only. Contact Lens Checks produce a CL
-  // prescription (base curve/diameter/brand), a different format this
-  // system doesn't record yet, so they're not gated on the spectacle Rx form.
-  const gateNeedsPrescription = (appt: any) => !(appt?.appointmentType || '').includes('Contact');
+  // can complete — Eye Checks only (Private/NHS/Over 60/Child all start
+  // with "Eye Check"). NOT Contact Lens Checks (they'd need a CL
+  // prescription — base curve/diameter/brand — a different format this
+  // system doesn't record yet) and NOT Rechecks (a recheck doesn't
+  // necessarily produce a fresh Rx). Checking "starts with Eye Check"
+  // rather than "doesn't include Contact" specifically, since the latter
+  // was wrongly also catching Rechecks, which contain neither "Eye Check"
+  // nor "Contact".
+  const gateNeedsPrescription = (appt: any) => (appt?.appointmentType || '').startsWith('Eye Check');
 
   const isGateSatisfied = (appt: any) => {
     if (!appt) return false;
