@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw } from 'lucide-react';
 import QRCode from 'qrcode';
 import AddressFinder, { blankAddress, type AddressValue } from '../components/AddressFinder';
@@ -602,6 +603,7 @@ export default function AdminDashboard() {
   });
   const [isSavingRx, setIsSavingRx] = useState(false);
   const [printRx, setPrintRx] = useState<any>(null);
+  const [printRxPatient, setPrintRxPatient] = useState<any>(null);
   const [rxSearchQuery, setRxSearchQuery] = useState('');
   const [selectedPatientForRx, setSelectedPatientForRx] = useState<any>(null);
   const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -887,6 +889,21 @@ export default function AdminDashboard() {
     if (printRx) {
       const timer = setTimeout(() => window.print(), 150);
       return () => clearTimeout(timer);
+    }
+  }, [printRx]);
+
+  // Fetches the specific patient doc directly rather than looking it up in
+  // crmPatients, which is capped at the 150 most-recently-created patients
+  // (see the "patients" onSnapshot query) -- any longer-standing patient
+  // wouldn't be in that list at all, silently hiding their DOB/address on
+  // the printed prescription even though the data exists in Firestore.
+  useEffect(() => {
+    if (printRx?.patientId) {
+      getDoc(doc(db, "patients", printRx.patientId))
+        .then(snap => setPrintRxPatient(snap.exists() ? snap.data() : null))
+        .catch(() => setPrintRxPatient(null));
+    } else {
+      setPrintRxPatient(null);
     }
   }, [printRx]);
 
@@ -2859,9 +2876,8 @@ export default function AdminDashboard() {
   // #rx-print-area — see index.css for how that split actually shows only
   // this content when window.print() fires.
   const renderRxPrintContent = (rx: any) => {
-    const rxPatient = crmPatients.find((p: any) => p.id === rx.patientId);
-    const patientDob = rxPatient?.dob;
-    const patientAddress = rxPatient?.address?.verified ? rxPatient.address : null;
+    const patientDob = printRxPatient?.dob;
+    const patientAddress = printRxPatient?.address?.verified ? printRxPatient.address : null;
     const eyeRow = (label: string, eye: any) => (
       <tr>
         <td className="p-2 border border-slate-300 font-bold text-slate-700">{label}</td>
@@ -6814,9 +6830,12 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
-      <div id="rx-print-area" className="hidden">
-        {printRx && renderRxPrintContent(printRx)}
-      </div>
+      {printRx && createPortal(
+        <div id="rx-print-area" className="hidden">
+          {renderRxPrintContent(printRx)}
+        </div>,
+        document.body
+      )}
 
       {/* --- KLARNA/CLEARPAY QR CODE MODAL --- */}
       {qrModal && (
