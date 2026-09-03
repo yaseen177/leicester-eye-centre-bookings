@@ -2,6 +2,35 @@ import { setDoc, type DocumentReference } from 'firebase/firestore';
 
 const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/";
 
+// Interprets dateStr ("YYYY-MM-DD") + timeStr ("HH:MM") as UK LOCAL time
+// (handling BST/GMT automatically) and returns the correct UTC instant.
+// `new Date(\`${dateStr}T${timeStr}\`)` (no "Z"/offset) is ambiguous -- it's
+// parsed using whatever timezone the CUSTOMER'S OWN BROWSER/DEVICE reports
+// as local, which only happens to be correct if that's set to UK time. For
+// most UK customers on UK devices that's true, but it's fragile -- anyone
+// travelling, on a VPN, or with a misconfigured system clock gets a wrong
+// instant computed here, which is the most likely trigger for a reminder
+// firing at the wrong time. This mirrors the exact UTC-offset technique the
+// Twilio worker's own getSecondsUntilUkSixPM() already uses correctly, just
+// generalised to an arbitrary date/time instead of "today at 6pm". The
+// offset calculation is environment-agnostic (the runtime's own local
+// timezone cancels out of the subtraction), so it's safe to reuse here in
+// browser code even though the worker version runs in a different runtime.
+function ukDateTimeToUtc(dateStr: string, timeStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hour, minute] = timeStr.split(':').map(Number);
+
+  const now = new Date();
+  const utcRef = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+  const ukRef = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/London' }));
+  const offsetMs = ukRef.getTime() - utcRef.getTime(); // +1h during BST, 0 during GMT
+
+  // Treat the UK wall-clock numbers as if they were UTC, then subtract the
+  // UK offset to land on the correct UTC instant.
+  const asIfUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  return new Date(asIfUtc - offsetMs);
+}
+
 interface ScheduleParams {
   docRef: DocumentReference;
   phone: string;
@@ -17,7 +46,7 @@ interface ScheduleParams {
 export async function scheduleAllReminders({ docRef, phone, firstName, service, dateStr, timeStr, manageLink }: ScheduleParams) {
   if (!phone || phone.length <= 5) return;
 
-  const appointmentDateTime = new Date(`${dateStr}T${timeStr}`);
+  const appointmentDateTime = ukDateTimeToUtc(dateStr, timeStr);
   const now = new Date();
   const todayStr = now.toISOString().split('T')[0];
   const isSameDayBooking = dateStr === todayStr;
@@ -47,8 +76,7 @@ export async function scheduleAllReminders({ docRef, phone, firstName, service, 
 
   // --- 9AM SAME-DAY REMINDER (skipped entirely for same-day bookings) ---
   if (!isSameDayBooking) {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const nineAmDate = new Date(year, month - 1, day, 9, 0, 0);
+    const nineAmDate = ukDateTimeToUtc(dateStr, '09:00');
 
     if (nineAmDate.getTime() > now.getTime() + (15 * 60 * 1000)) {
       try {
