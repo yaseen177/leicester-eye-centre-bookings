@@ -1087,6 +1087,15 @@ export default function AdminDashboard() {
       (a.email && a.email === selectedChatPatient.email)
     );
 
+    // Prescriptions only ever match by patientId, unlike appointments which
+    // also fall back to phone/email — so if this patient's CRM entry is
+    // still a synthetic "unknown-..." id about to get promoted to a real
+    // patients doc with a brand-new id below, any prescriptions already
+    // saved against the OLD id need to move with it, same as appointments
+    // already do, or they'd silently vanish even though the documents
+    // still exist in Firestore.
+    const patientRxs = prescriptions.filter(rx => rx.patientId === selectedChatPatient.id);
+
     try {
       const isKnownCrmId = selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-');
       let currentMasterId = selectedChatPatient.id;
@@ -1119,6 +1128,13 @@ export default function AdminDashboard() {
           dob: editProfileData.dob,
           address: editProfileData.address,
           patientId: currentMasterId
+        }, { merge: true });
+      }
+
+      for (const rx of patientRxs) {
+        await setDoc(doc(db, "prescriptions", rx.id), {
+          patientId: currentMasterId,
+          patientName: editProfileData.patientName
         }, { merge: true });
       }
 
