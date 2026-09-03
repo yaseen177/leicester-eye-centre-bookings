@@ -358,6 +358,25 @@ export default function BookingPage() {
         source: 'Online',
       });
 
+      // The booking form can't write to the patients collection directly
+      // (it's unauthenticated, and that collection correctly requires
+      // sign-in) -- this syncs the address (and dedupes/creates the CRM
+      // record) via a Worker that holds the credentials to do it properly.
+      // Best-effort: if it fails, the appointment itself is already saved
+      // fine, so this shouldn't block the booking confirmation.
+      fetch("https://patient-sync.yaseen-hussain18.workers.dev/upsert-patient", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientName: `${booking.firstName} ${booking.lastName}`,
+          email: booking.email.toLowerCase(),
+          phone: formattedPhone,
+          dob: booking.dob,
+          address: booking.address,
+          appointmentId: docRef.id
+        })
+      }).catch(e => console.error("Patient sync failed:", e));
+
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
 
       if (booking.email) {
