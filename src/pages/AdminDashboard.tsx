@@ -2938,6 +2938,11 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        <div className="mb-6 p-4 rounded-xl text-[11px] text-slate-500 leading-relaxed" style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0' }}>
+          <p>You have a right to have your prescription dispensed wherever you choose. However, as prescribing and dispensing of spectacles are closely linked it is best to have your spectacles dispensed where you have your eyes examined. It is often more difficult to resolve any problems you may have with your spectacles when prescribing and supply are separated.</p>
+          <p className="mt-1.5 font-bold uppercase tracking-wide text-[9px]">— College of Optometrists</p>
+        </div>
+
         <div className="flex justify-between items-end pt-6 border-t border-slate-200">
           <div className="text-xs text-slate-500">
             {rx.type === 'The Eye Centre' ? (
