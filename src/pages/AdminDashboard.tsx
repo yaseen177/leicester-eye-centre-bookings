@@ -3653,11 +3653,14 @@ export default function AdminDashboard() {
   // nor "Contact".
   const gateNeedsPrescription = (appt: any) => (appt?.appointmentType || '').startsWith('Eye Check');
 
+  const REQUIRE_ADDRESS_FOR_GATE = false;
+  const REQUIRE_PRESCRIPTION_FOR_GATE = false;
+
   const isGateSatisfied = (appt: any) => {
     if (!appt) return false;
-    const hasRx = !gateNeedsPrescription(appt) || prescriptions.some(rx => rx.appointmentId === appt.id);
+    const hasRx = !REQUIRE_PRESCRIPTION_FOR_GATE || !gateNeedsPrescription(appt) || prescriptions.some(rx => rx.appointmentId === appt.id);
     const hasRecall = recallSetInGate;
-    const hasAddress = !!getGateAddressValue(appt);
+    const hasAddress = !REQUIRE_ADDRESS_FOR_GATE || !!getGateAddressValue(appt);
     return hasRx && hasRecall && hasAddress;
   };
 
@@ -6268,7 +6271,7 @@ export default function AdminDashboard() {
                 <div className="w-10 h-10 rounded-full bg-teal-50 flex items-center justify-center text-[#3F9185]"><CheckCircle2 size={20} /></div>
                 <h3 className="text-lg font-black text-slate-800">Complete {completionGateAppt.patientName}'s Visit</h3>
               </div>
-              <p className="text-sm text-slate-500 font-medium mb-6 ml-[52px]">These three need to be in place before this visit can be marked complete.</p>
+              <p className="text-sm text-slate-500 font-medium mb-6 ml-[52px]">Set the next recall to mark this visit complete — prescription and address are optional for now.</p>
 
               <div className="space-y-4">
                 {gateNeedsPrescription(completionGateAppt) && (
