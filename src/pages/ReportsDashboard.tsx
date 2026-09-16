@@ -1,10 +1,32 @@
 import { useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, Calendar, AlertTriangle, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock, ShoppingBag, Wallet, CreditCard } from 'lucide-react';
+import { FileText, Calendar, AlertTriangle, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock, ShoppingBag, Wallet, CreditCard, TrendingUp } from 'lucide-react';
+
+// Shared date parser — handles both yyyy-mm-dd and dd/mm/yyyy style appointmentDate strings.
+// Hoisted out of the `stats` memo so the density/trend memo below can reuse it too.
+const parseDateSafely = (dateStr: string) => {
+  if (!dateStr) return null;
+  const parts = dateStr.split(/[-/]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    if (parts[2].length === 4) return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+  }
+  return new Date(dateStr);
+};
+
+// Time-period options for the Clinic Density card/trend chart.
+const DENSITY_PERIODS: { key: string; label: string; days: number | null }[] = [
+  { key: '7', label: '7 Days', days: 7 },
+  { key: '30', label: '30 Days', days: 30 },
+  { key: '90', label: '90 Days', days: 90 },
+  { key: '365', label: '12 Months', days: 365 },
+  { key: 'all', label: 'All Time', days: null },
+];
 
 export default function ReportsDashboard({ appointments, orders = [] }: { appointments: any[]; orders?: any[] }) {
   const [selectedDay, setSelectedDay] = useState<string>('All');
+  const [densityPeriod, setDensityPeriod] = useState<string>('30');
 
   // Dispensing order revenue — kept as its own memo, independent of the
   // appointments-based `stats` below, since orders can exist for walk-ins
@@ -81,16 +103,6 @@ export default function ReportsDashboard({ appointments, orders = [] }: { appoin
 
     const adminCreationHoursCount: Record<number, number> = {};
     let sameDay = 0, underAWeek = 0, overTwoWeeks = 0;
-
-    const parseDateSafely = (dateStr: string) => {
-      if (!dateStr) return null;
-      const parts = dateStr.split(/[-/]/);
-      if (parts.length === 3) {
-        if (parts[0].length === 4) return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-        if (parts[2].length === 4) return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-      }
-      return new Date(dateStr);
-    };
 
     appointments.forEach(app => {
       if (app.status === 'Completed') completed++;
@@ -233,6 +245,67 @@ export default function ReportsDashboard({ appointments, orders = [] }: { appoin
       formatHour
     };
   }, [appointments]);
+
+  // Clinic Density: average patients per clinic day for a selectable time window,
+  // plus a 7-day trailing rolling average for the trend chart below it.
+  const densityStats = useMemo(() => {
+    const countsByDate = new Map<string, number>();
+    let minDate: Date | null = null;
+
+    appointments.forEach(app => {
+      if (!app.appointmentDate) return;
+      const d = parseDateSafely(app.appointmentDate);
+      if (!d || isNaN(d.getTime())) return;
+      d.setHours(0, 0, 0, 0);
+      const key = d.toISOString().slice(0, 10);
+      countsByDate.set(key, (countsByDate.get(key) || 0) + 1);
+      if (!minDate || d < minDate) minDate = d;
+    });
+
+    if (!minDate) return null;
+    const earliestClinicDay: Date = minDate;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const periodDef = DENSITY_PERIODS.find(p => p.key === densityPeriod) || DENSITY_PERIODS[1];
+    const desiredStart = periodDef.days ? new Date(today.getTime() - (periodDef.days - 1) * 86400000) : earliestClinicDay;
+    const rangeStart = desiredStart < earliestClinicDay ? earliestClinicDay : desiredStart;
+
+    // Build a continuous run of calendar days (zero-count days included) so the
+    // rolling average reflects real gaps between clinic days, not just booked ones.
+    const days: { date: Date; count: number }[] = [];
+    for (let d = new Date(rangeStart); d <= today; d.setDate(d.getDate() + 1)) {
+      const key = d.toISOString().slice(0, 10);
+      days.push({ date: new Date(d), count: countsByDate.get(key) || 0 });
+    }
+    if (days.length === 0) return null;
+
+    // "Clinic Density" = patients per day the clinic actually saw someone —
+    // matches the definition already used for the all-time figure elsewhere on this page.
+    const clinicDays = days.filter(d => d.count > 0);
+    const totalInPeriod = clinicDays.reduce((s, d) => s + d.count, 0);
+    const avgDensity = clinicDays.length ? Math.round((totalInPeriod / clinicDays.length) * 10) / 10 : 0;
+
+    const rolling = days.map((d, i) => {
+      const windowSlice = days.slice(Math.max(0, i - 6), i + 1);
+      const avg = windowSlice.reduce((s, w) => s + w.count, 0) / windowSlice.length;
+      return { date: d.date, value: Math.round(avg * 10) / 10 };
+    });
+
+    const currentAvg = rolling[rolling.length - 1]?.value ?? 0;
+    const peak = rolling.reduce((max, r) => (r.value > max.value ? r : max), rolling[0]);
+
+    return {
+      label: periodDef.label,
+      avgDensity,
+      totalInPeriod,
+      clinicDaysCount: clinicDays.length,
+      rolling,
+      currentAvg,
+      peak
+    };
+  }, [appointments, densityPeriod]);
 
   // Derive active chart data and exact strings
   const chartData = stats ? stats.onlineCreationByDayAndHour[selectedDay] : Array(24).fill(0);
@@ -477,9 +550,16 @@ export default function ReportsDashboard({ appointments, orders = [] }: { appoin
           
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center border-b-4 border-b-emerald-500">
              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3"><Activity size={24} /></div>
-            <p className="text-3xl font-black text-slate-800">{stats.avgPatientsPerDay}</p>
-            <p className="text-sm font-bold text-slate-500 mt-1">Daily Clinic Density</p>
-            <p className="text-xs text-slate-400 mt-1">Average patients per day</p>
+            <p className="text-3xl font-black text-slate-800">{densityStats ? densityStats.avgDensity : stats.avgPatientsPerDay}</p>
+            <p className="text-sm font-bold text-slate-500 mt-1">Clinic Density</p>
+            <p className="text-xs text-slate-400 mt-1 mb-2">Avg patients per clinic day</p>
+            <select
+              value={densityPeriod}
+              onChange={(e) => setDensityPeriod(e.target.value)}
+              className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-2 py-1 cursor-pointer"
+            >
+              {DENSITY_PERIODS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
           </div>
 
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center text-center">
@@ -497,6 +577,54 @@ export default function ReportsDashboard({ appointments, orders = [] }: { appoin
           </div>
         </div>
       </div>
+
+      {/* ROW 3B: CLINIC DENSITY TREND */}
+      {densityStats && densityStats.rolling.length > 1 && (
+        <div>
+          <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><TrendingUp size={18}/> Clinic Density Trend</h2>
+          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+              <div>
+                <p className="font-bold text-slate-800">7-day rolling average — {densityStats.label}</p>
+                <p className="text-sm text-slate-500 mt-1">Each point smooths the trailing week, so day-to-day swings don't hide the underlying trend.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {DENSITY_PERIODS.map(p => (
+                  <button
+                    key={p.key}
+                    onClick={() => setDensityPeriod(p.key)}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${densityPeriod === p.key ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-4 mb-6">
+              <div className="bg-emerald-50 text-emerald-700 px-4 py-3 rounded-xl flex-1 flex items-center gap-3">
+                <div className="bg-emerald-100 p-2 rounded-lg"><Activity size={20}/></div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-70">Current 7-Day Avg</p>
+                  <p className="font-black text-lg">{densityStats.currentAvg} patients/day</p>
+                </div>
+              </div>
+              <div className="bg-slate-50 text-slate-600 px-4 py-3 rounded-xl flex-1 flex items-center gap-3 border border-slate-100">
+                <div className="bg-slate-200 p-2 rounded-lg"><TrendingUp size={20}/></div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-70">Peak (Rolling)</p>
+                  <p className="font-black text-lg">
+                    {densityStats.peak.value} patients/day
+                    <span className="text-sm font-medium"> ({densityStats.peak.date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })})</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <ClinicDensityChart rolling={densityStats.rolling} />
+          </div>
+        </div>
+      )}
 
       {/* ROW 4: DISPENSING & FRAME REVENUE */}
       {orderStats && (
@@ -574,6 +702,72 @@ export default function ReportsDashboard({ appointments, orders = [] }: { appoin
         </div>
       )}
 
+    </div>
+  );
+}
+
+// Lightweight SVG line chart for the rolling clinic-density trend — no charting
+// library dependency, matches the hand-rolled style already used for the heatmap above.
+function ClinicDensityChart({ rolling }: { rolling: { date: Date; value: number }[] }) {
+  const width = 1000;
+  const height = 260;
+  const padTop = 20;
+  const padBottom = 30;
+  const chartH = height - padTop - padBottom;
+
+  const n = rolling.length;
+  const maxVal = Math.max(...rolling.map(r => r.value), 1) * 1.15;
+
+  const xAt = (i: number) => (n <= 1 ? width / 2 : (i / (n - 1)) * width);
+  const yAt = (v: number) => padTop + chartH - (v / maxVal) * chartH;
+
+  const linePoints = rolling.map((r, i) => `${xAt(i)},${yAt(r.value)}`).join(' ');
+  const areaPoints = `0,${padTop + chartH} ${linePoints} ${width},${padTop + chartH}`;
+
+  const tickCount = Math.min(6, n);
+  const tickIdxs = Array.from({ length: tickCount }, (_, k) =>
+    Math.round((k / Math.max(1, tickCount - 1)) * (n - 1))
+  );
+  const pointRadius = n > 60 ? 1.5 : 3.5;
+
+  return (
+    <div className="relative">
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="w-full h-56">
+        <defs>
+          <linearGradient id="densityFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {[0, 0.5, 1].map((g, idx) => {
+          const y = padTop + chartH * (1 - g);
+          const val = Math.round(maxVal * g * 10) / 10;
+          return (
+            <g key={idx}>
+              <line x1={0} y1={y} x2={width} y2={y} stroke="#f1f5f9" strokeWidth={1.5} />
+              <text x={4} y={y - 4} fontSize="11" fill="#94a3b8" fontWeight="bold">{val}</text>
+            </g>
+          );
+        })}
+
+        <polygon points={areaPoints} fill="url(#densityFill)" />
+        <polyline points={linePoints} fill="none" stroke="#10b981" strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
+
+        {rolling.map((r, i) => (
+          <circle key={i} cx={xAt(i)} cy={yAt(r.value)} r={pointRadius} fill="#10b981" stroke="white" strokeWidth={1.5}>
+            <title>{`${r.date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}: ${r.value} patients/day (7-day avg)`}</title>
+          </circle>
+        ))}
+      </svg>
+
+      <div className="flex justify-between mt-1 px-1">
+        {tickIdxs.map((i, k) => (
+          <span key={k} className="text-[10px] text-slate-400 font-bold">
+            {rolling[i].date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
