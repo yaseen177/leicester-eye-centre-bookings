@@ -24,6 +24,12 @@ const DENSITY_PERIODS: { key: string; label: string; days: number | null }[] = [
   { key: 'all', label: 'All Time', days: null },
 ];
 
+// Hard safety cap for the density/trend calculation: the portal's data should only
+// span a couple of years at most, so this guards "All Time" against ever building a
+// runaway day-by-day array if a single record has a garbled appointmentDate that
+// parses to some absurd date far in the past.
+const MAX_LOOKBACK_DAYS = 1825; // ~5 years
+
 export default function ReportsDashboard({ appointments, orders = [] }: { appointments: any[]; orders?: any[] }) {
   const [selectedDay, setSelectedDay] = useState<string>('All');
   const [densityPeriod, setDensityPeriod] = useState<string>('30');
@@ -270,12 +276,19 @@ export default function ReportsDashboard({ appointments, orders = [] }: { appoin
 
     const periodDef = DENSITY_PERIODS.find(p => p.key === densityPeriod) || DENSITY_PERIODS[1];
     const desiredStart = periodDef.days ? new Date(today.getTime() - (periodDef.days - 1) * 86400000) : earliestClinicDay;
-    const rangeStart = desiredStart < earliestClinicDay ? earliestClinicDay : desiredStart;
+    let rangeStart = desiredStart < earliestClinicDay ? earliestClinicDay : desiredStart;
+
+    // Hard floor — never look back further than MAX_LOOKBACK_DAYS, no matter
+    // what a corrupted date in the source data claims "earliest" is.
+    const maxLookbackStart = new Date(today.getTime() - (MAX_LOOKBACK_DAYS - 1) * 86400000);
+    if (rangeStart < maxLookbackStart) rangeStart = maxLookbackStart;
 
     // Build a continuous run of calendar days (zero-count days included) so the
     // rolling average reflects real gaps between clinic days, not just booked ones.
+    // The days.length guard is a second, independent safety net on top of the
+    // date-floor above, so this loop can never run away regardless of input.
     const days: { date: Date; count: number }[] = [];
-    for (let d = new Date(rangeStart); d <= today; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(rangeStart); d <= today && days.length <= MAX_LOOKBACK_DAYS; d.setDate(d.getDate() + 1)) {
       const key = d.toISOString().slice(0, 10);
       days.push({ date: new Date(d), count: countsByDate.get(key) || 0 });
     }
