@@ -3171,7 +3171,7 @@ export default function AdminDashboard() {
         const fullSms = `${manualMsgData.body}\n\nThe Eye Centre, Leicester`;
         const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: fullPhone, body: fullSms, isCustomChat: true })
+          body: JSON.stringify({ to: fullPhone, body: fullSms, isCustomChat: true, alphaSender: true })
         });
         if (res.ok) {
           await addDoc(collection(db, "messages"), {

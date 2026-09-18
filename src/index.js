@@ -85,12 +85,16 @@ export default {
         const params = new URLSearchParams({
           To: to,
           Body: body,
-          // Prefer Messaging Service if available (better for UK), otherwise fallback or use From
-          MessagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID || "", 
         });
   
-        // If no Messaging Service, use standard "From"
-        if (!env.TWILIO_MESSAGING_SERVICE_SID) {
+        if (data.alphaSender === true) {
+          // Manual dashboard SMS: one-way alphanumeric sender (customers can't reply).
+          // Bypasses the Messaging Service so Twilio doesn't swap in a number from the pool.
+          params.append("From", "EYE CENTRE");
+        } else if (env.TWILIO_MESSAGING_SERVICE_SID) {
+          // Everything else: prefer Messaging Service (better for UK)
+          params.append("MessagingServiceSid", env.TWILIO_MESSAGING_SERVICE_SID);
+        } else {
           params.append("From", env.TWILIO_PHONE_NUMBER || "EYE CENTRE");
         }
   
