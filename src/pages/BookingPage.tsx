@@ -4,6 +4,7 @@ import { db } from '../lib/firebase';
 import { scheduleAllReminders } from '../lib/reminders';
 import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
 import AddressFinder, { blankAddress } from '../components/AddressFinder';
+import DobInput from '../components/DobInput';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
@@ -15,6 +16,9 @@ const fromMins = (m: number) => {
   const mm = m % 60; 
   return `${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`; 
 };
+
+// Today as YYYY-MM-DD in the visitor's local time (toISOString is UTC and can be a day behind)
+const getTodayStr = () => new Date().toLocaleDateString('en-CA');
 
 export default function BookingPage() {
   const [step, setStep] = useState(1);
@@ -128,6 +132,7 @@ export default function BookingPage() {
   
     const { closedDates, openDates, weeklyOff, dailyOverrides } = settings;
   
+    if (targetDate < getTodayStr()) return [];
     if (closedDates.includes(targetDate)) return [];
 
     const isStandardDayOff = weeklyOff.includes(dayOfWeek);
@@ -330,6 +335,7 @@ export default function BookingPage() {
   };
 
   const handleFinalSubmit = async () => {
+    if (booking.date < getTodayStr()) { alert('Please choose today or a future date.'); setStep(2); return; }
     setLoading(true);
     try {
       const cleanPhone = booking.phone.trim();
@@ -489,7 +495,7 @@ export default function BookingPage() {
              </div>
              <div>
                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
-               <input type="date" min={new Date().toISOString().split('T')[0]} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value})} />
+               <input type="date" min={getTodayStr()} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value, time: ''})} />
              </div>
              
              {(() => {
@@ -498,7 +504,7 @@ export default function BookingPage() {
                 const afternoon = slots.filter(t => parseInt(t.split(':')[0]) >= 12);
 
                 if (slots.length === 0) {
-                   return <div className="py-10 text-center text-slate-400 font-bold italic">No slots available for this date.</div>;
+                   return <div className="py-10 text-center text-slate-400 font-bold italic">{booking.date < getTodayStr() ? 'Please choose today or a future date.' : 'No slots available for this date.'}</div>;
                 }
 
                 return (
@@ -552,8 +558,8 @@ export default function BookingPage() {
             </div>
 
             <div>
-              <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
-              <input type="date" className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" onChange={e => setBooking({...booking, dob: e.target.value})} />
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth *</label>
+              <DobInput value={booking.dob} onChange={dob => setBooking({...booking, dob})} className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" />
             </div>
 
             <div>

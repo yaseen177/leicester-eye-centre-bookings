@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw } from 'lucide-react';
 import QRCode from 'qrcode';
 import AddressFinder, { blankAddress, type AddressValue } from '../components/AddressFinder';
+import DobInput from '../components/DobInput';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where, arrayUnion } from 'firebase/firestore';
@@ -5602,13 +5603,8 @@ export default function AdminDashboard() {
                                  />
                                </div>
                                <div>
-                                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
-                                 <input 
-                                   type="date" 
-                                   value={editProfileData.dob} 
-                                   onChange={e => setEditProfileData({...editProfileData, dob: e.target.value})}
-                                   className="w-full p-4 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-800"
-                                 />
+                                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth *</label>
+                                 <DobInput value={editProfileData.dob} onChange={dob => setEditProfileData({...editProfileData, dob})} className="w-full p-4 mt-1 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-[#3F9185] text-sm font-bold text-slate-800" />
                                </div>
                              </div>
 
@@ -5633,7 +5629,7 @@ export default function AdminDashboard() {
                            <div className="pt-4 border-t border-slate-100">
                              <button 
                                onClick={handleUpdateMasterProfile} 
-                               disabled={!editProfileData.patientName}
+                               disabled={!editProfileData.patientName || !editProfileData.dob}
                                className="w-full py-4 bg-slate-900 hover:bg-black text-white rounded-xl font-black shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-2"
                              >
                                <CheckCircle2 size={18} /> Update Master Record
@@ -7266,7 +7262,7 @@ export default function AdminDashboard() {
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
                 <input 
                   type="date" 
-                  min={new Date().toISOString().split('T')[0]} 
+                  
                   value={selectedDate} 
                   onChange={(e) => setSelectedDate(e.target.value)} 
                   className="w-full p-4 bg-slate-50 rounded-xl font-bold text-[#3F9185] outline-none border-none focus:ring-2 focus:ring-[#3F9185]"
@@ -7294,8 +7290,8 @@ export default function AdminDashboard() {
               <input placeholder="Phone (Optional if Email provided)" className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.phone} onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
               
               <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth</label>
-                <input type="date" className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.dob} onChange={e => setNewBooking({...newBooking, dob: e.target.value})} />
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth *</label>
+                <DobInput value={newBooking.dob} onChange={dob => setNewBooking({...newBooking, dob})} className="w-full p-4 bg-slate-50 rounded-xl outline-none" />
               </div>
 
               <div>
@@ -7374,7 +7370,7 @@ export default function AdminDashboard() {
 
             <div className="flex gap-3 mt-8">
               <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
-              <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+              <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || !newBooking.dob || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
                 Confirm Booking
               </button>
             </div>

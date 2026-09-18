@@ -97,6 +97,7 @@ export default function ManageBooking() {
   
     const { closedDates, openDates, weeklyOff, dailyOverrides } = settings;
   
+    if (targetDate < new Date().toLocaleDateString('en-CA')) return [];
     if (closedDates.includes(targetDate)) return [];
     if (weeklyOff.includes(dayOfWeek) && !openDates.includes(targetDate)) return [];
   
@@ -465,7 +466,7 @@ export default function ManageBooking() {
                 <h2 className="text-xl font-bold text-slate-800">Pick a new time</h2>
              </div>
              <div>
-               <input type="date" min={new Date().toISOString().split('T')[0]} value={rescheduleDate} className="w-full p-4 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none" onChange={e => { setRescheduleDate(e.target.value); setRescheduleTime(''); }} />
+               <input type="date" min={new Date().toLocaleDateString('en-CA')} value={rescheduleDate} className="w-full p-4 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none" onChange={e => { setRescheduleDate(e.target.value); setRescheduleTime(''); }} />
              </div>
              
              {(() => {
