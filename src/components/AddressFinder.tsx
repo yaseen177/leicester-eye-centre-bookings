@@ -97,17 +97,17 @@ export default function AddressFinder({ value, onChange }: AddressFinderProps) {
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-2">
+      <div className="flex flex-col sm:flex-row gap-2">
         <input
           type="text" placeholder="Enter your postcode"
           value={postcodeInput}
           onChange={e => setPostcodeInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); findAddress(); } }}
-          className="flex-1 p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium"
+          className="w-full min-w-0 sm:flex-1 p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium"
         />
         <button
           type="button" onClick={findAddress} disabled={isSearching || !postcodeInput.trim()}
-          className="px-5 py-4 rounded-xl font-bold text-white shrink-0 disabled:opacity-50 transition-all"
+          className="w-full sm:w-auto px-5 py-4 rounded-xl font-bold text-white shrink-0 disabled:opacity-50 transition-all"
           style={{ backgroundColor: '#3F9185' }}
         >
           {isSearching ? '…' : 'Find Address'}
