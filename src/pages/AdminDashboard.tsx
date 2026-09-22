@@ -3065,7 +3065,7 @@ export default function AdminDashboard() {
     try {
       const res = await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: selectedChatPatient.phone, body: outboundSMS, isCustomChat: true })
+        body: JSON.stringify({ to: selectedChatPatient.phone, body: outboundSMS, isCustomChat: true, alphaSender: true })
       });
       if (res.ok) {
         await addDoc(collection(db, "messages"), {
