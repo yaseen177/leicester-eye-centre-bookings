@@ -5,6 +5,7 @@ import { scheduleAllReminders } from '../lib/reminders';
 import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
 import AddressFinder, { blankAddress } from '../components/AddressFinder';
 import DobInput from '../components/DobInput';
+import AttendancePledge from '../components/AttendancePledge';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
@@ -23,6 +24,8 @@ const getTodayStr = () => new Date().toLocaleDateString('en-CA');
 export default function BookingPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [showPledge, setShowPledge] = useState(false);
+  const [bookingId, setBookingId] = useState<string | null>(null);
   const [existingBookings, setExistingBookings] = useState<any[]>([]);
   const [settings, setSettings] = useState({ 
     hours: { 
@@ -363,6 +366,7 @@ export default function BookingPage() {
         createdAt: serverTimestamp(),
         source: 'Online',
       });
+      setBookingId(docRef.id);
 
       // The booking form can't write to the patients collection directly
       // (it's unauthenticated, and that collection correctly requires
@@ -431,10 +435,12 @@ export default function BookingPage() {
       }
 
       setStep(4);
+      setShowPledge(true);
     } catch (e) {
       console.error("Error:", e);
       alert("Booking saved, but confirmation notifications may have failed.");
       setStep(4);
+      setShowPledge(true);
     }
     setLoading(false);
   };
@@ -734,6 +740,17 @@ export default function BookingPage() {
         )}
 
       </div>
+
+      <AttendancePledge
+        open={showPledge}
+        firstName={booking.firstName}
+        date={booking.date}
+        time={booking.time}
+        service={booking.service}
+        durationMins={booking.service === 'Contact Lens Check' ? settings.contactLens : settings.eyeCheck}
+        bookingId={bookingId}
+        onClose={() => setShowPledge(false)}
+      />
     </div>
   );
 }
