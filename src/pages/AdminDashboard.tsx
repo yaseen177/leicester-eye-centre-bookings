@@ -3535,7 +3535,10 @@ export default function AdminDashboard() {
       const appData = appSnap.exists() ? { id, ...appSnap.data() } : apptFromList;
       setCompletionGateAppt(appData);
       setRecallSetInGate(false);
-      await stopMatchingRecallsAndPromptNew(id, appData);
+      // Rechecks: recall is optional, so DON'T stop the patient's existing
+      // recall up front -- otherwise skipping the recall would leave them with
+      // none at all. It's only stopped if staff actually set a new one.
+      await stopMatchingRecallsAndPromptNew(id, appData, { stopExisting: !isRecheckAppointment(appData) });
     } catch (err) {
       console.error("Failed to open completion gate:", err);
       alert("Couldn't load this appointment's details — try again.");
@@ -3545,16 +3548,18 @@ export default function AdminDashboard() {
   // Called when an appointment is marked 'Visit Complete'. Stops any matching
   // Active/Booked recall (Spectacles for eye checks, Contact Lenses for CL checks)
   // and populates pendingNewRecallFor for the gate's recall panel.
-  const stopMatchingRecallsAndPromptNew = async (appointmentId: string, appData: any) => {
-    const inferredType = (appData.appointmentType || '').includes('Contact') ? 'ContactLenses' : 'Spectacles';
-
+  const stopMatchingRecalls = async (
+    appointmentId: string,
+    who: { patientId?: string | null; phone?: string | null; email?: string | null },
+    recallType: string
+  ) => {
     const matching = recalls.filter(r =>
-      r.recallType === inferredType &&
+      r.recallType === recallType &&
       (r.status === 'Active' || r.status === 'Booked') &&
       (
-        (appData.patientId && r.patientId === appData.patientId) ||
-        (!appData.patientId && appData.phone && r.phone === appData.phone) ||
-        (!appData.patientId && appData.email && r.email === appData.email)
+        (who.patientId && r.patientId === who.patientId) ||
+        (!who.patientId && who.phone && r.phone === who.phone) ||
+        (!who.patientId && who.email && r.email === who.email)
       )
     );
 
@@ -3567,6 +3572,15 @@ export default function AdminDashboard() {
         updatedAt: serverTimestamp()
       }, { merge: true });
     }
+  };
+
+  const stopMatchingRecallsAndPromptNew = async (appointmentId: string, appData: any, opts: { stopExisting?: boolean } = {}) => {
+    const stopExisting = opts.stopExisting ?? true;
+    const inferredType = (appData.appointmentType || '').includes('Contact') ? 'ContactLenses' : 'Spectacles';
+
+    if (stopExisting) {
+      await stopMatchingRecalls(appointmentId, appData, inferredType);
+    }
 
     setPendingNewRecallFor({
       patientId: appData.patientId || null,
@@ -3575,7 +3589,8 @@ export default function AdminDashboard() {
       phone: appData.phone || null,
       recallType: inferredType,
       visitDate: appData.appointmentDate,
-      apptId: appointmentId
+      apptId: appointmentId,
+      stopExistingOnSet: !stopExisting
     });
     setNewRecallInterval(inferredType === 'ContactLenses' ? 12 : 24);
   };
@@ -3589,6 +3604,12 @@ export default function AdminDashboard() {
     if (!pendingNewRecallFor) return;
     setIsSavingNewRecall(true);
     try {
+      // Recheck path: existing recall was left running when the gate opened --
+      // stop it now that a replacement is being set, so there's no duplicate.
+      if (pendingNewRecallFor.stopExistingOnSet) {
+        await stopMatchingRecalls(pendingNewRecallFor.apptId, pendingNewRecallFor, pendingNewRecallFor.recallType);
+      }
+
       const visitDate = new Date(pendingNewRecallFor.visitDate);
       const nextDate = new Date(visitDate);
       nextDate.setMonth(nextDate.getMonth() + newRecallInterval);
@@ -3675,13 +3696,17 @@ export default function AdminDashboard() {
   // nor "Contact".
   const gateNeedsPrescription = (appt: any) => (appt?.appointmentType || '').startsWith('Eye Check');
 
+  // Rechecks don't need a recall to complete (they're usually a follow-up
+  // within an existing recall cycle).
+  const isRecheckAppointment = (appt: any) => appt?.appointmentType === 'Recheck';
+
   const REQUIRE_ADDRESS_FOR_GATE = false;
   const REQUIRE_PRESCRIPTION_FOR_GATE = false;
 
   const isGateSatisfied = (appt: any) => {
     if (!appt) return false;
     const hasRx = !REQUIRE_PRESCRIPTION_FOR_GATE || !gateNeedsPrescription(appt) || prescriptions.some(rx => rx.appointmentId === appt.id);
-    const hasRecall = recallSetInGate;
+    const hasRecall = recallSetInGate || isRecheckAppointment(appt);
     const hasAddress = !REQUIRE_ADDRESS_FOR_GATE || !!getGateAddressValue(appt);
     return hasRx && hasRecall && hasAddress;
   };
@@ -6341,7 +6366,11 @@ export default function AdminDashboard() {
                 <div className="w-10 h-10 rounded-full bg-teal-50 flex items-center justify-center text-[#3F9185]"><CheckCircle2 size={20} /></div>
                 <h3 className="text-lg font-black text-slate-800">Complete {completionGateAppt.patientName}'s Visit</h3>
               </div>
-              <p className="text-sm text-slate-500 font-medium mb-6 ml-[52px]">Set the next recall to mark this visit complete — prescription and address are optional for now.</p>
+              <p className="text-sm text-slate-500 font-medium mb-6 ml-[52px]">
+                {isRecheckAppointment(completionGateAppt)
+                  ? "Recheck: setting a recall is optional. If you skip it, their existing recall stays as it is."
+                  : "Set the next recall to mark this visit complete — prescription and address are optional for now."}
+              </p>
 
               <div className="space-y-4">
                 {gateNeedsPrescription(completionGateAppt) && (
@@ -6361,7 +6390,10 @@ export default function AdminDashboard() {
 
                 <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-black text-slate-700 flex items-center gap-2"><Bell size={16}/> Next Recall</span>
+                    <span className="text-sm font-black text-slate-700 flex items-center gap-2">
+                      <Bell size={16}/> Next Recall
+                      {isRecheckAppointment(completionGateAppt) && <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Optional</span>}
+                    </span>
                     {recallSetInGate && <span className="text-xs font-black text-green-600 flex items-center gap-1"><CheckCircle2 size={14}/> Set</span>}
                   </div>
                   {!recallSetInGate && pendingNewRecallFor && (
