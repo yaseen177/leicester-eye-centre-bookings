@@ -126,7 +126,7 @@ export default function AttendancePledge(props: Props) {
             and we'll offer it to someone else.
           </p>
           <p className="text-slate-900 font-semibold">Thank you, it genuinely means a lot to us.</p>
-          <p className="text-sm text-slate-500 italic">Abbas, Optometrist &amp; Director</p>
+          <p className="text-sm text-slate-500 italic">Mr Hussain, Optometrist &amp; Director</p>
         </div>
 
         <div className="space-y-3 pt-1">
