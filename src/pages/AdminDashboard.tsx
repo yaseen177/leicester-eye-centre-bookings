@@ -46,6 +46,27 @@ const getSlotDuration = (clinic: ClinicKey, appointmentType: string | undefined,
   return appointmentType?.includes('Contact') ? times.contactLens : times.eyeCheck;
 };
 
+// Visit types an eye-clinic appointment can be switched to from the Edit modal.
+// Dispensing is deliberately excluded -- it lives in a different diary.
+const EYE_CLINIC_VISIT_TYPES = [
+  'Eye Check NHS',
+  'Eye Check Private',
+  'Eye Check Over 60',
+  'Eye Check Child',
+  'Contact Lens Check',
+  'Recheck',
+];
+
+// The patient-facing wording used in SMS reminders ("your Eye Check is tomorrow").
+// Matches what BookingPage / the admin New Booking flow pass as `service`.
+const reminderLabelForType = (appointmentType?: string) => {
+  if (!appointmentType) return 'appointment';
+  if (appointmentType.includes('Contact')) return 'Contact Lens Check';
+  if (appointmentType === 'Recheck') return 'Recheck';
+  if (appointmentType.startsWith('Eye Check')) return 'Eye Check';
+  return appointmentType;
+};
+
 // ============================================================================
 // DISPENSING ORDERS — types, pricing helpers, status derivation
 // ============================================================================
@@ -3877,6 +3898,27 @@ export default function AdminDashboard() {
       const formattedPhone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
   
       const appRef = doc(db, "appointments", editingApp.id);
+
+      // Compare against the live Firestore copy, not the modal's working copy.
+      const original = appointments.find((a: any) => a.id === editingApp.id) || {};
+      const typeChanged = !!editingApp.appointmentType && editingApp.appointmentType !== original.appointmentType;
+
+      // Longer visit type (e.g. CL 20min -> Eye Check 30min) can run into the next booking.
+      if (typeChanged && !isDispensingAppointment(editingApp.appointmentType)) {
+        const times = config.eyeCare.times;
+        const start = toMins(editingApp.appointmentTime);
+        const end = start + getSlotDuration('eyeCare', editingApp.appointmentType, times);
+        const clash = appointments.find((a: any) =>
+          a.id !== editingApp.id &&
+          a.appointmentDate === editingApp.appointmentDate &&
+          !isDispensingAppointment(a.appointmentType) &&
+          toMins(a.appointmentTime) < end &&
+          toMins(a.appointmentTime) + getSlotDuration('eyeCare', a.appointmentType, times) > start
+        );
+        if (clash && !window.confirm(`As a ${editingApp.appointmentType}, this now overlaps ${clash.patientName} at ${clash.appointmentTime}. Save anyway?`)) {
+          return;
+        }
+      }
       
       await setDoc(appRef, {
         patientName: editingApp.patientName,
@@ -3885,11 +3927,43 @@ export default function AdminDashboard() {
         dob: editingApp.dob,
         appointmentTime: editingApp.appointmentTime,
         appointmentDate: editingApp.appointmentDate,
-        notes: editingApp.notes || "" 
+        notes: editingApp.notes || "",
+        ...(typeChanged ? {
+          appointmentType: editingApp.appointmentType,
+          previousAppointmentType: original.appointmentType || null,
+          visitTypeChangedAt: serverTimestamp(),
+        } : {})
       }, { merge: true });
+
+      // SMS reminders are pre-scheduled in Twilio with the wording baked in, so if
+      // the patient-facing label changed, swap them for new ones. No immediate
+      // message goes to the patient -- they just see the right type in the reminder.
+      let remindersNote = '';
+      const labelChanged = typeChanged && reminderLabelForType(original.appointmentType) !== reminderLabelForType(editingApp.appointmentType);
+      if (labelChanged && formattedPhone && formattedPhone.length > 5) {
+        try {
+          await cancelReminder(original.phone || formattedPhone, original.reminderSid);
+          await cancelReminder(original.phone || formattedPhone, original.reminderSid9am);
+          // Clear old SIDs first so a failed reschedule doesn't leave stale ones behind.
+          await setDoc(appRef, { reminderSid: null, reminderSid9am: null }, { merge: true });
+          await scheduleAllReminders({
+            docRef: appRef,
+            phone: formattedPhone,
+            firstName: (editingApp.patientName || '').split(' ')[0],
+            service: reminderLabelForType(editingApp.appointmentType),
+            dateStr: editingApp.appointmentDate,
+            timeStr: editingApp.appointmentTime,
+            manageLink: `${window.location.origin}/manage/${editingApp.id}`
+          });
+          remindersNote = ' Reminders updated to the new visit type.';
+        } catch (e) {
+          console.error("Reminder reschedule failed:", e);
+          remindersNote = ' WARNING: reminders could not be updated -- they may still show the old visit type.';
+        }
+      }
   
       setEditingApp(null);
-      alert("Patient details updated successfully.");
+      alert(`Appointment updated successfully.${remindersNote}`);
     } catch (err) {
       console.error(err);
       alert("Failed to update appointment.");
@@ -7184,8 +7258,25 @@ export default function AdminDashboard() {
       {editingApp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
           <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full animate-in zoom-in-95 shadow-2xl">
-            <h3 className="text-xl font-bold mb-6 text-slate-800">Edit Patient Details</h3>
+            <h3 className="text-xl font-bold mb-6 text-slate-800">Edit Appointment</h3>
             <div className="space-y-4">
+              {!isDispensingAppointment(editingApp.appointmentType) && (
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1">Visit Type</label>
+                  <select
+                    className="w-full p-4 mt-1 bg-slate-50 rounded-xl outline-none font-bold text-slate-800"
+                    value={editingApp.appointmentType || ''}
+                    onChange={e => setEditingApp({...editingApp, appointmentType: e.target.value})}
+                  >
+                    {editingApp.appointmentType && !EYE_CLINIC_VISIT_TYPES.includes(editingApp.appointmentType) && (
+                      <option value={editingApp.appointmentType}>{editingApp.appointmentType}</option>
+                    )}
+                    {!editingApp.appointmentType && <option value="">Not set</option>}
+                    {EYE_CLINIC_VISIT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <p className="text-[10px] text-slate-400 mt-1 ml-1">Patient isn't notified now. Their upcoming reminders will use the new type.</p>
+                </div>
+              )}
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.patientName} onChange={e => setEditingApp({...editingApp, patientName: e.target.value})} placeholder="Name" />
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.email} onChange={e => setEditingApp({...editingApp, email: e.target.value})} placeholder="Email" />
               <input className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={editingApp.phone} onChange={e => setEditingApp({...editingApp, phone: e.target.value})} placeholder="Phone" />
