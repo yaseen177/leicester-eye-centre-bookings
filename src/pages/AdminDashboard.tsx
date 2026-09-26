@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useMemo, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw, MoreVertical } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -487,10 +487,15 @@ export default function AdminDashboard() {
   // Ticks every second so "updated Xs ago" labels stay current without
   // needing a manual refresh -- the underlying data is already live via
   // onSnapshot, this just keeps the displayed time fresh too.
+  // PERF: this used to tick every second on every view, which re-rendered the
+  // entire dashboard (diary grid, CRM engine, all modals) once a second. It now
+  // only runs on the Logs/Calls views, which are the only places the label shows.
   useEffect(() => {
-    const tick = setInterval(() => setNow(new Date()), 1000);
+    if (view !== 'logs' && view !== 'calls') return;
+    setNow(new Date());
+    const tick = setInterval(() => setNow(new Date()), 5000);
     return () => clearInterval(tick);
-  }, []);
+  }, [view]);
 
   function timeAgoLabel(date: Date | null): string {
     if (!date) return 'Waiting for data...';
@@ -733,11 +738,24 @@ export default function AdminDashboard() {
 
   const [cloudSearchResults, setCloudSearchResults] = useState<any[]>([]);
 
-  const performCloudSearch = async (queryText: string) => {
+  // PERF: every keystroke used to fire a Firestore query plus a full scan of
+  // appointments + messages, and a slow early response could overwrite a newer
+  // one. Now debounced (250ms) and stale responses are dropped.
+  const cloudSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudSearchSeq = useRef(0);
+
+  const performCloudSearch = (queryText: string) => {
+    if (cloudSearchTimer.current) clearTimeout(cloudSearchTimer.current);
     if (!queryText || queryText.length < 3) {
+      cloudSearchSeq.current++;
       setCloudSearchResults([]);
       return;
     }
+    cloudSearchTimer.current = setTimeout(() => { runCloudSearch(queryText); }, 250);
+  };
+
+  const runCloudSearch = async (queryText: string) => {
+    const seq = ++cloudSearchSeq.current;
     try {
       let q;
       if (queryText.startsWith('0') || queryText.startsWith('+')) {
@@ -785,6 +803,7 @@ export default function AdminDashboard() {
          if (key && !mergedMap.has(key)) mergedMap.set(key, p);
       });
 
+      if (seq !== cloudSearchSeq.current) return; // a newer search has started
       setCloudSearchResults(Array.from(mergedMap.values()).slice(0, 20));
     } catch (e) {
       console.error("Search error", e);
@@ -4161,12 +4180,20 @@ export default function AdminDashboard() {
     const lunchEndMins = toMins(activeConfig.lunch?.end || "14:00");
 
     const gridStepMins = activeClinic === 'dispensing' ? (activeConfig.times.dispensing || 15) : activeConfig.times.eyeCheck;
-    const clinicAppointments = appointments.filter((a: any) => isDispensingAppointment(a.appointmentType) === (activeClinic === 'dispensing'));
+    // PERF: only look at the selected day, and index by time — previously every
+    // 5-minute step scanned every appointment ever booked.
+    const bookingsByTime = new Map<string, any>();
+    appointments.forEach((a: any) => {
+      if (a.appointmentDate !== selectedDate) return;
+      if (isDispensingAppointment(a.appointmentType) !== (activeClinic === 'dispensing')) return;
+      if (!bookingsByTime.has(a.appointmentTime)) bookingsByTime.set(a.appointmentTime, a);
+    });
+    const dateClosed = isDateClosed();
     
     for (let time = startMins; time < endMins; time += 5) {
       const timeStr = fromMins(time);
       const isLunchSlot = isLunchEnabled && (time >= lunchStartMins && time < lunchEndMins);
-      const booking = clinicAppointments.find((a: any) => a.appointmentDate === selectedDate && a.appointmentTime === timeStr);
+      const booking = bookingsByTime.get(timeStr);
   
       const isGridLine = (time - startMins) % gridStepMins === 0;
 
@@ -4240,7 +4267,7 @@ export default function AdminDashboard() {
               ) : (
                 <button 
                   onClick={() => {
-                    if (!isLunchSlot && !isDateClosed()) {
+                    if (!isLunchSlot && !dateClosed) {
                       setNewBooking({
                         firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(),
                         service: activeClinic === 'dispensing' ? 'Dispensing' : 'Eye Check', time: timeStr, 
@@ -4249,7 +4276,7 @@ export default function AdminDashboard() {
                       setIsBookingModalOpen(true);
                     }
                   }}
-                  disabled={isLunchSlot || isDateClosed()}
+                  disabled={isLunchSlot || dateClosed}
                   className={`min-h-[5rem] w-full rounded-xl border-2 border-dashed transition-all flex items-center justify-center group ${isLunchSlot ? 'border-orange-200/50 bg-orange-50/30 cursor-not-allowed' : 'border-slate-200 hover:border-[#3F9185]/50 hover:bg-[#3F9185]/5 cursor-pointer shadow-sm hover:shadow-md'}`}
                 >
                    <span className={`text-[10px] font-bold uppercase tracking-widest transition-all duration-300 ${isLunchSlot ? 'text-orange-300 opacity-100' : 'text-[#3F9185] opacity-0 group-hover:opacity-100'}`}>
@@ -4284,80 +4311,97 @@ export default function AdminDashboard() {
   };
 
   // --- OMNICHANNEL CRM SORTING ENGINE ---
-  const sidebarPatientsMap = new Map();
+  // PERF: memoised — previously rebuilt on every render (every keystroke, every
+  // second), scanning all CRM patients for every message ever sent.
+  const { finalSidebarList, patientStats, totalUnreadMessages } = useMemo(() => {
+    const sidebarPatientsMap = new Map();
 
-  crmPatients.forEach(p => {
-     sidebarPatientsMap.set(p.id, { ...p });
-  });
+    crmPatients.forEach(p => {
+       sidebarPatientsMap.set(p.id, { ...p });
+    });
 
-  const findCrmPatient = (contactInfo: {phone?: string, email?: string}) => {
-     return crmPatients.find(p => (contactInfo.phone && p.phone === contactInfo.phone) || (contactInfo.email && p.email === contactInfo.email));
-  };
+    // O(1) lookup instead of scanning every CRM patient for every message.
+    // Keeps the original "first matching patient in list order" behaviour.
+    const phoneIdx = new Map<string, number>();
+    const emailIdx = new Map<string, number>();
+    crmPatients.forEach((p, i) => {
+       if (p.phone && !phoneIdx.has(p.phone)) phoneIdx.set(p.phone, i);
+       if (p.email && !emailIdx.has(p.email)) emailIdx.set(p.email, i);
+    });
+    const findCrmPatient = (contactInfo: {phone?: string, email?: string}) => {
+       const a = contactInfo.phone ? phoneIdx.get(contactInfo.phone) : undefined;
+       const b = contactInfo.email ? emailIdx.get(contactInfo.email) : undefined;
+       if (a === undefined && b === undefined) return undefined;
+       return crmPatients[Math.min(a ?? Infinity, b ?? Infinity)];
+    };
 
-  const allContactsMap = new Map();
-  appointments.forEach(app => {
-    const key = app.phone || app.email;
-    if (key && !allContactsMap.has(key)) {
-      allContactsMap.set(key, app);
-    }
-  });
-  const allContacts = Array.from(allContactsMap.values());
+    const allContactsMap = new Map();
+    appointments.forEach(app => {
+      const key = app.phone || app.email;
+      if (key && !allContactsMap.has(key)) {
+        allContactsMap.set(key, app);
+      }
+    });
+    const allContacts = Array.from(allContactsMap.values());
 
-  allContacts.forEach(contact => {
-    const crmP = findCrmPatient(contact);
-    if (!crmP) {
-       const key = contact.phone || contact.email;
-       if (key && !sidebarPatientsMap.has(key)) sidebarPatientsMap.set(key, { ...contact, id: `unknown-${key}` });
-    }
-  });
+    allContacts.forEach(contact => {
+      const crmP = findCrmPatient(contact);
+      if (!crmP) {
+         const key = contact.phone || contact.email;
+         if (key && !sidebarPatientsMap.has(key)) sidebarPatientsMap.set(key, { ...contact, id: `unknown-${key}` });
+      }
+    });
 
-  chatMessages.forEach(msg => {
-    const crmP = findCrmPatient(msg);
-    if (!crmP) {
-       const key = msg.phone || msg.email;
-       if (key && !sidebarPatientsMap.has(key)) {
-         sidebarPatientsMap.set(key, {
-           id: `unknown-${key}`,
-           patientName: msg.patientName && msg.patientName !== 'Patient Reply' ? msg.patientName : 'Unknown Sender',
-           phone: msg.phone || '',
-           email: msg.email || ''
-         });
+    chatMessages.forEach(msg => {
+      const crmP = findCrmPatient(msg);
+      if (!crmP) {
+         const key = msg.phone || msg.email;
+         if (key && !sidebarPatientsMap.has(key)) {
+           sidebarPatientsMap.set(key, {
+             id: `unknown-${key}`,
+             patientName: msg.patientName && msg.patientName !== 'Patient Reply' ? msg.patientName : 'Unknown Sender',
+             phone: msg.phone || '',
+             email: msg.email || ''
+           });
+         }
+      }
+    });
+
+    const patientStats = new Map<string, { unread: number; lastTime: number }>();
+    let totalUnreadMessages = 0;
+
+    chatMessages.forEach(msg => {
+       const crmP = findCrmPatient(msg);
+       const key = crmP ? crmP.id : (msg.phone || msg.email);
+       if (!key) return;
+
+       if (!patientStats.has(key)) patientStats.set(key, { unread: 0, lastTime: 0 });
+       const stats = patientStats.get(key);
+
+       if (msg.direction === 'inbound' && !msg.isRead) {
+         stats!.unread += 1;
+         totalUnreadMessages += 1;
        }
-    }
-  });
 
-  const patientStats = new Map();
-  let totalUnreadMessages = 0;
+       const msgTime = msg.timestamp?.seconds || 0;
+       if (msgTime > stats!.lastTime) stats!.lastTime = msgTime;
+    });
 
-  chatMessages.forEach(msg => {
-     const crmP = findCrmPatient(msg);
-     const key = crmP ? crmP.id : (msg.phone || msg.email);
-     if (!key) return;
+    const finalSidebarList = Array.from(sidebarPatientsMap.values()).sort((a, b) => {
+       const statsA = patientStats.get(a.id) || patientStats.get(a.phone) || patientStats.get(a.email) || { unread: 0, lastTime: 0 };
+       const statsB = patientStats.get(b.id) || patientStats.get(b.phone) || patientStats.get(b.email) || { unread: 0, lastTime: 0 };
 
-     if (!patientStats.has(key)) patientStats.set(key, { unread: 0, lastTime: 0 });
-     const stats = patientStats.get(key);
+       if (statsA.unread > 0 && statsB.unread === 0) return -1;
+       if (statsB.unread > 0 && statsA.unread === 0) return 1;
 
-     if (msg.direction === 'inbound' && !msg.isRead) {
-       stats.unread += 1;
-       totalUnreadMessages += 1;
-     }
+       if (statsB.lastTime !== statsA.lastTime) {
+          return statsB.lastTime - statsA.lastTime;
+       }
+       return (a.patientName || '').localeCompare(b.patientName || '');
+    });
 
-     const msgTime = msg.timestamp?.seconds || 0;
-     if (msgTime > stats.lastTime) stats.lastTime = msgTime;
-  });
-
-  const finalSidebarList = Array.from(sidebarPatientsMap.values()).sort((a, b) => {
-     const statsA = patientStats.get(a.id) || patientStats.get(a.phone) || patientStats.get(a.email) || { unread: 0, lastTime: 0 };
-     const statsB = patientStats.get(b.id) || patientStats.get(b.phone) || patientStats.get(b.email) || { unread: 0, lastTime: 0 };
-
-     if (statsA.unread > 0 && statsB.unread === 0) return -1;
-     if (statsB.unread > 0 && statsA.unread === 0) return 1;
-
-     if (statsB.lastTime !== statsA.lastTime) {
-        return statsB.lastTime - statsA.lastTime;
-     }
-     return (a.patientName || '').localeCompare(b.patientName || '');
-  });
+    return { finalSidebarList, patientStats, totalUnreadMessages };
+  }, [crmPatients, appointments, chatMessages]);
 
   const activePatientLedger = selectedChatPatient 
     ? appointments
@@ -4417,6 +4461,13 @@ export default function AdminDashboard() {
     .filter(a => a.status === 'Visit Complete' && !a.appointmentType?.includes('Contact') && !isDispensingAppointment(a.appointmentType))
     .sort((a, b) => new Date(b.appointmentDate).getTime() - new Date(a.appointmentDate).getTime());
 
+
+  // PERF: nav badge count — was filtering all recalls twice (with a new Date per
+  // recall) on every render.
+  const recallsDueCount = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    return recalls.filter(r => (r.status === 'Active' && r.nextRecallDate <= todayStr) || r.needsNewRecall).length;
+  }, [recalls]);
 
   // Find Unconfirmed (and recently confirmed) Appointments in the next 7 Days
   const next7Days = new Date();
@@ -4575,9 +4626,9 @@ export default function AdminDashboard() {
             </button>
             <button onClick={() => setView('recalls')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'recalls' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Bell size={18} /> Recalls
-              {recalls.filter(r => (r.status === 'Active' && r.nextRecallDate <= new Date().toISOString().split('T')[0]) || r.needsNewRecall).length > 0 && (
+              {recallsDueCount > 0 && (
                 <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full shrink-0 shadow-sm">
-                  {recalls.filter(r => (r.status === 'Active' && r.nextRecallDate <= new Date().toISOString().split('T')[0]) || r.needsNewRecall).length}
+                  {recallsDueCount}
                 </span>
               )}
             </button>

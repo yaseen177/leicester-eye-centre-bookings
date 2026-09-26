@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import BookingPage from './pages/BookingPage';
 import AdminLogin from './pages/AdminLogin';
-import AdminDashboard from './pages/AdminDashboard';
+// PERF: the admin dashboard (plus pdf.js, jsPDF, html2canvas, reports) is
+// ~1.8MB of JS. Loaded lazily so patients on the booking page don't download it.
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 import ManageBooking from './pages/ManageBooking';
 import AddEmailPage from './pages/AddEmailPage';
 import PaymentStatusPage from './pages/PaymentStatusPage';
@@ -46,7 +48,11 @@ export default function App() {
           
           <Route 
             path="/admin-panel-secret" 
-            element={isAuthenticated ? <AdminDashboard /> : <Navigate to="/admin-login" />} 
+            element={isAuthenticated ? (
+              <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-slate-400 font-bold">Loading dashboard…</div>}>
+                <AdminDashboard />
+              </Suspense>
+            ) : <Navigate to="/admin-login" />} 
           />
           
           <Route path="/manage/:id" element={<ManageBooking />} />
