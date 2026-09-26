@@ -22,3 +22,30 @@ declare global {
     });
   }
   
+  
+// Google Ads conversion for completed online bookings.
+// transaction_id = Firestore booking id, so each booking is counted once.
+// Sends ONLY the service - never the NHS/diabetic/benefits category or patient details.
+export const ADS_SEND_TO = 'AW-18309519693/V1ThCP3J7oYdEM2y1JpE';
+
+export function trackBookingConversion(bookingId: string, service: string) {
+  if (typeof window === 'undefined' || typeof window.gtag !== 'function') return;
+
+  if (!ADS_SEND_TO.includes('XXXX')) {
+    window.gtag('event', 'conversion', {
+      send_to: ADS_SEND_TO,
+      transaction_id: bookingId,
+    });
+  }
+
+  window.gtag('event', 'booking_completed', {
+    booking_id: bookingId,
+    service,
+  });
+}
+
+// GA4-only lead event for the Hearingcare enquiry form.
+export function trackLead(formName: string) {
+  if (typeof window === 'undefined' || typeof window.gtag !== 'function') return;
+  window.gtag('event', 'generate_lead', { form_name: formName });
+}
