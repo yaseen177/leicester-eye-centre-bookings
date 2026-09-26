@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw, MoreVertical } from 'lucide-react';
 import QRCode from 'qrcode';
 import AddressFinder, { blankAddress, type AddressValue } from '../components/AddressFinder';
 import DobInput from '../components/DobInput';
@@ -334,6 +334,98 @@ const blankEyeRx = (): EyeRxDraft => ({
   hPrism: '', hBase: '', vPrism: '', vBase: '', balance: false, va: ''
 });
 
+
+type SlotAction = {
+  label: string;
+  icon: ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+};
+
+// Single "options" button per appointment that reveals a small action list.
+// Rendered in a portal with fixed positioning so it never gets clipped by the
+// diary's scroll container, and flips upward when near the bottom of the screen.
+function SlotActionsMenu({ actions }: { actions: SlotAction[] }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const MENU_WIDTH = 200;
+  const ITEM_HEIGHT = 40;
+
+  const openMenu = () => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuHeight = actions.length * ITEM_HEIGHT + 12;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < menuHeight + 8 ? Math.max(8, rect.top - menuHeight - 4) : rect.bottom + 4;
+    // Sit to the left of the button, aligned to its right edge
+    const left = Math.max(8, rect.right - MENU_WIDTH);
+    setPos({ top, left });
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        draggable={false}
+        onClick={(e) => { e.stopPropagation(); open ? setOpen(false) : openMenu(); }}
+        className={`p-2 rounded-full transition-colors ${open ? 'bg-teal-50 text-[#3F9185]' : 'text-slate-400 hover:text-[#3F9185] hover:bg-teal-50'}`}
+        title="Options"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <MoreVertical size={18} />
+      </button>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: MENU_WIDTH, zIndex: 9999 }}
+          className="bg-white rounded-xl shadow-xl ring-1 ring-slate-200 py-1.5"
+        >
+          {actions.map((a, i) => (
+            <button
+              key={a.label}
+              type="button"
+              role="menuitem"
+              onClick={(e) => { e.stopPropagation(); setOpen(false); a.onClick(); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-bold transition-colors ${a.danger ? 'text-red-600 hover:bg-red-50' : 'text-slate-600 hover:bg-slate-50 hover:text-[#3F9185]'} ${a.danger && i > 0 ? 'border-t border-slate-100 mt-1 pt-2.5' : ''}`}
+            >
+              <span className="shrink-0">{a.icon}</span>
+              {a.label}
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
 
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits'>('diary');
@@ -4135,17 +4227,14 @@ export default function AdminDashboard() {
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 ml-4 border-l border-slate-100 pl-4">
-                    {!booking.patientId && (
-                       <button onClick={() => { setApptToLink(booking); setIsLinkModalOpen(true); }} className="text-slate-300 hover:text-indigo-500 p-2 hover:bg-indigo-50 rounded-full transition-colors" title="Link to Master CRM Record"><LinkIcon size={18} /></button>
-                    )}
-                    <button onClick={() => {
-                      setSelectedChatPatient(booking);
-                      setView('messages');
-                    }} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Message Patient"><MessageSquare size={18} /></button>
-                    <button onClick={() => setEditingApp(booking)} className="text-slate-300 hover:text-[#3F9185] p-2 hover:bg-teal-50 rounded-full transition-colors" title="Edit"><Settings size={18} /></button>
-                    <button onClick={() => deleteApp(booking)} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete"><Trash2 size={18} /></button>
-                    <button onClick={() => window.open(`/manage/${booking.id}`, '_blank')} className="text-slate-300 hover:text-blue-500 p-2 hover:bg-blue-50 rounded-full transition-colors" title="Manage Booking"><ExternalLink size={18} /></button>
+                  <div className="flex items-center ml-4 border-l border-slate-100 pl-3 self-start">
+                    <SlotActionsMenu actions={[
+                      { label: 'Edit appointment', icon: <Settings size={15} />, onClick: () => setEditingApp(booking) },
+                      { label: 'Message patient', icon: <MessageSquare size={15} />, onClick: () => { setSelectedChatPatient(booking); setView('messages'); } },
+                      { label: 'Manage booking', icon: <ExternalLink size={15} />, onClick: () => window.open(`/manage/${booking.id}`, '_blank') },
+                      ...(!booking.patientId ? [{ label: 'Link to CRM record', icon: <LinkIcon size={15} />, onClick: () => { setApptToLink(booking); setIsLinkModalOpen(true); } }] : []),
+                      { label: 'Delete appointment', icon: <Trash2 size={15} />, onClick: () => deleteApp(booking), danger: true },
+                    ]} />
                   </div>
                 </div>
               ) : (
