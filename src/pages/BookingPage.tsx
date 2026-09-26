@@ -6,6 +6,7 @@ import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/fi
 import AddressFinder, { blankAddress } from '../components/AddressFinder';
 import DobInput from '../components/DobInput';
 import AttendancePledge from '../components/AttendancePledge';
+import { trackBookingConversion, trackLead } from '../lib/analytics';
 
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
@@ -328,7 +329,7 @@ export default function BookingPage() {
           }
         })
       });
-
+      trackLead('hearingcare_enquiry');
       setStep(6);
     } catch (e) {
       console.error("Error:", e);
@@ -367,6 +368,7 @@ export default function BookingPage() {
         source: 'Online',
       });
       setBookingId(docRef.id);
+      trackBookingConversion(docRef.id, booking.service);
 
       // The booking form can't write to the patients collection directly
       // (it's unauthenticated, and that collection correctly requires
