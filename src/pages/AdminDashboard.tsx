@@ -17,6 +17,7 @@ import PatientSearchHome from '../components/patient/PatientSearchHome';
 import PatientOverview from '../components/patient/PatientOverview';
 import PatientPurchases from '../components/patient/PatientPurchases';
 import VatReportPage from '../components/till/VatReportPage';
+import { classifySender, domainOf, EMPTY_RULES, type SenderRules } from '../lib/senderClassifier';
 import PatientRecords from './PatientRecords';
 import { autoNumberNewPatients, resolveOrCreatePatient, findExistingPatient } from '../lib/patientRecords';
 
@@ -443,6 +444,12 @@ export default function AdminDashboard() {
   const [crmMode, setCrmMode] = useState<'patients' | 'inbox'>('patients');
   const [moreOpen, setMoreOpen] = useState(false);
   const [reportsSection, setReportsSection] = useState<'analytics' | 'vat'>('analytics');
+  // Inbox split: patients (in CRM) / not in CRM (people) / companies
+  const [inboxFilter, setInboxFilter] = useState<'patients' | 'unknown' | 'companies' | 'all'>('patients');
+  const [senderRules, setSenderRules] = useState<SenderRules>(EMPTY_RULES);
+  useEffect(() => onSnapshot(doc(db, 'settings', 'senderRules'),
+    snap => setSenderRules({ ...EMPTY_RULES, ...((snap.data() as Partial<SenderRules>) || {}) }),
+    () => { /* rules optional */ }), []);
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -4352,7 +4359,7 @@ export default function AdminDashboard() {
   // --- OMNICHANNEL CRM SORTING ENGINE ---
   // PERF: memoised — previously rebuilt on every render (every keystroke, every
   // second), scanning all CRM patients for every message ever sent.
-  const { finalSidebarList, patientStats, totalUnreadMessages } = useMemo(() => {
+  const { finalSidebarList, patientStats } = useMemo(() => {
     const sidebarPatientsMap = new Map();
 
     crmPatients.forEach(p => {
@@ -4441,6 +4448,42 @@ export default function AdminDashboard() {
 
     return { finalSidebarList, patientStats, totalUnreadMessages };
   }, [crmPatients, appointments, chatMessages]);
+
+  // Which inbox bucket a sidebar entry belongs in.
+  const apptContactKeys = useMemo(() => new Set(
+    appointments.flatMap(a => [a.email ? String(a.email).toLowerCase() : '', a.phone || ''].filter(Boolean))
+  ), [appointments]);
+
+  const senderBucket = (p: any): 'patients' | 'unknown' | 'companies' => {
+    if (p?.id && !String(p.id).startsWith('unknown-')) return 'patients';
+    const booked = apptContactKeys.has(String(p?.email || '').toLowerCase()) || apptContactKeys.has(p?.phone || '');
+    return classifySender({ email: p?.email, phone: p?.phone, name: p?.patientName }, senderRules, booked) === 'company' ? 'companies' : 'unknown';
+  };
+
+  const inboxBuckets = useMemo(() => {
+    const out = { patients: { total: 0, unread: 0 }, unknown: { total: 0, unread: 0 }, companies: { total: 0, unread: 0 }, all: { total: 0, unread: 0 } };
+    finalSidebarList.forEach((p: any) => {
+      const st = patientStats.get(p.id) || patientStats.get(p.phone) || patientStats.get(p.email);
+      if (!st || !st.lastTime) return;
+      const b = senderBucket(p);
+      out[b].total++; out[b].unread += st.unread;
+      out.all.total++; out.all.unread += st.unread;
+    });
+    return out;
+  }, [finalSidebarList, patientStats, senderRules, apptContactKeys]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Mark as company" / "Not a company" — by exact address, whole domain, or phone/sender ID.
+  const setSenderRule = async (kind: 'companies' | 'people', key: string) => {
+    const k = key.trim().toLowerCase();
+    if (!k) return;
+    const next: SenderRules = {
+      companies: kind === 'companies' ? Array.from(new Set([...senderRules.companies, k])) : senderRules.companies.filter(x => x !== k),
+      people: kind === 'people' ? Array.from(new Set([...senderRules.people, k])) : senderRules.people.filter(x => x !== k)
+    };
+    setSenderRules(next);
+    try { await setDoc(doc(db, 'settings', 'senderRules'), next); }
+    catch (e: any) { alert(`Couldn't save sender rule: ${e?.message || e}`); }
+  };
 
   const activePatientLedger = selectedChatPatient 
     ? appointments
@@ -4678,7 +4721,7 @@ export default function AdminDashboard() {
             {([
               { key: 'diary', label: 'Diary', icon: <LayoutDashboard size={18} />, active: view === 'diary', go: () => setView('diary') },
               { key: 'patients', label: 'Patients', icon: <User size={18} />, active: view === 'messages' && crmMode === 'patients', go: () => { setCrmMode('patients'); setSelectedChatPatient(null); setView('messages'); } },
-              { key: 'inbox', label: 'Inbox', icon: <MessageSquare size={18} />, active: view === 'messages' && crmMode === 'inbox', go: () => { setCrmMode('inbox'); setView('messages'); }, badge: totalUnreadMessages },
+              { key: 'inbox', label: 'Inbox', icon: <MessageSquare size={18} />, active: view === 'messages' && crmMode === 'inbox', go: () => { setCrmMode('inbox'); setView('messages'); }, badge: inboxBuckets.patients.unread + inboxBuckets.unknown.unread },
               { key: 'dispensing', label: 'Dispensing', icon: <Glasses size={18} />, active: view === 'dispensing', go: () => setView('dispensing') },
               { key: 'till', label: 'Till', icon: <Wallet size={18} />, active: view === 'till', go: () => setView('till') },
               { key: 'recalls', label: 'Recalls', icon: <Bell size={18} />, active: view === 'recalls', go: () => setView('recalls'), badge: recallsDueCount }
@@ -5292,6 +5335,24 @@ export default function AdminDashboard() {
                     onChange={e => { setGlobalMessageSearch(e.target.value); setPatientSearch(''); }}
                   />
                 </div>
+
+                {/* Inbox split */}
+                <div className="grid grid-cols-2 gap-1.5 pt-1">
+                  {([
+                    ['patients', 'Patients'],
+                    ['unknown', 'Not in CRM'],
+                    ['companies', 'Companies'],
+                    ['all', 'All']
+                  ] as const).map(([k, l]) => (
+                    <button key={k} onClick={() => setInboxFilter(k)}
+                      className={`px-2.5 py-2 rounded-lg text-[11px] font-black flex items-center justify-between gap-1 transition-all ${inboxFilter === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                      <span>{l}</span>
+                      {inboxBuckets[k].unread > 0
+                        ? <span className={`px-1.5 rounded-full text-[10px] ${k === 'companies' ? 'bg-slate-400 text-white' : 'bg-red-500 text-white'}`}>{inboxBuckets[k].unread}</span>
+                        : <span className="opacity-50 text-[10px]">{inboxBuckets[k].total}</span>}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Patient / Message List Rendering */}
@@ -5326,6 +5387,7 @@ export default function AdminDashboard() {
                   /* Display Active WhatsApp-Style List */
                   finalSidebarList
                     .filter((p: any) => crmMode !== 'inbox' || ((patientStats.get(p.id) || patientStats.get(p.phone) || patientStats.get(p.email))?.lastTime || 0) > 0)
+                    .filter((p: any) => crmMode !== 'inbox' || inboxFilter === 'all' || senderBucket(p) === inboxFilter)
                     .filter(p => 
                       (p.patientName || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
                       (p.email || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
@@ -5353,6 +5415,8 @@ export default function AdminDashboard() {
                                {patient.patientName}
                                {isMasterRecord && !patient.imported && <span className="w-2 h-2 bg-indigo-400 rounded-full" title="Master Record"></span>}
                                {patient.imported && <span className="w-2 h-2 bg-purple-400 rounded-full" title="Imported CSV Record"></span>}
+                               {inboxFilter === 'all' && senderBucket(patient) === 'companies' && <span className="text-[9px] font-black bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded uppercase">Company</span>}
+                               {inboxFilter === 'all' && senderBucket(patient) === 'unknown' && <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase">Not in CRM</span>}
                             </p>
                             <p className={`text-[10px] truncate ${isUnread ? 'font-bold text-[#3F9185]' : 'text-slate-500'}`}>{recentMsg ? recentMsg.text : patient.phone || 'No contact info'}</p>
                           </div>
@@ -5402,6 +5466,27 @@ export default function AdminDashboard() {
 
                       {/* Patient actions */}
                       <div className="flex items-center gap-2 flex-wrap">
+                        {crmMode === 'inbox' && String(selectedChatPatient.id || '').startsWith('unknown-') && !String(selectedChatPatient.id).startsWith('unknown-new-') && (() => {
+                          const isCompany = senderBucket(selectedChatPatient) === 'companies';
+                          const addr = String(selectedChatPatient.email || selectedChatPatient.phone || '').toLowerCase();
+                          const dom = domainOf(selectedChatPatient.email || '');
+                          return isCompany ? (
+                            <button onClick={() => { setSenderRule('people', addr); }} className="px-3 py-2 rounded-xl text-xs font-black bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100">
+                              Not a company
+                            </button>
+                          ) : (
+                            <>
+                              <button onClick={() => setSenderRule('companies', addr)} className="px-3 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-600">
+                                Mark as company
+                              </button>
+                              {dom && (
+                                <button onClick={() => { if (confirm(`Treat every sender from @${dom} as a company?`)) setSenderRule('companies', dom); }} className="px-3 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-600">
+                                  All of @{dom}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
                         {crmMode === 'patients' && (
                           <button onClick={() => setSelectedChatPatient(null)} className="px-3 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center gap-1.5">
                             <Search size={14} /> Find another patient
