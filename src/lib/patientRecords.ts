@@ -3,10 +3,10 @@
 // ============================================================================
 
 import {
-  collection, doc, getDoc, getDocs, query, where, runTransaction, writeBatch, serverTimestamp, arrayUnion
+  collection, doc, getDoc, getDocs, query, where, runTransaction, writeBatch, serverTimestamp, arrayUnion, addDoc, setDoc
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { createdSecs, emailKey, phoneKey, invalidateDirectory } from './patientDirectory';
+import { createdSecs, emailKey, phoneKey, dobKey, invalidateDirectory, loadPatientDirectory, groupPatients, findExistingPerson, addToDirectoryCache } from './patientDirectory';
 
 // ----------------------------------------------------------------------------
 // Patient numbers
@@ -204,4 +204,39 @@ export const unarchivePatient = async (id: string) => {
   batch.update(doc(db, 'patients', id), { mergedInto: null, archived: false });
   await batch.commit();
   invalidateDirectory();
+};
+
+// ----------------------------------------------------------------------------
+// Duplicate prevention for every "create patient" path
+// ----------------------------------------------------------------------------
+// Same rule as the duplicate checker: the NAME must match and they must share
+// an email or phone; a different date of birth always means a different person.
+export const findExistingPatient = async (d: { name: string; email?: string; phone?: string; dob?: string }): Promise<any | null> => {
+  try {
+    const g = findExistingPerson(groupPatients(await loadPatientDirectory()), d.name, d.email || '', d.phone || '');
+    if (!g) return null;
+    const a = dobKey(d.dob), b = dobKey(g.primary.dob);
+    if (a && b && a !== b) return null;
+    return g.primary;
+  } catch {
+    return null; // never block a save because the check failed
+  }
+};
+
+// Reuse an existing patient (topping up only BLANK fields) or create a new one.
+export const resolveOrCreatePatient = async (data: Record<string, any>): Promise<{ id: string; existed: boolean; patient?: any }> => {
+  const existing = await findExistingPatient({ name: data.patientName, email: data.email, phone: data.phone, dob: data.dob });
+  if (existing) {
+    const patch: Record<string, any> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined || v === null || v === '' || k === 'createdAt') continue;
+      if (existing[k] === undefined || existing[k] === null || existing[k] === '') patch[k] = v;
+    }
+    if (Object.keys(patch).length) await setDoc(doc(db, 'patients', existing.id), patch, { merge: true });
+    return { id: existing.id, existed: true, patient: existing };
+  }
+  const ref = await addDoc(collection(db, 'patients'), { ...data, createdAt: serverTimestamp() });
+  addToDirectoryCache({ id: ref.id, ...data });
+  try { if ((await getNumberingStatus()).backfilled) await assignPatientNumber(ref.id); } catch { /* auto-numbered later */ }
+  return { id: ref.id, existed: false };
 };

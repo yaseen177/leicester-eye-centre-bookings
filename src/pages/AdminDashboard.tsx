@@ -12,9 +12,13 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
 import ReportsDashboard from './ReportsDashboard';
 import TillDashboard from './TillDashboard';
-import { PatientSales } from '../components/till/PatientLink';
+import { PatientSales, usePatientSales } from '../components/till/PatientLink';
+import PatientDirectoryList from '../components/patient/PatientDirectoryList';
+import PatientOverview from '../components/patient/PatientOverview';
+import PatientPurchases from '../components/patient/PatientPurchases';
+import VatReportPage from '../components/till/VatReportPage';
 import PatientRecords from './PatientRecords';
-import { autoNumberNewPatients } from '../lib/patientRecords';
+import { autoNumberNewPatients, resolveOrCreatePatient, findExistingPatient } from '../lib/patientRecords';
 
 interface ClinicScheduleConfig {
   times: Record<string, number>;
@@ -438,6 +442,7 @@ export default function AdminDashboard() {
   // opens on Details; Inbox lists only people with messages and opens on Messages.
   const [crmMode, setCrmMode] = useState<'patients' | 'inbox'>('patients');
   const [moreOpen, setMoreOpen] = useState(false);
+  const [reportsSection, setReportsSection] = useState<'analytics' | 'vat'>('analytics');
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -569,7 +574,9 @@ export default function AdminDashboard() {
   const [crmPatients, setCrmPatients] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
-  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'orders' | 'sales' | 'prescriptions' | 'profile' | 'recalls'>('chat');
+  // Till sales for the open patient (Overview + Purchases tabs).
+  const { sales: activePatientSales, settings: tillVatSettings } = usePatientSales(selectedChatPatient);
+  const [crmTab, setCrmTab] = useState<'overview' | 'chat' | 'ledger' | 'orders' | 'sales' | 'purchases' | 'prescriptions' | 'profile' | 'recalls'>('overview');
   const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '', address: blankAddress() });
   
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
@@ -995,7 +1002,7 @@ export default function AdminDashboard() {
         dob: selectedChatPatient.dob || '',
         address: selectedChatPatient.address?.verified ? selectedChatPatient.address : blankAddress()
       });
-      setCrmTab(crmMode === 'inbox' ? 'chat' : 'profile');
+      setCrmTab(crmMode === 'inbox' ? 'chat' : String(selectedChatPatient.id || '').startsWith('unknown-new-') ? 'profile' : 'overview');
       setReplyingToMessage(null); 
     }
   }, [selectedChatPatient]);
@@ -1247,7 +1254,22 @@ export default function AdminDashboard() {
       const isKnownCrmId = selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-');
       let currentMasterId = selectedChatPatient.id;
 
-      if (!isKnownCrmId) {
+      // Before creating a record, check the CRM already has this person.
+      const existingMatch = !isKnownCrmId
+        ? await findExistingPatient({ name: editProfileData.patientName, email: editProfileData.email, phone: editProfileData.phone, dob: editProfileData.dob })
+        : null;
+      const useExisting = !!existingMatch && confirm(`${existingMatch.patientName}${existingMatch.patientNumber ? ` (${existingMatch.patientNumber})` : ''} is already in the CRM with the same contact details.\n\nOK = update that record (recommended)\nCancel = create a separate new record`);
+
+      if (useExisting) {
+        currentMasterId = existingMatch.id;
+        await setDoc(doc(db, "patients", currentMasterId), {
+          patientName: editProfileData.patientName,
+          email: editProfileData.email,
+          phone: editProfileData.phone,
+          dob: editProfileData.dob,
+          address: editProfileData.address
+        }, { merge: true });
+      } else if (!isKnownCrmId) {
         const newPatientRef = await addDoc(collection(db, "patients"), {
           patientName: editProfileData.patientName,
           email: editProfileData.email,
@@ -1315,13 +1337,13 @@ export default function AdminDashboard() {
               phone: formattedPhone
            }, { merge: true });
         } else {
-           const newPatientRef = await addDoc(collection(db, "patients"), {
+           // Reuses an existing CRM record for this person if there is one.
+           const res = await resolveOrCreatePatient({
               patientName: newQuote.patientName,
               email: newQuote.email.toLowerCase(),
-              phone: formattedPhone,
-              createdAt: serverTimestamp()
+              phone: formattedPhone
            });
-           finalPatientId = newPatientRef.id;
+           finalPatientId = res.id;
         }
       }
 
@@ -1491,11 +1513,11 @@ export default function AdminDashboard() {
             patientName: newOrder.patientName, email: newOrder.email.toLowerCase(), phone: formattedPhone, dob: newOrder.dob
           }, { merge: true });
         } else {
-          const newPatientRef = await addDoc(collection(db, "patients"), {
-            patientName: newOrder.patientName, email: newOrder.email.toLowerCase(), phone: formattedPhone, dob: newOrder.dob,
-            createdAt: serverTimestamp()
+          // Reuses an existing CRM record for this person if there is one.
+          const res = await resolveOrCreatePatient({
+            patientName: newOrder.patientName, email: newOrder.email.toLowerCase(), phone: formattedPhone, dob: newOrder.dob
           });
-          finalPatientId = newPatientRef.id;
+          finalPatientId = res.id;
         }
       }
 
@@ -4459,6 +4481,21 @@ export default function AdminDashboard() {
         .sort((a, b) => new Date(b.dateIssued || 0).getTime() - new Date(a.dateIssued || 0).getTime())
     : [];
 
+  const activePatientClPlans = selectedChatPatient
+    ? clSubscriptions.filter(c =>
+        (c.patientId && c.patientId === selectedChatPatient.id) ||
+        (!c.patientId && c.phone && c.phone === selectedChatPatient.phone) ||
+        (!c.patientId && c.email && c.email === selectedChatPatient.email))
+    : [];
+
+  const activePatientMessages = selectedChatPatient
+    ? chatMessages.filter(m => (m.phone && m.phone === selectedChatPatient.phone) || (m.email && m.email === selectedChatPatient.email))
+    : [];
+
+  const activePatientOrdersWithStatus = activePatientOrders.map(o => ({ ...o, _status: getOrderStatus(o), _balance: getOrderBalance(o) }));
+
+  const openOrderFromCrm = (orderId: string) => { setView('dispensing'); setDispensingTab('orders'); setOrderStatusFilter('All'); setSelectedOrderId(orderId); };
+
   const dispensingRxPrescriptions = selectedPatientForRx
     ? prescriptions
         .filter(rx => rx.patientId === selectedPatientForRx.id)
@@ -5187,6 +5224,15 @@ export default function AdminDashboard() {
           <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[calc(100vh-10rem)] min-h-[600px] border border-slate-100">
             {/* LEFT SIDEBAR: Search and Patient List */}
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
+              {crmMode === 'patients' ? (
+                <PatientDirectoryList
+                  selectedId={selectedChatPatient?.id}
+                  livePatients={crmPatients}
+                  onSelect={(p) => setSelectedChatPatient(p)}
+                  onNewPatient={() => setSelectedChatPatient({ id: `unknown-new-${Date.now()}`, patientName: '', phone: '', email: '' })}
+                  onImport={() => setIsCsvModalOpen(true)}
+                />
+              ) : (<>
               
               <div className="p-4 bg-white border-b border-slate-200 space-y-3">
                 <div className="flex gap-2">
@@ -5311,6 +5357,7 @@ export default function AdminDashboard() {
                   <p className="p-6 text-center text-slate-400 font-bold text-sm">No active patients. Import CSV or start a chat.</p>
                 )}
               </div>
+              </>)}
             </div>
 
             {/* RIGHT PANE - Master CRM Workspace */}
@@ -5342,15 +5389,49 @@ export default function AdminDashboard() {
                     
                     {/* CRM Tabs */}
                     <div className="flex gap-6 px-6 overflow-x-auto">
-                       <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Details</button>
-                       <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointments</button>
-                       <button onClick={() => setCrmTab('prescriptions')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'prescriptions' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText size={14}/> Prescriptions</button>
-                       <button onClick={() => setCrmTab('orders')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'orders' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><ShoppingBag size={14}/> Glasses Orders</button>
-                       <button onClick={() => setCrmTab('sales')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'sales' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Wallet size={14}/> Till Sales</button>
-                       <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><MessageSquare size={14}/> Messages</button>
-                       <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
+                       <button onClick={() => setCrmTab('overview')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'overview' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><LayoutDashboard size={14}/> Overview</button>
+                       <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointments</button>
+                       <button onClick={() => setCrmTab('prescriptions')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'prescriptions' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText size={14}/> Prescriptions</button>
+                       <button onClick={() => setCrmTab('purchases')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'purchases' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><ShoppingBag size={14}/> Purchases</button>
+                       <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><MessageSquare size={14}/> Messages</button>
+                       <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
+                       <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Details</button>
                     </div>
                   </div>
+
+                  {/* TAB: OVERVIEW DASHBOARD */}
+                  {crmTab === 'overview' && (
+                    <PatientOverview
+                      patient={selectedChatPatient}
+                      appointments={activePatientLedger}
+                      recalls={activePatientRecalls}
+                      orders={activePatientOrdersWithStatus}
+                      prescriptions={activePatientPrescriptions}
+                      clPlans={activePatientClPlans}
+                      messages={activePatientMessages}
+                      sales={activePatientSales}
+                      onGo={(t) => setCrmTab(t as any)}
+                      onEdit={() => setCrmTab('profile')}
+                      onOpenOrder={openOrderFromCrm}
+                      onNewSale={() => { setTillSalePatient(selectedChatPatient); setView('till'); }}
+                      onMessage={() => setCrmTab('chat')}
+                    />
+                  )}
+
+                  {/* TAB: PURCHASES (glasses orders + till sales + CL plans) */}
+                  {crmTab === 'purchases' && (
+                    <PatientPurchases
+                      patient={selectedChatPatient}
+                      orders={activePatientOrdersWithStatus}
+                      sales={activePatientSales}
+                      settings={tillVatSettings}
+                      clPlans={activePatientClPlans}
+                      orderStatusStyles={ORDER_STATUS_STYLES}
+                      clStatusStyles={CL_STATUS_STYLES}
+                      onOpenOrder={openOrderFromCrm}
+                      onNewSale={() => { setTillSalePatient(selectedChatPatient); setView('till'); }}
+                    />
+                  )}
 
                   {/* TAB 1: COMMUNICATIONS */}
                   {crmTab === 'chat' && (
@@ -6609,7 +6690,17 @@ export default function AdminDashboard() {
         )}
 
         {/* --- REPORTS VIEW --- */}
-        {view === 'reports' && <ReportsDashboard appointments={appointments} orders={dispenseOrders} />}
+        {view === 'reports' && (
+          <div className="space-y-4">
+            <div className="flex gap-1.5 bg-white p-2 rounded-2xl shadow-sm border border-slate-100 w-max">
+              <button onClick={() => setReportsSection('analytics')} className={`px-4 py-2 rounded-xl font-bold text-sm flex items-center gap-2 ${reportsSection === 'analytics' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}><Activity size={16} /> Analytics</button>
+              <button onClick={() => setReportsSection('vat')} className={`px-4 py-2 rounded-xl font-bold text-sm flex items-center gap-2 ${reportsSection === 'vat' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}><Percent size={16} /> VAT Report</button>
+            </div>
+            {reportsSection === 'analytics'
+              ? <ReportsDashboard appointments={appointments} orders={dispenseOrders} />
+              : <VatReportPage orders={dispenseOrders} />}
+          </div>
+        )}
 
         {/* --- TILL / CASH-UP / VAT VIEW --- */}
         {view === 'patientRecords' && <PatientRecords />}

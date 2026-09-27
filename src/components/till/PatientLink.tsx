@@ -130,7 +130,8 @@ export function PatientPicker({ value, onPick, onClear }: { value: Customer; onP
 // ----------------------------------------------------------------------------
 // CRM → patient record → "Sales" tab
 // ----------------------------------------------------------------------------
-export function PatientSales({ patient, onNewSale }: { patient: any; onNewSale?: (p: any) => void }) {
+// Till sales + refunds for a patient (all their records), newest first.
+export function usePatientSales(patient: any): { sales: any[] | null; settings: VatSettings | null } {
   const [sales, setSales] = useState<any[] | null>(null);
   const [settings, setSettings] = useState<VatSettings | null>(null);
 
@@ -138,6 +139,11 @@ export function PatientSales({ patient, onNewSale }: { patient: any; onNewSale?:
     let cancelled = false;
     (async () => {
       setSales(null);
+      if (!patient?.id || String(patient.id).startsWith('unknown-new-')) {
+        const st = await loadVatSettings().catch(() => null);
+        if (!cancelled) { setSettings(st); setSales([]); }
+        return;
+      }
       try {
         // Include every duplicate CRM record for this person.
         const groups = groupPatients(await loadPatientDirectory());
@@ -170,8 +176,13 @@ export function PatientSales({ patient, onNewSale }: { patient: any; onNewSale?:
       }
     })();
     return () => { cancelled = true; };
-  }, [patient.id, patient.email, patient.phone]);
+  }, [patient?.id, patient?.email, patient?.phone]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  return { sales, settings };
+}
+
+export function PatientSales({ patient, onNewSale }: { patient: any; onNewSale?: (p: any) => void }) {
+  const { sales, settings } = usePatientSales(patient);
   const lifetime = round2((sales || []).reduce((t, s) => t + (s.totals?.gross || 0), 0));
 
   return (

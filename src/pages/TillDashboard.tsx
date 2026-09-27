@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ShoppingCart, Receipt, Glasses, Calculator, Package, Percent, Settings, Loader2, AlertTriangle } from 'lucide-react';
+import { ShoppingCart, Receipt, Glasses, Calculator, Package, Settings, Loader2, AlertTriangle } from 'lucide-react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { loadVatSettings, type Product } from '../lib/till';
@@ -9,10 +9,9 @@ import SalesHistory from '../components/till/SalesHistory';
 import OrdersTill from '../components/till/OrdersTill';
 import CashUp from '../components/till/CashUp';
 import ProductsManager from '../components/till/ProductsManager';
-import VatReport from '../components/till/VatReport';
 import TillSettings from '../components/till/TillSettings';
 
-type TillTab = 'sale' | 'history' | 'orders' | 'cashup' | 'products' | 'vat' | 'settings';
+type TillTab = 'sale' | 'history' | 'orders' | 'cashup' | 'products' | 'settings';
 
 const TABS: { key: TillTab; label: string; icon: any }[] = [
   { key: 'sale', label: 'New Sale', icon: ShoppingCart },
@@ -20,7 +19,6 @@ const TABS: { key: TillTab; label: string; icon: any }[] = [
   { key: 'orders', label: 'Glasses Orders', icon: Glasses },
   { key: 'cashup', label: 'Cash Up', icon: Calculator },
   { key: 'products', label: 'Products & Stock', icon: Package },
-  { key: 'vat', label: 'VAT Report', icon: Percent },
   { key: 'settings', label: 'VAT Settings', icon: Settings }
 ];
 
@@ -79,7 +77,6 @@ export default function TillDashboard({ dispenseOrders, salePatient, onSalePatie
       {tab === 'orders' && <OrdersTill orders={dispenseOrders} settings={settings} />}
       {tab === 'cashup' && <CashUp orders={dispenseOrders} settings={settings} staffEmail={staffEmail} />}
       {tab === 'products' && <ProductsManager products={products} settings={settings} />}
-      {tab === 'vat' && <VatReport orders={dispenseOrders} settings={settings} />}
       {tab === 'settings' && <TillSettings settings={settings} onSaved={setSettings} />}
     </div>
   );
