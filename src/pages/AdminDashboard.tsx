@@ -12,6 +12,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
 import ReportsDashboard from './ReportsDashboard';
 import TillDashboard from './TillDashboard';
+import { PatientSales } from '../components/till/PatientLink';
 
 interface ClinicScheduleConfig {
   times: Record<string, number>;
@@ -430,6 +431,7 @@ function SlotActionsMenu({ actions }: { actions: SlotAction[] }) {
 
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits' | 'till'>('diary');
+  const [tillSalePatient, setTillSalePatient] = useState<any>(null);
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -561,7 +563,7 @@ export default function AdminDashboard() {
   const [crmPatients, setCrmPatients] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
-  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'orders' | 'prescriptions' | 'profile' | 'recalls'>('chat');
+  const [crmTab, setCrmTab] = useState<'chat' | 'ledger' | 'orders' | 'sales' | 'prescriptions' | 'profile' | 'recalls'>('chat');
   const [editProfileData, setEditProfileData] = useState({ patientName: '', email: '', phone: '', dob: '', address: blankAddress() });
   
   const [commsType, setCommsType] = useState<'SMS' | 'Email'>('SMS');
@@ -5325,6 +5327,7 @@ export default function AdminDashboard() {
                        <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Communications</button>
                        <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointment Ledger</button>
                        <button onClick={() => setCrmTab('orders')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'orders' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><ShoppingBag size={14}/> Dispense Orders</button>
+                       <button onClick={() => setCrmTab('sales')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'sales' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Wallet size={14}/> Till Sales</button>
                        <button onClick={() => setCrmTab('prescriptions')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'prescriptions' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText size={14}/> Prescriptions</button>
                        <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
                        <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Master Profile</button>
@@ -5692,6 +5695,11 @@ export default function AdminDashboard() {
                         )}
                       </div>
                     </div>
+                  )}
+
+                  {/* TAB: PER-PATIENT TILL SALES */}
+                  {crmTab === 'sales' && (
+                    <PatientSales patient={selectedChatPatient} onNewSale={(p) => { setTillSalePatient(p); setView('till'); }} />
                   )}
 
                   {/* TAB: PER-PATIENT DISPENSE ORDERS */}
@@ -6585,7 +6593,7 @@ export default function AdminDashboard() {
         {/* --- REPORTS VIEW --- */}
         {view === 'reports' && <ReportsDashboard appointments={appointments} orders={dispenseOrders} />}
 
-        {view === 'till' && <TillDashboard dispenseOrders={dispenseOrders} patients={crmPatients} />}
+        {view === 'till' && <TillDashboard dispenseOrders={dispenseOrders} salePatient={tillSalePatient} onSalePatientUsed={() => setTillSalePatient(null)} />}
 
         {/* --- PRICING CONFIG VIEW --- */}
         {view === 'pricing' && !pricingData && (

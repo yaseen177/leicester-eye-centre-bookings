@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { RotateCcw, RefreshCw, Loader2 } from 'lucide-react';
-import { fetchSalesForRange, fetchSale, createRefund, londonDate, ukDateTime } from '../../lib/till';
+import { fetchSalesForRange, fetchSale, createRefund, londonDate, ukDateTime, blankCustomer } from '../../lib/till';
 import { gbp, round2, type VatSettings } from '../../lib/vat';
 import { buildSaleReceiptPdf } from '../../lib/receipt';
 import { btnGhost, btnDanger, btnPrimary, input, card, label, ReceiptActions, Modal } from './shared';
+import { PatientPicker, linkSaleToPatient } from './PatientLink';
 
 export default function SalesHistory({ settings, staffName, staffEmail }: { settings: VatSettings; staffName: string; staffEmail: string }) {
   const [from, setFrom] = useState(londonDate());
@@ -12,6 +13,7 @@ export default function SalesHistory({ settings, staffName, staffEmail }: { sett
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [refundFor, setRefundFor] = useState<any>(null);
+  const [linkFor, setLinkFor] = useState<any>(null);
 
   const load = async () => {
     setLoading(true);
@@ -52,7 +54,11 @@ export default function SalesHistory({ settings, staffName, staffEmail }: { sett
                     {!isRefund && s.refundedTotal > 0 && <div className="text-[10px] font-black text-amber-600">{fullyRefunded ? 'Fully refunded' : `Refunded ${gbp(s.refundedTotal)}`}</div>}
                   </td>
                   <td className="text-xs text-slate-500">{s.createdAtIso ? ukDateTime(s.createdAtIso) : s.date}<div>{s.staffName}</div></td>
-                  <td className="text-xs">{s.customer?.name || <span className="text-slate-400">Walk-in</span>}</td>
+                  <td className="text-xs">
+                    {s.customer?.name || <span className="text-slate-400">Walk-in</span>}
+                    {s.customer?.patientId ? <div className="text-[10px] font-black text-[#3F9185]">CRM linked</div>
+                      : <button className="block text-[10px] font-black text-[#3F9185] underline mt-0.5" onClick={() => setLinkFor(s)}>Link to patient</button>}
+                  </td>
                   <td className="text-xs">{(s.lines || []).map((l: any, i: number) => <div key={i}>{Math.abs(l.qty)} × {l.name}</div>)}</td>
                   <td className="text-xs">{(s.payments || []).map((p: any) => <div key={p.id}>{p.method} {gbp(p.amount)}</div>)}</td>
                   <td className="text-right text-xs">{gbp(s.totals?.vat || 0)}</td>
@@ -71,6 +77,18 @@ export default function SalesHistory({ settings, staffName, staffEmail }: { sett
           </tbody>
         </table>
       </div>
+
+      {linkFor && (
+        <Modal title={`Link ${linkFor.receiptNumber} to a patient`} onClose={() => setLinkFor(null)}>
+          <p className="text-xs text-slate-500 mb-3">Search the CRM and pick the patient this sale belongs to.</p>
+          <PatientPicker value={blankCustomer()} onClear={() => {}}
+            onPick={async p => {
+              try { await linkSaleToPatient(linkFor.id, p); setLinkFor(null); load(); }
+              catch (e: any) { alert(`Couldn't link: ${e?.message || e}`); }
+            }} />
+          <div className="mt-3 text-right"><button className={btnGhost} onClick={() => setLinkFor(null)}>Cancel</button></div>
+        </Modal>
+      )}
 
       {refundFor && (
         <RefundModal sale={refundFor} settings={settings} staffName={staffName} staffEmail={staffEmail}

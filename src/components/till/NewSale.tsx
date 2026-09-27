@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from 'react';
-import { Search, Plus, Minus, Trash2, User, CheckCircle2, Loader2, PackagePlus } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Search, Plus, Minus, Trash2, CheckCircle2, Loader2, PackagePlus } from 'lucide-react';
 import { buildLine, createSale, genId, blankCustomer, TILL_TENDERS, isVoucherMethod, type Product, type Customer, type TillPaymentMethod, type SalePayment } from '../../lib/till';
 import { gbp, round2, sumBreakdowns, VAT_CATEGORY_LABELS, type VatCategory, type VatSettings, type DispenseKind } from '../../lib/vat';
 import { buildSaleReceiptPdf } from '../../lib/receipt';
 import { btnPrimary, btnGhost, btnDanger, input, card, label, ReceiptActions, Modal } from './shared';
+import { PatientPicker, patientToCustomer, ensurePatientForCustomer, formatUkPhone } from './PatientLink';
 
 interface CartLine {
   key: string;
@@ -15,14 +16,16 @@ interface CartLine {
 
 interface TenderDraft { id: string; method: TillPaymentMethod; amount: string; reference: string }
 
-export default function NewSale({ products, patients, settings, staffName, staffEmail }: {
-  products: Product[]; patients: any[]; settings: VatSettings; staffName: string; staffEmail: string;
+export default function NewSale({ products, settings, staffName, staffEmail, initialPatient, onInitialPatientUsed }: {
+  products: Product[]; settings: VatSettings; staffName: string; staffEmail: string;
+  initialPatient?: any; onInitialPatientUsed?: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('All');
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [customer, setCustomer] = useState<Customer>(blankCustomer());
-  const [custSearchOpen, setCustSearchOpen] = useState(false);
+  const [customer, setCustomer] = useState<Customer>(() => initialPatient ? patientToCustomer(initialPatient) : blankCustomer());
+  const [pickedPatient, setPickedPatient] = useState<any>(initialPatient || null);
+  const [addToCrm, setAddToCrm] = useState(true);
   const [tenders, setTenders] = useState<TenderDraft[]>([]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -86,11 +89,16 @@ export default function NewSale({ products, patients, settings, staffName, staff
     setTenders(prev => [...prev, { id: genId(), method, amount: amt ? amt.toFixed(2) : '', reference: '' }]);
   };
 
-  const custMatches = customer.name.trim().length >= 2 && custSearchOpen
-    ? patients.filter(p => (p.patientName || `${p.firstName || ''} ${p.lastName || ''}`).toLowerCase().includes(customer.name.trim().toLowerCase())).slice(0, 6)
-    : [];
+  // Patient handed over from the CRM "New sale" button — used once.
+  useEffect(() => {
+    if (initialPatient) {
+      setCustomer(patientToCustomer(initialPatient));
+      setPickedPatient(initialPatient);
+      onInitialPatientUsed?.();
+    }
+  }, [initialPatient]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const reset = () => { setCart([]); setTenders([]); setCustomer(blankCustomer()); setNotes(''); setSearch(''); };
+  const reset = () => { setCart([]); setTenders([]); setCustomer(blankCustomer()); setPickedPatient(null); setAddToCrm(true); setNotes(''); setSearch(''); };
 
   const complete = async () => {
     if (!staffName.trim()) { alert('Pick your name (Staff) at the top of the Till before taking a sale.'); return; }
@@ -115,10 +123,16 @@ export default function NewSale({ products, patients, settings, staffName, staff
 
     setSaving(true);
     try {
-      const res = await createSale({ lines, payments, customer: { ...customer, email: customer.email.trim().toLowerCase() }, staffName, staffEmail, cashTendered, changeGiven: change, notes });
+      // Attribute to the CRM record (creating one if needed, as Orders does).
+      let finalCustomer: Customer = { ...customer, name: customer.name.trim(), email: customer.email.trim().toLowerCase(), phone: formatUkPhone(customer.phone) };
+      if (finalCustomer.name && (finalCustomer.patientId || addToCrm)) {
+        const patientId = await ensurePatientForCustomer(finalCustomer, pickedPatient);
+        finalCustomer = { ...finalCustomer, patientId };
+      }
+      const res = await createSale({ lines, payments, customer: finalCustomer, staffName, staffEmail, cashTendered, changeGiven: change, notes });
       setCompleted({
         id: res.id, type: 'sale', receiptNumber: res.receiptNumber, createdAtIso: new Date().toISOString(),
-        customer, lines, totals, payments, cashTendered, changeGiven: change, staffName
+        customer: finalCustomer, lines, totals, payments, cashTendered, changeGiven: change, staffName
       });
       reset();
     } catch (e: any) {
@@ -168,30 +182,27 @@ export default function NewSale({ products, patients, settings, staffName, staff
       {/* ---------------- Basket + payment ---------------- */}
       <div className={`${card} xl:col-span-2 space-y-4`}>
         <div>
-          <span className={label}>Customer (optional — needed to email a receipt)</span>
-          <div className="relative">
-            <User size={16} className="absolute left-3 top-3 text-slate-400" />
-            <input className={`${input} pl-9`} placeholder="Name" value={customer.name}
-              onChange={e => { setCustomer({ ...customer, name: e.target.value, patientId: null }); setCustSearchOpen(true); }} />
-            {custMatches.length > 0 && (
-              <div className="absolute z-10 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg mt-1 overflow-hidden">
-                {custMatches.map(p => {
-                  const nm = p.patientName || `${p.firstName || ''} ${p.lastName || ''}`.trim();
-                  const addr = p.address ? [p.address.line1, p.address.line2, p.address.town, p.address.postcode].filter(Boolean).join(', ') : '';
-                  return (
-                    <button key={p.id} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
-                      onClick={() => { setCustomer({ name: nm, email: p.email || '', phone: p.phone || '', address: addr, patientId: p.id }); setCustSearchOpen(false); }}>
-                      <span className="font-bold">{nm}</span> <span className="text-slate-400 text-xs">{p.email || p.phone || ''}</span>
-                    </button>
-                  );
-                })}
+          <span className={label}>Customer / patient (optional — links the sale to their CRM record)</span>
+          <PatientPicker
+            value={customer}
+            onPick={p => { setCustomer(patientToCustomer(p)); setPickedPatient(p); }}
+            onClear={() => { setCustomer(blankCustomer()); setPickedPatient(null); }}
+          />
+          {!customer.patientId && (
+            <>
+              <input className={`${input} mt-2`} placeholder="Name (new customer)" value={customer.name} onChange={e => setCustomer({ ...customer, name: e.target.value })} />
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <input className={input} placeholder="Email" value={customer.email} onChange={e => setCustomer({ ...customer, email: e.target.value })} />
+                <input className={input} placeholder="Phone" value={customer.phone} onChange={e => setCustomer({ ...customer, phone: e.target.value })} />
               </div>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <input className={input} placeholder="Email" value={customer.email} onChange={e => setCustomer({ ...customer, email: e.target.value })} />
-            <input className={input} placeholder="Phone" value={customer.phone} onChange={e => setCustomer({ ...customer, phone: e.target.value })} />
-          </div>
+              {customer.name.trim() && (
+                <label className="flex items-center gap-2 text-xs font-bold mt-2"><input type="checkbox" checked={addToCrm} onChange={e => setAddToCrm(e.target.checked)} /> Add to CRM as a new patient</label>
+              )}
+            </>
+          )}
+          {customer.patientId && !customer.email && (
+            <input className={`${input} mt-2`} placeholder="Email (to email the receipt — saved to their record)" value={customer.email} onChange={e => setCustomer({ ...customer, email: e.target.value })} />
+          )}
           {due > 250 && <input className={`${input} mt-2`} placeholder="Address (recommended for sales over £250 — full VAT invoice)" value={customer.address} onChange={e => setCustomer({ ...customer, address: e.target.value })} />}
         </div>
 

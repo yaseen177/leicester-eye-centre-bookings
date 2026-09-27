@@ -220,12 +220,12 @@ export const emailReceiptPdf = async (opts: { to: string; name: string; receiptN
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      type: 'send_email_attachment',
+      type: 'send_email',
       to_email: opts.to,
       patient_name: opts.name,
       subject,
-      html,
-      attachment: { name: `${opts.receiptNumber}.pdf`, content: pdfBase64(opts.doc) }
+      htmlContent: html,
+      attachment: [{ name: `${opts.receiptNumber}.pdf`, content: pdfBase64(opts.doc) }]
     })
   });
   if (!res.ok) throw new Error(`Email failed (${res.status}): ${await res.text().catch(() => '')}`);
