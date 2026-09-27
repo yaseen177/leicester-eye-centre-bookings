@@ -24,8 +24,6 @@ const TABS: { key: TillTab; label: string; icon: any }[] = [
   { key: 'settings', label: 'VAT Settings', icon: Settings }
 ];
 
-const STAFF_KEY = 'till.staffName';
-
 // `patients` is accepted for backwards compatibility but no longer needed —
 // the till searches the whole CRM directly.
 export default function TillDashboard({ dispenseOrders, salePatient, onSalePatientUsed }: {
@@ -34,7 +32,6 @@ export default function TillDashboard({ dispenseOrders, salePatient, onSalePatie
   const [tab, setTab] = useState<TillTab>('sale');
   const [settings, setSettings] = useState<VatSettings | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
-  const [staffName, setStaffName] = useState<string>(() => { try { return localStorage.getItem(STAFF_KEY) || ''; } catch { return ''; } });
   const staffEmail = auth.currentUser?.email || '';
 
   useEffect(() => {
@@ -48,10 +45,6 @@ export default function TillDashboard({ dispenseOrders, salePatient, onSalePatie
 
   useEffect(() => { if (salePatient) setTab('sale'); }, [salePatient]);
 
-  const pickStaff = (name: string) => {
-    setStaffName(name);
-    try { localStorage.setItem(STAFF_KEY, name); } catch { /* ignore */ }
-  };
 
   if (!settings) return <div className="p-10 flex justify-center text-slate-400"><Loader2 className="animate-spin" /></div>;
 
@@ -72,12 +65,6 @@ export default function TillDashboard({ dispenseOrders, salePatient, onSalePatie
             );
           })}
         </div>
-        <div className="flex items-center gap-2 pr-2">
-          <span className="text-[10px] font-black uppercase text-slate-400">Staff</span>
-          <input list="till-staff-top" value={staffName} onChange={e => pickStaff(e.target.value)} placeholder="Your name"
-            className={`p-2 rounded-xl border text-sm font-bold outline-none w-40 ${staffName ? 'border-slate-200 bg-slate-50' : 'border-red-300 bg-red-50'}`} />
-          <datalist id="till-staff-top">{settings.staffNames.map(n => <option key={n} value={n} />)}</datalist>
-        </div>
       </div>
 
       {!isSplitConfigured(settings) && tab !== 'settings' && (
@@ -87,11 +74,11 @@ export default function TillDashboard({ dispenseOrders, salePatient, onSalePatie
         </div>
       )}
 
-      {tab === 'sale' && <NewSale products={products} settings={settings} staffName={staffName} staffEmail={staffEmail} initialPatient={salePatient} onInitialPatientUsed={onSalePatientUsed} />}
-      {tab === 'history' && <SalesHistory settings={settings} staffName={staffName} staffEmail={staffEmail} />}
-      {tab === 'orders' && <OrdersTill orders={dispenseOrders} settings={settings} staffName={staffName} />}
-      {tab === 'cashup' && <CashUp orders={dispenseOrders} settings={settings} staffName={staffName} staffEmail={staffEmail} />}
-      {tab === 'products' && <ProductsManager products={products} settings={settings} staffName={staffName} />}
+      {tab === 'sale' && <NewSale products={products} settings={settings} staffEmail={staffEmail} initialPatient={salePatient} onInitialPatientUsed={onSalePatientUsed} />}
+      {tab === 'history' && <SalesHistory settings={settings} staffEmail={staffEmail} />}
+      {tab === 'orders' && <OrdersTill orders={dispenseOrders} settings={settings} />}
+      {tab === 'cashup' && <CashUp orders={dispenseOrders} settings={settings} staffEmail={staffEmail} />}
+      {tab === 'products' && <ProductsManager products={products} settings={settings} />}
       {tab === 'vat' && <VatReport orders={dispenseOrders} settings={settings} />}
       {tab === 'settings' && <TillSettings settings={settings} onSaved={setSettings} />}
     </div>

@@ -5,7 +5,7 @@ import { db } from '../../lib/firebase';
 import { genId, ensureOrderReceiptNumber, ukDateTime, isVoucherMethod } from '../../lib/till';
 import { analyseDispenseOrder, gbp, round2, type VatSettings } from '../../lib/vat';
 import { buildOrderReceiptPdf } from '../../lib/receipt';
-import { btnGhost, btnDanger, btnPrimary, input, card, label, ReceiptActions, Modal } from './shared';
+import { btnGhost, btnDanger, btnPrimary, input, card, label, ReceiptActions, Modal, useStaffPicker } from './shared';
 
 // Order payment methods — Debit/Credit kept for compatibility with the
 // existing Orders screen; the till itself records "Card".
@@ -15,7 +15,7 @@ const auditEntry = (event: string, detail = '') => ({ id: genId(), event, detail
 
 const paidOf = (o: any) => round2((o.payments || []).filter((p: any) => p.status === 'completed').reduce((t: number, p: any) => t + (Number(p.amount) || 0), 0));
 
-export default function OrdersTill({ orders, settings, staffName }: { orders: any[]; settings: VatSettings; staffName: string }) {
+export default function OrdersTill({ orders, settings }: { orders: any[]; settings: VatSettings }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'balance' | 'all'>('balance');
   const [payFor, setPayFor] = useState<any>(null);
@@ -67,7 +67,7 @@ export default function OrdersTill({ orders, settings, staffName }: { orders: an
                         {bal > 0 && <button className={btnPrimary} onClick={() => setPayFor(o)}><Wallet size={12} /> Take payment</button>}
                         {paid > 0 && <button className={btnDanger} onClick={() => setRefundFor(o)}><RotateCcw size={12} /> Refund</button>}
                       </div>
-                      <ReceiptActions compact email={o.email} name={o.patientName}
+                      <ReceiptActions compact email={o.email} patientId={o.patientId} name={o.patientName}
                         build={async () => {
                           const rn = await ensureOrderReceiptNumber(o.id);
                           return { doc: await buildOrderReceiptPdf({ ...o, receiptNumber: rn }, rn, settings), receiptNumber: rn };
@@ -82,13 +82,14 @@ export default function OrdersTill({ orders, settings, staffName }: { orders: an
         </table>
       </div>
 
-      {payFor && <PayModal order={payFor} staffName={staffName} onClose={() => setPayFor(null)} />}
-      {refundFor && <OrderRefundModal order={refundFor} staffName={staffName} onClose={() => setRefundFor(null)} />}
+      {payFor && <PayModal order={payFor} staffNames={settings.staffNames} onClose={() => setPayFor(null)} />}
+      {refundFor && <OrderRefundModal order={refundFor} staffNames={settings.staffNames} onClose={() => setRefundFor(null)} />}
     </div>
   );
 }
 
-function PayModal({ order, staffName, onClose }: { order: any; staffName: string; onClose: () => void }) {
+function PayModal({ order, staffNames, onClose }: { order: any; staffNames: string[]; onClose: () => void }) {
+  const { staffModal, askStaff } = useStaffPicker(staffNames);
   const bal = round2((order.total || 0) - paidOf(order));
   const [method, setMethod] = useState<(typeof ORDER_TENDERS)[number]>('Card');
   const [amount, setAmount] = useState(bal.toFixed(2));
@@ -96,11 +97,12 @@ function PayModal({ order, staffName, onClose }: { order: any; staffName: string
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!staffName.trim()) { alert('Pick your name (Staff) at the top of the Till first.'); return; }
     const amt = round2(Number(amount));
     if (!(amt > 0)) { alert('Enter a valid amount.'); return; }
     if (amt > bal + 0.001) { alert(`That's more than the balance (${gbp(bal)}).`); return; }
     if (isVoucherMethod(method) && !reference.trim()) { alert('Enter the voucher reference/serial.'); return; }
+    const staffName = await askStaff(`Who is taking this ${gbp(amt)} payment?`, 'Record payment');
+    if (!staffName) return;
     setSaving(true);
     try {
       const record: any = { id: genId(), method, amount: amt, status: 'completed', createdAt: new Date().toISOString(), takenBy: staffName, via: 'till' };
@@ -129,13 +131,15 @@ function PayModal({ order, staffName, onClose }: { order: any; staffName: string
         <input className={input} type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} />
         {isVoucherMethod(method) && <input className={input} placeholder="Voucher reference / serial" value={reference} onChange={e => setReference(e.target.value)} />}
         <button className={btnPrimary} onClick={submit} disabled={saving}>{saving ? <Loader2 size={14} className="animate-spin" /> : <Wallet size={14} />} Record {gbp(Number(amount) || 0)}</button>
+        {staffModal}
       </div>
     </Modal>
   );
 }
 
 // Refunds go back to the ORIGINAL payment only — staff pick which payment.
-function OrderRefundModal({ order, staffName, onClose }: { order: any; staffName: string; onClose: () => void }) {
+function OrderRefundModal({ order, staffNames, onClose }: { order: any; staffNames: string[]; onClose: () => void }) {
+  const { staffModal, askStaff } = useStaffPicker(staffNames);
   const payments = (order.payments || []).filter((p: any) => p.status === 'completed');
   const originals = payments.filter((p: any) => (Number(p.amount) || 0) > 0);
   const refundedFor = (id: string) => round2(payments.filter((p: any) => p.refundOfPaymentId === id).reduce((t: number, p: any) => t + Math.abs(Number(p.amount) || 0), 0));
@@ -148,11 +152,12 @@ function OrderRefundModal({ order, staffName, onClose }: { order: any; staffName
   const cap = orig ? round2(orig.amount - refundedFor(orig.id)) : 0;
 
   const submit = async () => {
-    if (!staffName.trim()) { alert('Pick your name (Staff) at the top of the Till first.'); return; }
     const amt = round2(Number(amount));
     if (!orig) { alert('Pick the original payment.'); return; }
     if (!(amt > 0) || amt > cap + 0.001) { alert(`Refund must be between £0.01 and ${gbp(cap)}.`); return; }
     if (!reason.trim()) { alert('Enter a reason.'); return; }
+    const staffName = await askStaff(`Who is processing this ${gbp(amt)} refund?`, 'Record refund');
+    if (!staffName) return;
     setSaving(true);
     try {
       const record = { id: genId(), method: orig.method, amount: -amt, status: 'completed', createdAt: new Date().toISOString(), refundOfPaymentId: orig.id, reason: reason.trim(), takenBy: staffName, via: 'till', ...(orig.reference ? { reference: orig.reference } : {}) };
@@ -180,6 +185,7 @@ function OrderRefundModal({ order, staffName, onClose }: { order: any; staffName
         <input className={input} type="number" step="0.01" placeholder={`Up to ${gbp(cap)}`} value={amount} onChange={e => setAmount(e.target.value)} />
         <input className={input} placeholder="Reason (required)" value={reason} onChange={e => setReason(e.target.value)} />
         <button className={btnDanger} onClick={submit} disabled={saving}>{saving ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Record refund</button>
+        {staffModal}
       </div>
     </Modal>
   );

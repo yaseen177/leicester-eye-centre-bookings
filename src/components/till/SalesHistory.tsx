@@ -3,10 +3,10 @@ import { RotateCcw, RefreshCw, Loader2 } from 'lucide-react';
 import { fetchSalesForRange, fetchSale, createRefund, londonDate, ukDateTime, blankCustomer } from '../../lib/till';
 import { gbp, round2, type VatSettings } from '../../lib/vat';
 import { buildSaleReceiptPdf } from '../../lib/receipt';
-import { btnGhost, btnDanger, btnPrimary, input, card, label, ReceiptActions, Modal } from './shared';
+import { btnGhost, btnDanger, btnPrimary, input, card, label, ReceiptActions, Modal, useStaffPicker } from './shared';
 import { PatientPicker, linkSaleToPatient } from './PatientLink';
 
-export default function SalesHistory({ settings, staffName, staffEmail }: { settings: VatSettings; staffName: string; staffEmail: string }) {
+export default function SalesHistory({ settings, staffEmail }: { settings: VatSettings; staffEmail: string }) {
   const [from, setFrom] = useState(londonDate());
   const [to, setTo] = useState(londonDate());
   const [sales, setSales] = useState<any[]>([]);
@@ -65,7 +65,7 @@ export default function SalesHistory({ settings, staffName, staffEmail }: { sett
                   <td className="text-right font-black">{gbp(s.totals?.gross || 0)}</td>
                   <td className="pl-3">
                     <div className="flex flex-col gap-1 items-end">
-                      <ReceiptActions compact receiptNumber={s.receiptNumber} email={s.customer?.email} name={s.customer?.name} isRefund={isRefund}
+                      <ReceiptActions compact receiptNumber={s.receiptNumber} email={s.customer?.email} patientId={s.customer?.patientId} name={s.customer?.name} isRefund={isRefund}
                         build={async () => ({ doc: await buildSaleReceiptPdf(s, settings), receiptNumber: s.receiptNumber })} />
                       {!isRefund && !fullyRefunded && <button className={btnDanger} onClick={() => setRefundFor(s)}><RotateCcw size={12} /> Refund</button>}
                     </div>
@@ -91,15 +91,15 @@ export default function SalesHistory({ settings, staffName, staffEmail }: { sett
       )}
 
       {refundFor && (
-        <RefundModal sale={refundFor} settings={settings} staffName={staffName} staffEmail={staffEmail}
+        <RefundModal sale={refundFor} settings={settings} staffEmail={staffEmail}
           onClose={() => setRefundFor(null)} onDone={() => { setRefundFor(null); load(); }} />
       )}
     </div>
   );
 }
 
-function RefundModal({ sale, settings, staffName, staffEmail, onClose, onDone }: {
-  sale: any; settings: VatSettings; staffName: string; staffEmail: string; onClose: () => void; onDone: () => void;
+function RefundModal({ sale, settings, staffEmail, onClose, onDone }: {
+  sale: any; settings: VatSettings; staffEmail: string; onClose: () => void; onDone: () => void;
 }) {
   const refundedQtys: number[] = sale.refundedQtys || (sale.lines || []).map(() => 0);
   const refundedByPayment: Record<string, number> = sale.refundedByPayment || {};
@@ -109,6 +109,7 @@ function RefundModal({ sale, settings, staffName, staffEmail, onClose, onDone }:
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState<any>(null);
+  const { staffModal, askStaff } = useStaffPicker(settings.staffNames);
 
   const refundTotal = round2((sale.lines || []).reduce((t: number, l: any, i: number) => t + (l.qty > 0 ? (l.gross / l.qty) * (qtys[i] || 0) : 0), 0));
   const allocTotal = round2(Object.values(alloc).reduce((t, v) => t + (Number(v) || 0), 0));
@@ -135,10 +136,11 @@ function RefundModal({ sale, settings, staffName, staffEmail, onClose, onDone }:
   };
 
   const submit = async () => {
-    if (!staffName.trim()) { alert('Pick your name (Staff) at the top of the Till first.'); return; }
     if (refundTotal <= 0) { alert('Choose at least one item to refund.'); return; }
     if (Math.abs(allocTotal - refundTotal) > 0.009) { alert(`The refund split (${gbp(allocTotal)}) must equal the refund total (${gbp(refundTotal)}).`); return; }
     if (!reason.trim()) { alert('Enter a reason for the refund.'); return; }
+    const staffName = await askStaff(`Who is processing this ${gbp(refundTotal)} refund?`, 'Confirm refund');
+    if (!staffName) return;
     setSaving(true);
     try {
       const res = await createRefund({
@@ -160,7 +162,7 @@ function RefundModal({ sale, settings, staffName, staffEmail, onClose, onDone }:
         <div className="space-y-4">
           <p className="text-sm">Refund <b>{gbp(done.total)}</b> to the original payment method(s): {Object.entries(alloc).filter(([, v]) => Number(v) > 0).map(([id, v]) => `${(sale.payments || []).find((p: any) => p.id === id)?.method} ${gbp(Number(v))}`).join(', ')}.</p>
           <p className="text-xs text-slate-500">Card refunds: process on the card terminal. Klarna/Clearpay: refund in Stripe.</p>
-          <ReceiptActions receiptNumber={done.receiptNumber} email={sale.customer?.email} name={sale.customer?.name} isRefund
+          <ReceiptActions receiptNumber={done.receiptNumber} email={sale.customer?.email} patientId={sale.customer?.patientId} name={sale.customer?.name} isRefund
             build={async () => {
               const refundDoc = await fetchSale(done.id);
               if (!refundDoc) throw new Error('Refund not found yet — try again from Sales history.');
@@ -213,6 +215,7 @@ function RefundModal({ sale, settings, staffName, staffEmail, onClose, onDone }:
           <button className={btnGhost} onClick={onClose}>Cancel</button>
         </div>
       </div>
+      {staffModal}
     </Modal>
   );
 }

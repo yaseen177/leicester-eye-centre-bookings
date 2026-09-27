@@ -6,11 +6,12 @@ import autoTable from 'jspdf-autotable';
 import { db } from '../../lib/firebase';
 import { fetchSalesForRange, orderPaymentsForRange, salePaymentsAsTakings, totalsByMethod, londonDate, ukDateTime, genId, isCardMethod, isVoucherMethod, type TakingEntry } from '../../lib/till';
 import { gbp, round2, type VatSettings } from '../../lib/vat';
-import { btnGhost, btnDanger, btnPrimary, input, card, label, DenominationCounter, blankCounts, countTotal, type DenomCounts } from './shared';
+import { btnGhost, btnDanger, btnPrimary, input, card, label, DenominationCounter, blankCounts, countTotal, useStaffPicker, type DenomCounts } from './shared';
 
 interface PaidOut { id: string; description: string; amount: number; staffName: string; at: string }
 
-export default function CashUp({ orders, settings, staffName, staffEmail }: { orders: any[]; settings: VatSettings; staffName: string; staffEmail: string }) {
+export default function CashUp({ orders, settings, staffEmail }: { orders: any[]; settings: VatSettings; staffEmail: string }) {
+  const { staffModal, askStaff } = useStaffPicker(settings.staffNames);
   const [date, setDate] = useState(londonDate());
   const [record, setRecord] = useState<any>(null);
   const [sales, setSales] = useState<any[]>([]);
@@ -24,13 +25,10 @@ export default function CashUp({ orders, settings, staffName, staffEmail }: { or
   const [floatLeft, setFloatLeft] = useState('');
   const [reason, setReason] = useState('');
   const [signOff, setSignOff] = useState('');
-  const [countedBy, setCountedBy] = useState(staffName);
   const [vouchersChecked, setVouchersChecked] = useState(false);
   const [po, setPo] = useState({ description: '', amount: '' });
   const [saving, setSaving] = useState(false);
   const [showTx, setShowTx] = useState(false);
-
-  useEffect(() => setCountedBy(c => c || staffName), [staffName]);
 
   // Live cash-up doc for the day
   useEffect(() => {
@@ -90,11 +88,11 @@ export default function CashUp({ orders, settings, staffName, staffEmail }: { or
 
   // --------------------------------------------------------------------------
   const saveOpening = async () => {
-    const who = staffName.trim();
-    if (!who) { alert('Pick your name (Staff) at the top of the Till first.'); return; }
     const amount = countTotal(openCounts);
     if (prevFloat && Math.abs(prevFloat.amount - amount) > 0.001 &&
       !confirm(`Yesterday's cash-up left ${gbp(prevFloat.amount)} as float but you've counted ${gbp(amount)}. Save anyway?`)) return;
+    const who = await askStaff(`Who counted the ${gbp(amount)} opening float?`, 'Save float');
+    if (!who) return;
     await setDoc(doc(db, 'cashups', date), {
       date,
       opening: { amount, counts: openCounts, staffName: who, staffEmail, at: new Date().toISOString(), expectedFromPrevious: prevFloat?.amount ?? null }
@@ -104,7 +102,8 @@ export default function CashUp({ orders, settings, staffName, staffEmail }: { or
   const addPaidOut = async () => {
     const amount = round2(Number(po.amount));
     if (!po.description.trim() || !(amount > 0)) { alert('Enter a description and amount for the paid-out.'); return; }
-    if (!staffName.trim()) { alert('Pick your name (Staff) first.'); return; }
+    const staffName = await askStaff(`Who is taking ${gbp(amount)} out of the till?`, 'Record paid-out');
+    if (!staffName) return;
     await setDoc(doc(db, 'cashups', date), {
       date,
       paidOuts: arrayUnion({ id: genId(), description: po.description.trim(), amount, staffName, at: new Date().toISOString() })
@@ -118,20 +117,20 @@ export default function CashUp({ orders, settings, staffName, staffEmail }: { or
   };
 
   const submitClose = async () => {
-    if (!countedBy.trim()) { alert('Enter who counted the till.'); return; }
     if (!opening) { alert('Record the opening float first (step 1).'); return; }
     if (debitTotal === '' || creditTotal === '') { alert('Enter the debit and credit totals from the card terminal end-of-day report (0 if none).'); return; }
     if (floatLeftNum > countedCash + 0.001) { alert('Float left in the till can\'t be more than the cash counted.'); return; }
     if ((gos1 || gos3) && !vouchersChecked) { alert('Tick to confirm the GOS vouchers have been checked.'); return; }
-    if (unbalanced && (!reason.trim() || !signOff.trim())) { alert('The till is unbalanced — enter a reason and the name of the colleague signing it off.'); return; }
-    if (!confirm(`Close the till for ${date}?\nCash variance ${gbp(cashVariance)}, card variance ${gbp(cardVariance)}. Banking ${gbp(banked)}.`)) return;
+    if (unbalanced && (!reason.trim() || !signOff.trim())) { alert('The till is unbalanced — enter a reason and pick the colleague signing it off.'); return; }
+    const countedBy = await askStaff(`Who counted the till? (Cash variance ${gbp(cashVariance)}, card variance ${gbp(cardVariance)}, banking ${gbp(banked)})`, `Close till for ${date}`);
+    if (!countedBy) return;
 
     setSaving(true);
     try {
       await setDoc(doc(db, 'cashups', date), {
         date,
         closing: {
-          countedBy: countedBy.trim(), staffEmail, at: new Date().toISOString(),
+          countedBy, staffEmail, at: new Date().toISOString(),
           counts: closeCounts, countedCash, expectedCash, cashVariance,
           cashTakings, cardTakings, terminalDebit: round2(Number(debitTotal) || 0), terminalCredit: round2(Number(creditTotal) || 0), cardVariance,
           bnplTakings, gos1, gos3, otherTakings, grandTotal, paidOutTotal,
@@ -152,6 +151,8 @@ export default function CashUp({ orders, settings, staffName, staffEmail }: { or
   const reopen = async () => {
     const why = prompt('Why are you re-opening this cash-up? (logged)');
     if (!why?.trim()) return;
+    const staffName = await askStaff('Who is re-opening this cash-up?', 'Re-open');
+    if (!staffName) return;
     await setDoc(doc(db, 'cashups', date), {
       closing: null,
       reopenLog: arrayUnion({ at: new Date().toISOString(), staffName, reason: why.trim(), previousClosing: closing })
@@ -321,11 +322,17 @@ export default function CashUp({ orders, settings, staffName, staffEmail }: { or
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-            <div><span className={label}>Counted by</span><input className={input} list="till-staff" value={countedBy} onChange={e => setCountedBy(e.target.value)} /></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
             {unbalanced && <>
               <div><span className={label}>Reason for variance (required)</span><input className={input} value={reason} onChange={e => setReason(e.target.value)} /></div>
-              <div><span className={label}>Signed off by colleague (required)</span><input className={input} list="till-staff" value={signOff} onChange={e => setSignOff(e.target.value)} /></div>
+              <div><span className={label}>Signed off by colleague (required)</span>
+                {settings.staffNames.length ? (
+                  <select className={input} value={signOff} onChange={e => setSignOff(e.target.value)}>
+                    <option value="">Select colleague…</option>
+                    {settings.staffNames.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                ) : <input className={input} value={signOff} onChange={e => setSignOff(e.target.value)} />}
+              </div>
             </>}
           </div>
           {unbalanced && <p className="text-xs text-red-600 font-bold mt-2 flex items-center gap-1"><AlertTriangle size={12} /> Till is unbalanced{tol ? ` by more than ${gbp(tol)}` : ''} — a reason and sign-off are required.</p>}
@@ -357,7 +364,7 @@ export default function CashUp({ orders, settings, staffName, staffEmail }: { or
         </div>
       )}
 
-      <datalist id="till-staff">{settings.staffNames.map(n => <option key={n} value={n} />)}</datalist>
+      {staffModal}
     </div>
   );
 }

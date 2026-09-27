@@ -4,7 +4,7 @@ import { collection, doc, setDoc, addDoc, serverTimestamp, query, where, orderBy
 import { db } from '../../lib/firebase';
 import { blankProduct, adjustStock, PRODUCT_CATEGORIES, ukDateTime, type Product } from '../../lib/till';
 import { gbp, round2, extractVat, VAT_CATEGORY_LABELS, type VatCategory, type VatSettings, type DispenseKind } from '../../lib/vat';
-import { btnGhost, btnPrimary, input, card, label, Modal } from './shared';
+import { btnGhost, btnPrimary, input, card, label, Modal, useStaffPicker } from './shared';
 
 // Starter services — created at £0 and inactive so nothing goes live with a
 // wrong price. Set the prices, then tick Active.
@@ -22,7 +22,7 @@ const STARTERS: Omit<Product, 'id'>[] = [
   { ...blankProduct(), name: 'Glasses Repair / Adjustment', category: 'Other', vatCategory: 'standard', active: false }
 ];
 
-export default function ProductsManager({ products, settings, staffName }: { products: Product[]; settings: VatSettings; staffName: string }) {
+export default function ProductsManager({ products, settings }: { products: Product[]; settings: VatSettings }) {
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('All');
   const [onlyLow, setOnlyLow] = useState(false);
@@ -97,7 +97,7 @@ export default function ProductsManager({ products, settings, staffName }: { pro
       </div>
 
       {editing && <ProductForm product={editing} settings={settings} onClose={() => setEditing(null)} />}
-      {adjusting && <StockAdjust product={adjusting} staffName={staffName} onClose={() => setAdjusting(null)} />}
+      {adjusting && <StockAdjust product={adjusting} staffNames={settings.staffNames} onClose={() => setAdjusting(null)} />}
       {historyFor && <StockHistory product={historyFor} onClose={() => setHistoryFor(null)} />}
     </div>
   );
@@ -186,7 +186,8 @@ function ProductForm({ product, settings, onClose }: { product: Omit<Product, 'i
 
 const ADJUST_REASONS = ['Delivery received', 'Stock count correction', 'Damaged / written off', 'Used in practice', 'Other'];
 
-function StockAdjust({ product, staffName, onClose }: { product: Product; staffName: string; onClose: () => void }) {
+function StockAdjust({ product, staffNames, onClose }: { product: Product; staffNames: string[]; onClose: () => void }) {
+  const { staffModal, askStaff } = useStaffPicker(staffNames);
   const [mode, setMode] = useState<'add' | 'remove' | 'set'>('add');
   const [qty, setQty] = useState('');
   const [reason, setReason] = useState(ADJUST_REASONS[0]);
@@ -196,9 +197,10 @@ function StockAdjust({ product, staffName, onClose }: { product: Product; staffN
   const change = mode === 'add' ? n : mode === 'remove' ? -n : n - product.stockQty;
 
   const save = async () => {
-    if (!staffName.trim()) { alert('Pick your name (Staff) at the top of the Till first.'); return; }
     if (mode !== 'set' && n <= 0) { alert('Enter a quantity.'); return; }
     if (change === 0) { onClose(); return; }
+    const staffName = await askStaff('Who is adjusting stock?', 'Save adjustment');
+    if (!staffName) return;
     setSaving(true);
     try { await adjustStock(product, change, reason, staffName); onClose(); }
     catch (e: any) { alert(`Failed: ${e?.message || e}`); }
@@ -216,6 +218,7 @@ function StockAdjust({ product, staffName, onClose }: { product: Product; staffN
         <select className={input} value={reason} onChange={e => setReason(e.target.value)}>{ADJUST_REASONS.map(r => <option key={r}>{r}</option>)}</select>
         <p className="text-sm">New stock: <b>{product.stockQty + change}</b> ({change >= 0 ? '+' : ''}{change})</p>
         <button className={btnPrimary} onClick={save} disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save adjustment</button>
+        {staffModal}
       </div>
     </Modal>
   );

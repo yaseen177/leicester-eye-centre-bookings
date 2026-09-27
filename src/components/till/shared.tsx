@@ -1,5 +1,7 @@
-import { useState, type ReactNode } from 'react';
-import { Download, Printer, Mail, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
+import { Download, Printer, Mail, Loader2, UserCheck } from 'lucide-react';
 import type { jsPDF } from 'jspdf';
 import { downloadPdf, printPdf, emailReceiptPdf } from '../../lib/receipt';
 import { gbp, round2 } from '../../lib/vat';
@@ -15,10 +17,11 @@ export const label = 'text-[10px] font-black uppercase tracking-wider text-slate
 // ----------------------------------------------------------------------------
 // Receipt actions: download / print / email a receipt PDF built on demand.
 // ----------------------------------------------------------------------------
-export function ReceiptActions({ build, receiptNumber, email, name, isRefund, compact }: {
+export function ReceiptActions({ build, receiptNumber, email, patientId, name, isRefund, compact }: {
   build: () => Promise<{ doc: jsPDF; receiptNumber: string }>;
   receiptNumber?: string;
   email?: string;
+  patientId?: string | null;   // CRM record — its email is used if the sale has none
   name?: string;
   isRefund?: boolean;
   compact?: boolean;
@@ -26,6 +29,19 @@ export function ReceiptActions({ build, receiptNumber, email, name, isRefund, co
   const [busy, setBusy] = useState<'' | 'dl' | 'print' | 'email'>('');
   const [to, setTo] = useState(email || '');
   const [showEmail, setShowEmail] = useState(false);
+
+  useEffect(() => { if (email) setTo(email); }, [email]);
+
+  // Pre-fill from the CRM record when opening the email box.
+  const openEmail = async () => {
+    setShowEmail(true);
+    if (to.trim() || !patientId || String(patientId).startsWith('unknown-')) return;
+    try {
+      const snap = await getDoc(doc(db, 'patients', patientId));
+      const crmEmail = String(snap.data()?.email || '').trim();
+      if (crmEmail) setTo(crmEmail);
+    } catch { /* leave blank */ }
+  };
 
   const run = async (kind: 'dl' | 'print' | 'email') => {
     setBusy(kind);
@@ -52,7 +68,7 @@ export function ReceiptActions({ build, receiptNumber, email, name, isRefund, co
       <button className={btnGhost} onClick={() => run('dl')} disabled={!!busy}>{busy === 'dl' ? spin : <Download size={14} />}{!compact && 'PDF'}</button>
       <button className={btnGhost} onClick={() => run('print')} disabled={!!busy}>{busy === 'print' ? spin : <Printer size={14} />}{!compact && 'Print'}</button>
       {!showEmail ? (
-        <button className={btnGhost} onClick={() => setShowEmail(true)} disabled={!!busy}><Mail size={14} />{!compact && 'Email'}</button>
+        <button className={btnGhost} onClick={openEmail} disabled={!!busy}><Mail size={14} />{!compact && 'Email'}</button>
       ) : (
         <div className="flex items-center gap-1.5">
           <input className={`${input} !w-56 !p-2 text-xs`} placeholder="customer@email.com" value={to} onChange={e => setTo(e.target.value)} />
@@ -114,4 +130,52 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
       </div>
     </div>
   );
+}
+
+// ----------------------------------------------------------------------------
+// Staff picker — "who is doing this?" with radio buttons, returns the name
+// (or null if cancelled). Usage:
+//   const { staffModal, askStaff } = useStaffPicker(settings.staffNames);
+//   const who = await askStaff('Who is completing this sale?'); if (!who) return;
+//   ...and render {staffModal} somewhere in the component.
+// ----------------------------------------------------------------------------
+export function useStaffPicker(staffNames: string[]) {
+  const [req, setReq] = useState<{ title: string; confirmLabel: string; resolve: (v: string | null) => void } | null>(null);
+  const [choice, setChoice] = useState('');
+  const [typed, setTyped] = useState('');
+
+  const askStaff = useCallback((title = 'Who is doing this?', confirmLabel = 'Confirm') =>
+    new Promise<string | null>(resolve => { setChoice(''); setTyped(''); setReq({ title, confirmLabel, resolve }); }), []);
+
+  const finish = (v: string | null) => { req?.resolve(v); setReq(null); };
+  const names = staffNames.filter(Boolean);
+  const value = names.length ? choice : typed.trim();
+
+  const staffModal = req ? (
+    <Modal title={req.title} onClose={() => finish(null)}>
+      {names.length ? (
+        <div className="space-y-2">
+          {names.map(n => (
+            <label key={n} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer font-bold text-sm ${choice === n ? 'border-[#3F9185] bg-[#3F9185]/10' : 'border-slate-200 hover:bg-slate-50'}`}>
+              <input type="radio" name="till-staff" className="accent-[#3F9185] w-4 h-4" checked={choice === n} onChange={() => setChoice(n)} />
+              {n}
+            </label>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-amber-700 font-bold">No staff set up yet — add names under Till → VAT Settings. For now, type your name:</p>
+          <input className={input} autoFocus value={typed} onChange={e => setTyped(e.target.value)} />
+        </div>
+      )}
+      <div className="flex gap-2 mt-5">
+        <button className={`${btnPrimary} flex-1 justify-center !py-3 !text-sm`} disabled={!value} onClick={() => finish(value)}>
+          <UserCheck size={16} /> {req.confirmLabel}{value ? ` as ${value}` : ''}
+        </button>
+        <button className={btnGhost} onClick={() => finish(null)}>Cancel</button>
+      </div>
+    </Modal>
+  ) : null;
+
+  return { staffModal, askStaff };
 }

@@ -3,7 +3,7 @@ import { Search, Plus, Minus, Trash2, CheckCircle2, Loader2, PackagePlus } from 
 import { buildLine, createSale, genId, blankCustomer, TILL_TENDERS, isVoucherMethod, type Product, type Customer, type TillPaymentMethod, type SalePayment } from '../../lib/till';
 import { gbp, round2, sumBreakdowns, VAT_CATEGORY_LABELS, type VatCategory, type VatSettings, type DispenseKind } from '../../lib/vat';
 import { buildSaleReceiptPdf } from '../../lib/receipt';
-import { btnPrimary, btnGhost, btnDanger, input, card, label, ReceiptActions, Modal } from './shared';
+import { btnPrimary, btnGhost, btnDanger, input, card, label, ReceiptActions, Modal, useStaffPicker } from './shared';
 import { PatientPicker, patientToCustomer, ensurePatientForCustomer, formatUkPhone } from './PatientLink';
 
 interface CartLine {
@@ -16,8 +16,8 @@ interface CartLine {
 
 interface TenderDraft { id: string; method: TillPaymentMethod; amount: string; reference: string }
 
-export default function NewSale({ products, settings, staffName, staffEmail, initialPatient, onInitialPatientUsed }: {
-  products: Product[]; settings: VatSettings; staffName: string; staffEmail: string;
+export default function NewSale({ products, settings, staffEmail, initialPatient, onInitialPatientUsed }: {
+  products: Product[]; settings: VatSettings; staffEmail: string;
   initialPatient?: any; onInitialPatientUsed?: () => void;
 }) {
   const [search, setSearch] = useState('');
@@ -33,6 +33,7 @@ export default function NewSale({ products, settings, staffName, staffEmail, ini
   const [miscOpen, setMiscOpen] = useState(false);
   const [misc, setMisc] = useState({ name: '', price: '', vatCategory: 'standard' as VatCategory, dispenseKind: 'spectacles' as DispenseKind });
   const searchRef = useRef<HTMLInputElement>(null);
+  const { staffModal, askStaff } = useStaffPicker(settings.staffNames);
 
   const active = products.filter(p => p.active);
   const categories = ['All', ...Array.from(new Set(active.map(p => p.category))).sort()];
@@ -101,7 +102,6 @@ export default function NewSale({ products, settings, staffName, staffEmail, ini
   const reset = () => { setCart([]); setTenders([]); setCustomer(blankCustomer()); setPickedPatient(null); setAddToCrm(true); setNotes(''); setSearch(''); };
 
   const complete = async () => {
-    if (!staffName.trim()) { alert('Pick your name (Staff) at the top of the Till before taking a sale.'); return; }
     if (!cart.length) { alert('Add at least one item.'); return; }
     if (remaining > 0.001) { alert(`There's still ${gbp(remaining)} to pay.`); return; }
     if (overpaidNonCash) { alert('Only cash can be over-tendered (to give change). Reduce the card/voucher amount.'); return; }
@@ -120,6 +120,10 @@ export default function NewSale({ products, settings, staffName, staffEmail, ini
       if (t.method === 'Cash' && changeLeft > 0) { const take = Math.min(changeLeft, amt); amt = round2(amt - take); changeLeft = round2(changeLeft - take); }
       return { id: t.id, method: t.method, amount: amt, ...(t.reference.trim() ? { reference: t.reference.trim() } : {}) };
     }).filter(p => p.amount > 0);
+
+    // Last step: who is taking this sale?
+    const staffName = await askStaff(`Who is completing this ${gbp(due)} sale?`, 'Complete sale');
+    if (!staffName) return;
 
     setSaving(true);
     try {
@@ -299,6 +303,8 @@ export default function NewSale({ products, settings, staffName, staffEmail, ini
         </Modal>
       )}
 
+      {staffModal}
+
       {completed && (
         <Modal title={`Sale complete — ${completed.receiptNumber}`} onClose={() => { setCompleted(null); searchRef.current?.focus(); }}>
           <div className="space-y-4">
@@ -307,6 +313,7 @@ export default function NewSale({ products, settings, staffName, staffEmail, ini
             <ReceiptActions
               receiptNumber={completed.receiptNumber}
               email={completed.customer?.email}
+              patientId={completed.customer?.patientId}
               name={completed.customer?.name}
               build={async () => ({ doc: await buildSaleReceiptPdf(completed, settings), receiptNumber: completed.receiptNumber })}
             />
