@@ -11,6 +11,7 @@ import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverT
 import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
 import ReportsDashboard from './ReportsDashboard';
+import TillDashboard from './TillDashboard';
 
 interface ClinicScheduleConfig {
   times: Record<string, number>;
@@ -85,7 +86,7 @@ type FrameStatus = 'In Stock' | 'Requested from Supplier' | 'Received';
 type LensStatus = 'Requested' | 'Received/Glazed';
 type ItemStatus = 'Awaiting Frame' | 'Awaiting Lens' | 'Ready';
 type OrderStatus = 'Awaiting Frame' | 'Awaiting Lens' | 'Order Ready' | 'Collected';
-type PaymentMethod = 'Cash' | 'Debit Card' | 'Credit Card' | 'Klarna/Clearpay';
+type PaymentMethod = 'Cash' | 'Card' | 'Debit Card' | 'Credit Card' | 'Klarna/Clearpay' | 'GOS1 Voucher' | 'GOS3 Voucher';
 
 const genId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -428,7 +429,7 @@ function SlotActionsMenu({ actions }: { actions: SlotAction[] }) {
 }
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits' | 'till'>('diary');
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -2451,6 +2452,8 @@ export default function AdminDashboard() {
                 <option value="Cash">Cash</option>
                 <option value="Debit Card">Debit Card</option>
                 <option value="Credit Card">Credit Card</option>
+<option value="GOS3 Voucher">GOS3 Voucher</option>
+<option value="GOS1 Voucher">GOS1 Voucher</option>
               </select>
               <input
                 type="number" placeholder="Amount" step="0.01"
@@ -4607,6 +4610,9 @@ export default function AdminDashboard() {
             <button onClick={() => setView('dispensing')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'dispensing' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Glasses size={18} /> Dispensing
             </button>
+            <button onClick={() => setView('till')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'till' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <Wallet size={18} /> Till
+            </button>
             <button onClick={() => setView('clDirectDebits')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'clDirectDebits' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <RefreshCw size={18} /> CL Direct Debits
             </button>
@@ -6579,6 +6585,8 @@ export default function AdminDashboard() {
         {/* --- REPORTS VIEW --- */}
         {view === 'reports' && <ReportsDashboard appointments={appointments} orders={dispenseOrders} />}
 
+        {view === 'till' && <TillDashboard dispenseOrders={dispenseOrders} patients={crmPatients} />}
+
         {/* --- PRICING CONFIG VIEW --- */}
         {view === 'pricing' && !pricingData && (
           <div className="glass-card rounded-[2.5rem] p-10 flex items-center justify-center min-h-[400px]">
@@ -6930,6 +6938,8 @@ export default function AdminDashboard() {
                   <option value="Cash">Cash</option>
                   <option value="Debit Card">Debit Card</option>
                   <option value="Credit Card">Credit Card</option>
+<option value="GOS3 Voucher">GOS3 Voucher</option>
+<option value="GOS1 Voucher">GOS1 Voucher</option>
                 </select>
                 <input
                   type="number" step="0.01" placeholder="Amount paid now (£)"
