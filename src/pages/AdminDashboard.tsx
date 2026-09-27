@@ -13,7 +13,7 @@ import { jsPDF } from 'jspdf';
 import ReportsDashboard from './ReportsDashboard';
 import TillDashboard from './TillDashboard';
 import { PatientSales, usePatientSales } from '../components/till/PatientLink';
-import PatientDirectoryList from '../components/patient/PatientDirectoryList';
+import PatientSearchHome from '../components/patient/PatientSearchHome';
 import PatientOverview from '../components/patient/PatientOverview';
 import PatientPurchases from '../components/patient/PatientPurchases';
 import VatReportPage from '../components/till/VatReportPage';
@@ -4494,6 +4494,26 @@ export default function AdminDashboard() {
 
   const activePatientOrdersWithStatus = activePatientOrders.map(o => ({ ...o, _status: getOrderStatus(o), _balance: getOrderBalance(o) }));
 
+  // Open the Direct Admin Booking modal pre-filled and linked to this patient.
+  const openBookingForPatient = (p: any) => {
+    if (!p) return;
+    const isCrm = p.id && !String(p.id).startsWith('unknown-');
+    const names = String(p.patientName || '').trim().split(/\s+/);
+    setSelectedCrmPatientForBooking(isCrm ? p : null);
+    setBookingSearchQuery('');
+    setUpdateCrmOnBook(false);
+    setNewBooking({
+      firstName: names[0] || '', lastName: names.slice(1).join(' '), email: p.email || '', phone: p.phone || '', dob: p.dob || '',
+      address: p.address?.verified ? p.address : blankAddress(),
+      service: activeClinic === 'dispensing' ? 'Dispensing' : 'Eye Check', time: '',
+      inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+    });
+    // Start from today if the diary is sitting on a past date.
+    const today = new Date().toISOString().split('T')[0];
+    if (selectedDate < today) setSelectedDate(today);
+    setIsBookingModalOpen(true);
+  };
+
   const openOrderFromCrm = (orderId: string) => { setView('dispensing'); setDispensingTab('orders'); setOrderStatusFilter('All'); setSelectedOrderId(orderId); };
 
   const dispensingRxPrescriptions = selectedPatientForRx
@@ -4657,7 +4677,7 @@ export default function AdminDashboard() {
           <div className="flex gap-1.5 flex-wrap items-center">
             {([
               { key: 'diary', label: 'Diary', icon: <LayoutDashboard size={18} />, active: view === 'diary', go: () => setView('diary') },
-              { key: 'patients', label: 'Patients', icon: <User size={18} />, active: view === 'messages' && crmMode === 'patients', go: () => { setCrmMode('patients'); setView('messages'); } },
+              { key: 'patients', label: 'Patients', icon: <User size={18} />, active: view === 'messages' && crmMode === 'patients', go: () => { setCrmMode('patients'); setSelectedChatPatient(null); setView('messages'); } },
               { key: 'inbox', label: 'Inbox', icon: <MessageSquare size={18} />, active: view === 'messages' && crmMode === 'inbox', go: () => { setCrmMode('inbox'); setView('messages'); }, badge: totalUnreadMessages },
               { key: 'dispensing', label: 'Dispensing', icon: <Glasses size={18} />, active: view === 'dispensing', go: () => setView('dispensing') },
               { key: 'till', label: 'Till', icon: <Wallet size={18} />, active: view === 'till', go: () => setView('till') },
@@ -5223,16 +5243,9 @@ export default function AdminDashboard() {
         {view === 'messages' && (
           <div className="glass-card rounded-[2.5rem] overflow-hidden shadow-2xl flex h-[calc(100vh-10rem)] min-h-[600px] border border-slate-100">
             {/* LEFT SIDEBAR: Search and Patient List */}
+            {crmMode === 'inbox' && (
             <div className="w-1/3 bg-slate-50 border-r border-slate-200 flex flex-col">
-              {crmMode === 'patients' ? (
-                <PatientDirectoryList
-                  selectedId={selectedChatPatient?.id}
-                  livePatients={crmPatients}
-                  onSelect={(p) => setSelectedChatPatient(p)}
-                  onNewPatient={() => setSelectedChatPatient({ id: `unknown-new-${Date.now()}`, patientName: '', phone: '', email: '' })}
-                  onImport={() => setIsCsvModalOpen(true)}
-                />
-              ) : (<>
+              <>
               
               <div className="p-4 bg-white border-b border-slate-200 space-y-3">
                 <div className="flex gap-2">
@@ -5357,8 +5370,9 @@ export default function AdminDashboard() {
                   <p className="p-6 text-center text-slate-400 font-bold text-sm">No active patients. Import CSV or start a chat.</p>
                 )}
               </div>
-              </>)}
+              </>
             </div>
+            )}
 
             {/* RIGHT PANE - Master CRM Workspace */}
             <div className="flex-1 bg-white flex flex-col overflow-hidden">
@@ -5366,7 +5380,7 @@ export default function AdminDashboard() {
                 <>
                   {/* MASTER CRM HEADER */}
                   <div className="bg-white border-b border-slate-200 z-10 shadow-sm">
-                    <div className="p-6 pb-4">
+                    <div className="p-6 pb-4 flex items-start justify-between gap-4 flex-wrap">
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 shadow-inner">
                           <User size={24} />
@@ -5384,6 +5398,25 @@ export default function AdminDashboard() {
                             )}
                           </div>
                         </div>
+                      </div>
+
+                      {/* Patient actions */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {crmMode === 'patients' && (
+                          <button onClick={() => setSelectedChatPatient(null)} className="px-3 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center gap-1.5">
+                            <Search size={14} /> Find another patient
+                          </button>
+                        )}
+                        {!String(selectedChatPatient.id || '').startsWith('unknown-new-') && (
+                          <>
+                            <button onClick={() => openBookingForPatient(selectedChatPatient)} className="px-3 py-2 rounded-xl text-xs font-black bg-[#3F9185] hover:bg-teal-700 text-white flex items-center gap-1.5 shadow-sm">
+                              <CalendarIcon size={14} /> Book appointment
+                            </button>
+                            <button onClick={() => { setTillSalePatient(selectedChatPatient); setView('till'); }} className="px-3 py-2 rounded-xl text-xs font-black bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center gap-1.5">
+                              <Wallet size={14} /> New sale
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                     
@@ -5415,6 +5448,7 @@ export default function AdminDashboard() {
                       onOpenOrder={openOrderFromCrm}
                       onNewSale={() => { setTillSalePatient(selectedChatPatient); setView('till'); }}
                       onMessage={() => setCrmTab('chat')}
+                      onBook={() => openBookingForPatient(selectedChatPatient)}
                     />
                   )}
 
@@ -5992,10 +6026,17 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </>
+              ) : crmMode === 'patients' ? (
+                <PatientSearchHome
+                  livePatients={crmPatients}
+                  onSelect={(p) => setSelectedChatPatient(p)}
+                  onNewPatient={() => setSelectedChatPatient({ id: `unknown-new-${Date.now()}`, patientName: '', phone: '', email: '' })}
+                  onImport={() => setIsCsvModalOpen(true)}
+                />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300">
                   <User size={64} className="opacity-20 mb-4" />
-                  <p className="font-bold text-lg text-slate-400">Select a patient to open their CRM profile</p>
+                  <p className="font-bold text-lg text-slate-400">Select a conversation</p>
                 </div>
               )}
             </div>
@@ -7762,7 +7803,7 @@ export default function AdminDashboard() {
             </div>
 
             <div className="flex gap-3 mt-8">
-              <button onClick={() => setIsBookingModalOpen(false)} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
+              <button onClick={() => { setIsBookingModalOpen(false); setSelectedCrmPatientForBooking(null); }} className="flex-1 p-4 font-bold text-slate-400">Cancel</button>
               <button onClick={handleAdminBooking} disabled={!newBooking.time || !newBooking.firstName || !newBooking.dob || (!newBooking.email && !newBooking.phone) || isDateClosed()} className="flex-1 p-4 font-black bg-[#3F9185] text-white rounded-xl shadow-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all">
                 Confirm Booking
               </button>

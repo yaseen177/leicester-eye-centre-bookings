@@ -63,6 +63,7 @@ export interface OverviewProps {
   onOpenOrder: (id: string) => void;
   onNewSale?: () => void;
   onMessage?: () => void;
+  onBook?: () => void;
 }
 
 export default function PatientOverview(p: OverviewProps) {
@@ -145,7 +146,7 @@ export default function PatientOverview(p: OverviewProps) {
 
         {/* Headline stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Stat label="Next appointment" value={nextAppt ? fmtDate(nextAppt._dt) : 'None booked'} sub={nextAppt ? `${(nextAppt.appointmentTime || '').slice(0, 5)} · ${nextAppt.appointmentType || ''} · ${relative(nextAppt._dt)}` : undefined} tone={nextAppt ? 'text-[#3F9185]' : 'text-slate-400'} onClick={() => p.onGo('ledger')} />
+          <Stat label="Next appointment" value={nextAppt ? fmtDate(nextAppt._dt) : 'None booked'} sub={nextAppt ? `${(nextAppt.appointmentTime || '').slice(0, 5)} · ${nextAppt.appointmentType || ''} · ${relative(nextAppt._dt)}` : p.onBook ? '+ Book appointment' : undefined} tone={nextAppt ? 'text-[#3F9185]' : 'text-slate-400'} onClick={nextAppt || !p.onBook ? () => p.onGo('ledger') : p.onBook} />
           <Stat label="Last eye exam / visit" value={lastVisit ? fmtDate(lastVisit._dt) : '—'} sub={lastVisit ? `${relative(lastVisit._dt)} · ${d.totalVisits} visit${d.totalVisits === 1 ? '' : 's'} total` : undefined} onClick={() => p.onGo('ledger')} />
           <Stat label="Recall due" value={recallDate ? fmtDate(recallDate) : 'Not set'} sub={recall ? `${recall.recallType || ''} · ${relative(recallDate)}` : undefined} tone={recallOverdue ? 'text-red-600' : recallDate ? 'text-slate-800' : 'text-slate-400'} onClick={() => p.onGo('recalls')} />
           <Stat label="Balance owing" value={gbp(d.orderBalance)} sub={p.sales === null ? 'loading till sales…' : `Lifetime spend ${gbp(lifetime)}`} tone={d.orderBalance > 0 ? 'text-amber-600' : 'text-green-600'} onClick={() => p.onGo('purchases')} />
