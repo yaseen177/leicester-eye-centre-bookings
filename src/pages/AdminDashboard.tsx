@@ -434,6 +434,10 @@ function SlotActionsMenu({ actions }: { actions: SlotAction[] }) {
 export default function AdminDashboard() {
   const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits' | 'till' | 'patientRecords'>('diary');
   const [tillSalePatient, setTillSalePatient] = useState<any>(null);
+  // Patients and Inbox are the same screen: Patients lists every record and
+  // opens on Details; Inbox lists only people with messages and opens on Messages.
+  const [crmMode, setCrmMode] = useState<'patients' | 'inbox'>('patients');
+  const [moreOpen, setMoreOpen] = useState(false);
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
 
@@ -991,7 +995,7 @@ export default function AdminDashboard() {
         dob: selectedChatPatient.dob || '',
         address: selectedChatPatient.address?.verified ? selectedChatPatient.address : blankAddress()
       });
-      setCrmTab('chat'); 
+      setCrmTab(crmMode === 'inbox' ? 'chat' : 'profile');
       setReplyingToMessage(null); 
     }
   }, [selectedChatPatient]);
@@ -2461,8 +2465,8 @@ export default function AdminDashboard() {
                 <option value="Cash">Cash</option>
                 <option value="Debit Card">Debit Card</option>
                 <option value="Credit Card">Credit Card</option>
-<option value="GOS3 Voucher">GOS3 Voucher</option>
-<option value="GOS1 Voucher">GOS1 Voucher</option>
+                <option value="GOS3 Voucher">GOS3 Voucher</option>
+                <option value="GOS1 Voucher">GOS1 Voucher</option>
               </select>
               <input
                 type="number" placeholder="Amount" step="0.01"
@@ -3881,6 +3885,7 @@ export default function AdminDashboard() {
     }
     setSelectedChatPatient(patient);
     setCrmTab('recalls');
+    setCrmMode('patients');
     setView('messages');
     setSelectedRecallForDetail(null);
   };
@@ -4269,7 +4274,7 @@ export default function AdminDashboard() {
                   <div className="flex items-center ml-4 border-l border-slate-100 pl-3 self-start">
                     <SlotActionsMenu actions={[
                       { label: 'Edit appointment', icon: <Settings size={15} />, onClick: () => setEditingApp(booking) },
-                      { label: 'Message patient', icon: <MessageSquare size={15} />, onClick: () => { setSelectedChatPatient(booking); setView('messages'); } },
+                      { label: 'Message patient', icon: <MessageSquare size={15} />, onClick: () => { setSelectedChatPatient(booking); setCrmMode('inbox'); setView('messages'); } },
                       { label: 'Manage booking', icon: <ExternalLink size={15} />, onClick: () => window.open(`/manage/${booking.id}`, '_blank') },
                       ...(!booking.patientId ? [{ label: 'Link to CRM record', icon: <LinkIcon size={15} />, onClick: () => { setApptToLink(booking); setIsLinkModalOpen(true); } }] : []),
                       { label: 'Delete appointment', icon: <Trash2 size={15} />, onClick: () => deleteApp(booking), danger: true },
@@ -4611,57 +4616,59 @@ export default function AdminDashboard() {
       <div className="max-w-6xl mx-auto space-y-6">
         
         {/* Navigation Bar */}
-        <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
-          <div className="flex gap-2">
-            <button onClick={() => setView('diary')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'diary' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <LayoutDashboard size={18} /> Diary
-            </button>
-            <button onClick={() => setView('dispensing')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'dispensing' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <Glasses size={18} /> Dispensing
-            </button>
-            <button onClick={() => setView('till')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'till' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <Wallet size={18} /> Till
-            </button>
-            <button onClick={() => setView('patientRecords')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'patientRecords' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <UserCog size={18} /> Patient Records
-            </button>
-            <button onClick={() => setView('clDirectDebits')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'clDirectDebits' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <RefreshCw size={18} /> CL Direct Debits
-            </button>
-            <button onClick={() => setView('messages')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'messages' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <User size={18} /> CRM & Patients
-              {totalUnreadMessages > 0 && (
-                 <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-md border-2 border-white animate-in zoom-in">
-                    {totalUnreadMessages}
-                 </span>
-              )}
-            </button>
-            <button onClick={() => setView('logs')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'logs' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <FileText size={18} /> Logs
-            </button>
-            <button onClick={() => setView('calls')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'calls' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <PhoneCall size={18} /> Calls
-            </button>
-            <button onClick={() => setView('recalls')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'recalls' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <Bell size={18} /> Recalls
-              {recallsDueCount > 0 && (
-                <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full shrink-0 shadow-sm">
-                  {recallsDueCount}
-                </span>
-              )}
-            </button>
-            <button onClick={() => setView('settings')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'settings' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <Settings size={18} /> Settings
-            </button>
-            <button onClick={() => setView('reports')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'reports' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <Activity size={18} /> Analytics
-            </button>
-            <button onClick={() => setView('guide')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'guide' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <BookOpen size={18} /> SOP Guide
-            </button>
-            <button onClick={() => setView('pricing')} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'pricing' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-              <Tag size={18} /> Prices
-            </button>
+        <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100 relative z-30">
+          <div className="flex gap-1.5 flex-wrap items-center">
+            {([
+              { key: 'diary', label: 'Diary', icon: <LayoutDashboard size={18} />, active: view === 'diary', go: () => setView('diary') },
+              { key: 'patients', label: 'Patients', icon: <User size={18} />, active: view === 'messages' && crmMode === 'patients', go: () => { setCrmMode('patients'); setView('messages'); } },
+              { key: 'inbox', label: 'Inbox', icon: <MessageSquare size={18} />, active: view === 'messages' && crmMode === 'inbox', go: () => { setCrmMode('inbox'); setView('messages'); }, badge: totalUnreadMessages },
+              { key: 'dispensing', label: 'Dispensing', icon: <Glasses size={18} />, active: view === 'dispensing', go: () => setView('dispensing') },
+              { key: 'till', label: 'Till', icon: <Wallet size={18} />, active: view === 'till', go: () => setView('till') },
+              { key: 'recalls', label: 'Recalls', icon: <Bell size={18} />, active: view === 'recalls', go: () => setView('recalls'), badge: recallsDueCount }
+            ] as { key: string; label: string; icon: any; active: boolean; go: () => void; badge?: number }[]).map(t => (
+              <button key={t.key} onClick={() => { t.go(); setMoreOpen(false); }} className={`relative px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${t.active ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+                {t.icon} {t.label}
+                {!!t.badge && t.badge > 0 && (
+                  <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full shrink-0 shadow-sm">{t.badge}</span>
+                )}
+              </button>
+            ))}
+
+            {/* More menu */}
+            {(() => {
+              const moreItems: { view: typeof view; label: string; icon: any }[] = [
+                { view: 'reports', label: 'Analytics', icon: <Activity size={16} /> },
+                { view: 'pricing', label: 'Prices', icon: <Tag size={16} /> },
+                { view: 'clDirectDebits', label: 'CL Direct Debits', icon: <RefreshCw size={16} /> },
+                { view: 'calls', label: 'Calls', icon: <PhoneCall size={16} /> },
+                { view: 'logs', label: 'Logs', icon: <FileText size={16} /> },
+                { view: 'patientRecords', label: 'Data Tools', icon: <UserCog size={16} /> },
+                { view: 'guide', label: 'SOP Guide', icon: <BookOpen size={16} /> },
+                { view: 'settings', label: 'Settings', icon: <Settings size={16} /> }
+              ];
+              const current = moreItems.find(m => m.view === view);
+              return (
+                <div className="relative">
+                  <button onClick={() => setMoreOpen(!moreOpen)} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${current ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+                    {current ? <>{current.icon} {current.label}</> : <><MoreVertical size={18} /> More</>}
+                    <ChevronDown size={14} className={`transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {moreOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                      <div className="absolute left-0 top-full mt-2 z-50 bg-white rounded-2xl shadow-xl border border-slate-100 p-1.5 w-56">
+                        {moreItems.map(m => (
+                          <button key={m.view} onClick={() => { setView(m.view); setMoreOpen(false); }}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2.5 ${view === m.view ? 'bg-[#3F9185]/10 text-[#3F9185]' : 'text-slate-600 hover:bg-slate-50'}`}>
+                            {m.icon} {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           <button onClick={() => window.location.href='/admin-login'} className="p-2 text-slate-400 hover:text-red-500">
             <LogOut size={20}/>
@@ -5259,6 +5266,7 @@ export default function AdminDashboard() {
                 ) : (
                   /* Display Active WhatsApp-Style List */
                   finalSidebarList
+                    .filter((p: any) => crmMode !== 'inbox' || ((patientStats.get(p.id) || patientStats.get(p.phone) || patientStats.get(p.email))?.lastTime || 0) > 0)
                     .filter(p => 
                       (p.patientName || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
                       (p.email || '').toLowerCase().includes(patientSearch.toLowerCase()) ||
@@ -5333,14 +5341,14 @@ export default function AdminDashboard() {
                     </div>
                     
                     {/* CRM Tabs */}
-                    <div className="flex gap-6 px-6">
-                       <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Communications</button>
-                       <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointment Ledger</button>
-                       <button onClick={() => setCrmTab('orders')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'orders' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><ShoppingBag size={14}/> Dispense Orders</button>
-                       <button onClick={() => setCrmTab('sales')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'sales' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Wallet size={14}/> Till Sales</button>
+                    <div className="flex gap-6 px-6 overflow-x-auto">
+                       <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Details</button>
+                       <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointments</button>
                        <button onClick={() => setCrmTab('prescriptions')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'prescriptions' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText size={14}/> Prescriptions</button>
+                       <button onClick={() => setCrmTab('orders')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'orders' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><ShoppingBag size={14}/> Glasses Orders</button>
+                       <button onClick={() => setCrmTab('sales')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'sales' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Wallet size={14}/> Till Sales</button>
+                       <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><MessageSquare size={14}/> Messages</button>
                        <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
-                       <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Master Profile</button>
                     </div>
                   </div>
 
@@ -6603,6 +6611,7 @@ export default function AdminDashboard() {
         {/* --- REPORTS VIEW --- */}
         {view === 'reports' && <ReportsDashboard appointments={appointments} orders={dispenseOrders} />}
 
+        {/* --- TILL / CASH-UP / VAT VIEW --- */}
         {view === 'patientRecords' && <PatientRecords />}
 
         {view === 'till' && <TillDashboard dispenseOrders={dispenseOrders} salePatient={tillSalePatient} onSalePatientUsed={() => setTillSalePatient(null)} />}
@@ -6958,8 +6967,8 @@ export default function AdminDashboard() {
                   <option value="Cash">Cash</option>
                   <option value="Debit Card">Debit Card</option>
                   <option value="Credit Card">Credit Card</option>
-<option value="GOS3 Voucher">GOS3 Voucher</option>
-<option value="GOS1 Voucher">GOS1 Voucher</option>
+                  <option value="GOS3 Voucher">GOS3 Voucher</option>
+                  <option value="GOS1 Voucher">GOS1 Voucher</option>
                 </select>
                 <input
                   type="number" step="0.01" placeholder="Amount paid now (£)"
