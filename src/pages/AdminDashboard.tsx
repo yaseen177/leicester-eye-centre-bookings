@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw, MoreVertical } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Trash2, Settings, LayoutDashboard, LogOut, Activity, ExternalLink, FileText, CheckCircle2, XCircle, MessageSquare, Send, Paperclip, Mail, User, Search, Download, X, UserCog, History, Reply, Upload, Link as LinkIcon, Glasses, Tag, BookOpen, ChevronDown, PhoneCall, PhoneIncoming, PhoneMissed, Bell, AlertTriangle, RotateCcw, Edit3, Plus, ShoppingBag, Wallet, Percent, Smartphone, QrCode, ScrollText, RefreshCw, MoreVertical, Building2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import AddressFinder, { blankAddress, type AddressValue } from '../components/AddressFinder';
 import DobInput from '../components/DobInput';
@@ -4472,6 +4472,12 @@ export default function AdminDashboard() {
     return out;
   }, [finalSidebarList, patientStats, senderRules, apptContactKeys]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Companies get a messages-only view — no patient dashboard or patient tabs.
+  const selectedIsCompany = !!selectedChatPatient && senderBucket(selectedChatPatient) === 'companies';
+  useEffect(() => {
+    if (selectedIsCompany && crmTab !== 'chat') setCrmTab('chat');
+  }, [selectedIsCompany, crmTab]);
+
   // "Mark as company" / "Not a company" — by exact address, whole domain, or phone/sender ID.
   const setSenderRule = async (kind: 'companies' | 'people', key: string) => {
     const k = key.trim().toLowerCase();
@@ -5447,7 +5453,7 @@ export default function AdminDashboard() {
                     <div className="p-6 pb-4 flex items-start justify-between gap-4 flex-wrap">
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 shadow-inner">
-                          <User size={24} />
+                          {selectedIsCompany ? <Building2 size={24} /> : <User size={24} />}
                         </div>
                         <div>
                           <h3 className="text-2xl font-black text-slate-800 tracking-tight">{selectedChatPatient.patientName}{selectedChatPatient.patientNumber && <span className="ml-3 align-middle text-xs font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-md border border-slate-200">{selectedChatPatient.patientNumber}</span>}</h3>
@@ -5457,7 +5463,10 @@ export default function AdminDashboard() {
                             {selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-') && (
                                <span className="text-[10px] font-black bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md uppercase tracking-wider">CRM Master</span>
                             )}
-                            {!selectedChatPatient.address?.verified && (
+                            {selectedIsCompany && (
+                               <span className="text-[10px] font-black bg-slate-200 text-slate-600 px-2 py-1 rounded-md uppercase tracking-wider flex items-center gap-1"><Building2 size={11} /> Company</span>
+                            )}
+                            {!selectedIsCompany && !selectedChatPatient.address?.verified && (
                                <button onClick={() => setCrmTab('profile')} className="text-[10px] font-black bg-amber-100 text-amber-700 px-2 py-1 rounded-md uppercase tracking-wider hover:bg-amber-200 transition-colors">No Address on File</button>
                             )}
                           </div>
@@ -5492,7 +5501,7 @@ export default function AdminDashboard() {
                             <Search size={14} /> Find another patient
                           </button>
                         )}
-                        {!String(selectedChatPatient.id || '').startsWith('unknown-new-') && (
+                        {!selectedIsCompany && !String(selectedChatPatient.id || '').startsWith('unknown-new-') && (
                           <>
                             <button onClick={() => openBookingForPatient(selectedChatPatient)} className="px-3 py-2 rounded-xl text-xs font-black bg-[#3F9185] hover:bg-teal-700 text-white flex items-center gap-1.5 shadow-sm">
                               <CalendarIcon size={14} /> Book appointment
@@ -5507,6 +5516,9 @@ export default function AdminDashboard() {
                     
                     {/* CRM Tabs */}
                     <div className="flex gap-6 px-6 overflow-x-auto">
+                      {selectedIsCompany ? (
+                       <span className="pb-3 text-sm font-black border-b-2 border-[#3F9185] text-[#3F9185] flex items-center gap-1.5 whitespace-nowrap"><MessageSquare size={14}/> Messages</span>
+                      ) : (<>
                        <button onClick={() => setCrmTab('overview')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'overview' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><LayoutDashboard size={14}/> Overview</button>
                        <button onClick={() => setCrmTab('ledger')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'ledger' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><History size={14}/> Appointments</button>
                        <button onClick={() => setCrmTab('prescriptions')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'prescriptions' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText size={14}/> Prescriptions</button>
@@ -5514,11 +5526,12 @@ export default function AdminDashboard() {
                        <button onClick={() => setCrmTab('chat')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'chat' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><MessageSquare size={14}/> Messages</button>
                        <button onClick={() => setCrmTab('recalls')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'recalls' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Bell size={14}/> Recalls</button>
                        <button onClick={() => setCrmTab('profile')} className={`pb-3 text-sm font-black border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap ${crmTab === 'profile' ? 'border-[#3F9185] text-[#3F9185]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><UserCog size={14}/> Details</button>
+                      </>)}
                     </div>
                   </div>
 
                   {/* TAB: OVERVIEW DASHBOARD */}
-                  {crmTab === 'overview' && (
+                  {crmTab === 'overview' && !selectedIsCompany && (
                     <PatientOverview
                       patient={selectedChatPatient}
                       appointments={activePatientLedger}
@@ -5538,7 +5551,7 @@ export default function AdminDashboard() {
                   )}
 
                   {/* TAB: PURCHASES (glasses orders + till sales + CL plans) */}
-                  {crmTab === 'purchases' && (
+                  {crmTab === 'purchases' && !selectedIsCompany && (
                     <PatientPurchases
                       patient={selectedChatPatient}
                       orders={activePatientOrdersWithStatus}
