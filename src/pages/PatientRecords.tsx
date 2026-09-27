@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Hash, Users, Loader2, GitMerge, EyeOff, RefreshCw, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
+import { Hash, Users, Loader2, GitMerge, EyeOff, RefreshCw, AlertTriangle, CheckCircle2, Search, Download } from 'lucide-react';
 import { doc, getDoc, setDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { loadPatientDirectory, findDuplicateGroups, nameOf, createdSecs, type PersonGroup } from '../lib/patientDirectory';
+import { loadPatientDirectory, findDuplicateGroups, nameOf, createdSecs, dobKey, emailKey, phoneKey, type PersonGroup } from '../lib/patientDirectory';
 import { getNumberingStatus, backfillPatientNumbers, assignPatientNumber, formatPatientNumber, previewMerge, executeMerge, type MergePreview } from '../lib/patientRecords';
 import { loadVatSettings, blankCustomer } from '../lib/till';
 import { btnPrimary, btnGhost, btnDanger, input, card, label, Modal, useStaffPicker } from '../components/till/shared';
@@ -16,6 +16,25 @@ const fmtAddr = (a: any) => (a && typeof a === 'object' ? [a.line1, a.town, a.po
 const groupSig = (g: PersonGroup) => g.records.map(r => r.id).sort().join('|');
 const IGNORE_DOC = () => doc(db, 'settings', 'duplicateIgnores');
 
+// "strong" = the records share a date of birth, or share BOTH an email and a
+// phone number. Anything else (name + one shared contact detail only) could
+// still be two family members with the same name, so it's left for review.
+const strength = (g: PersonGroup): 'strong' | 'review' => {
+  const count = (keys: string[]) => { const m = new Map<string, number>(); keys.filter(Boolean).forEach(k => m.set(k, (m.get(k) || 0) + 1)); return Array.from(m.values()).some(n => n > 1); };
+  if (count(g.records.map(r => dobKey(r.dob)))) return 'strong';
+  const sharedEmail = count(g.records.map(r => emailKey(r.email)));
+  const sharedPhone = count(g.records.map(r => phoneKey(r.phone)));
+  return sharedEmail && sharedPhone ? 'strong' : 'review';
+};
+
+const downloadCsv = (rows: string[][], name: string) => {
+  const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(esc).join(',')).join('\n')], { type: 'text/csv' }));
+  a.download = name;
+  a.click();
+};
+
 export default function PatientRecords() {
   const [patients, setPatients] = useState<any[] | null>(null);
   const [status, setStatus] = useState<{ next: number; backfilled: boolean } | null>(null);
@@ -27,6 +46,9 @@ export default function PatientRecords() {
   const [manual, setManual] = useState<{ a: any | null; b: any | null }>({ a: null, b: null });
   const [mergeTarget, setMergeTarget] = useState<PersonGroup | null>(null);
   const { staffModal, askStaff } = useStaffPicker(staffNames);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState<{ done: number; total: number; failed: { name: string; error: string }[]; log: string[][] } | null>(null);
+  const [strengthFilter, setStrengthFilter] = useState<'all' | 'strong' | 'review'>('all');
 
   const load = async () => {
     setPatients(null);
@@ -42,7 +64,41 @@ export default function PatientRecords() {
 
   const unnumbered = (patients || []).filter(p => !p.patientNumber).length;
   const groups = useMemo(() => (patients ? findDuplicateGroups(patients).filter(g => !ignored.has(groupSig(g))) : []), [patients, ignored]);
-  const shownGroups = groups.filter(g => !filter.trim() || g.names.join(' ').toLowerCase().includes(filter.trim().toLowerCase()));
+  const shownGroups = groups
+    .filter(g => strengthFilter === 'all' || strength(g) === strengthFilter)
+    .filter(g => !filter.trim() || g.names.join(' ').toLowerCase().includes(filter.trim().toLowerCase()));
+  const strongCount = groups.filter(g => strength(g) === 'strong').length;
+  const selectedGroups = groups.filter(g => selected.has(groupSig(g)));
+  const toggleSel = (g: PersonGroup) => { const n = new Set(selected); const k = groupSig(g); if (n.has(k)) n.delete(k); else n.add(k); setSelected(n); };
+
+  const runBulk = async () => {
+    const list = selectedGroups;
+    if (!list.length) return;
+    const records = list.reduce((t, g) => t + g.records.length - 1, 0);
+    if (!confirm(`Merge ${list.length} people (${records} duplicate records)?\n\nFor each person the most complete record (then the oldest) is kept. Everything linked is moved onto it and the duplicates are archived.\n\nThis can take a few minutes — keep this tab open.`)) return;
+    const who = await askStaff(`Who is merging ${list.length} people?`, 'Start bulk merge');
+    if (!who) return;
+
+    const log: string[][] = [['Kept patient', 'Kept record id', 'Patient no.', 'Merged record ids', 'Items moved', 'Result']];
+    const failed: { name: string; error: string }[] = [];
+    setBulk({ done: 0, total: list.length, failed, log });
+    for (let i = 0; i < list.length; i++) {
+      const g = list[i];
+      try {
+        const pv = await previewMerge(g.primary, g.records.slice(1));
+        await executeMerge(pv, who);
+        const moved = Object.entries(pv.counts).filter(([, n]) => n > 0).map(([c, n]) => `${n} ${c}`).join('; ');
+        log.push([nameOf(pv.keep), pv.keep.id, pv.keep.patientNumber || pv.filled.patientNumber || '', pv.merge.map(r => r.id).join(' '), moved, 'Merged']);
+      } catch (e: any) {
+        failed.push({ name: nameOf(g.primary), error: e?.message || String(e) });
+        log.push([nameOf(g.primary), g.primary.id, '', g.records.slice(1).map(r => r.id).join(' '), '', `FAILED: ${e?.message || e}`]);
+      }
+      setBulk({ done: i + 1, total: list.length, failed: [...failed], log });
+    }
+    downloadCsv(log, `patient-merge-log-${new Date().toISOString().slice(0, 10)}.csv`);
+    setSelected(new Set());
+    await load();
+  };
   const dupRecordCount = groups.reduce((t, g) => t + g.records.length - 1, 0);
 
   const runBackfill = async () => {
@@ -100,25 +156,63 @@ export default function PatientRecords() {
             <button className={btnGhost} onClick={() => load()}><RefreshCw size={14} /> Refresh</button>
           </div>
         </div>
+        {patients && groups.length > 0 && (
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-2">
+            <div className="flex gap-1">
+              {(['all', 'strong', 'review'] as const).map(k => (
+                <button key={k} className={strengthFilter === k ? btnPrimary : btnGhost} onClick={() => setStrengthFilter(k)}>
+                  {k === 'all' ? `All (${groups.length})` : k === 'strong' ? `Strong match (${strongCount})` : `Needs a look (${groups.length - strongCount})`}
+                </button>
+              ))}
+            </div>
+            <span className="text-slate-300">|</span>
+            <button className={btnGhost} onClick={() => setSelected(new Set(groups.filter(g => strength(g) === 'strong').map(groupSig)))}>Select all strong</button>
+            <button className={btnGhost} onClick={() => setSelected(new Set(shownGroups.map(groupSig)))}>Select all shown</button>
+            <button className={btnGhost} onClick={() => setSelected(new Set())}>Clear</button>
+            <button className={`${btnDanger} ml-auto`} onClick={runBulk} disabled={!selectedGroups.length || !!bulk && bulk.done < bulk.total}>
+              <GitMerge size={14} /> Merge {selectedGroups.length} selected
+            </button>
+          </div>
+        )}
+
+        {bulk && (
+          <div className={`rounded-2xl p-3 mb-4 text-sm font-bold border ${bulk.done < bulk.total ? 'bg-blue-50 border-blue-200 text-blue-800' : bulk.failed.length ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+            <div className="flex items-center gap-2">
+              {bulk.done < bulk.total ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+              {bulk.done < bulk.total ? `Merging… ${bulk.done} / ${bulk.total} — keep this tab open` : `Finished: ${bulk.total - bulk.failed.length} merged${bulk.failed.length ? `, ${bulk.failed.length} failed` : ''}. A CSV log has downloaded.`}
+              {bulk.done >= bulk.total && <button className={`${btnGhost} ml-auto`} onClick={() => downloadCsv(bulk.log, 'patient-merge-log.csv')}><Download size={14} /> Log again</button>}
+            </div>
+            <div className="h-2 bg-white rounded-full mt-2 overflow-hidden"><div className="h-full bg-[#3F9185]" style={{ width: `${(bulk.done / bulk.total) * 100}%` }} /></div>
+            {bulk.failed.map((f, i) => <div key={i} className="text-xs mt-1">✗ {f.name}: {f.error}</div>)}
+          </div>
+        )}
+
         <p className="text-xs text-slate-500 mb-4">Flagged when the <b>name matches</b> and the records share an email, phone or date of birth. Records with different dates of birth are never flagged, and family members sharing a phone or email aren't flagged unless their names match.</p>
 
         {!patients ? <div className="flex justify-center p-8"><Loader2 className="animate-spin text-slate-400" /></div>
           : shownGroups.length === 0 ? <p className="text-sm text-slate-400 text-center py-8">No duplicates found 🎉</p>
             : (
               <div className="space-y-3">
-                {shownGroups.slice(0, 100).map(g => (
+                {shownGroups.slice(0, 400).map(g => (
                   <div key={groupSig(g)} className="border border-slate-200 rounded-2xl p-4">
                     <div className="flex justify-between items-center mb-2">
-                      <div className="font-black">{nameOf(g.primary)} <span className="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full ml-1">{g.records.length} records</span></div>
+                      <label className="font-black flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" className="w-4 h-4 accent-[#3F9185]" checked={selected.has(groupSig(g))} onChange={() => toggleSel(g)} />
+                        {nameOf(g.primary)}
+                        <span className="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">{g.records.length} records</span>
+                        {strength(g) === 'strong'
+                          ? <span className="text-[10px] font-black text-green-700 bg-green-50 px-2 py-0.5 rounded-full">STRONG MATCH</span>
+                          : <span className="text-[10px] font-black text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">NEEDS A LOOK</span>}
+                      </label>
                       <div className="flex gap-1.5">
                         <button className={btnPrimary} onClick={() => setMergeTarget(g)}><GitMerge size={14} /> Review & merge</button>
                         <button className={btnGhost} onClick={() => ignoreGroup(g)}><EyeOff size={14} /> Not the same person</button>
                       </div>
                     </div>
-                    <RecordsTable records={g.records} />
+                    <RecordsTable records={g.records} keepHint={g.primary.id} />
                   </div>
                 ))}
-                {shownGroups.length > 100 && <p className="text-xs text-slate-400 text-center">Showing first 100 — merge some or filter by name to see more.</p>}
+                {shownGroups.length > 400 && <p className="text-xs text-slate-400 text-center">Showing first 400 — merge some or filter by name to see more.</p>}
               </div>
             )}
       </div>
@@ -150,8 +244,8 @@ export default function PatientRecords() {
   );
 }
 
-function RecordsTable({ records, keepId, included, onKeep, onToggle }: {
-  records: any[]; keepId?: string; included?: Set<string>; onKeep?: (id: string) => void; onToggle?: (id: string) => void;
+function RecordsTable({ records, keepId, keepHint, included, onKeep, onToggle }: {
+  records: any[]; keepId?: string; keepHint?: string; included?: Set<string>; onKeep?: (id: string) => void; onToggle?: (id: string) => void;
 }) {
   const selectable = !!onKeep;
   return (
@@ -166,7 +260,7 @@ function RecordsTable({ records, keepId, included, onKeep, onToggle }: {
             <tr key={r.id} className={`border-t border-slate-100 ${keepId === r.id ? 'bg-green-50' : ''}`}>
               {selectable && <td className="py-1.5"><input type="radio" className="accent-[#3F9185]" checked={keepId === r.id} onChange={() => onKeep!(r.id)} /></td>}
               {selectable && <td><input type="checkbox" disabled={keepId === r.id} checked={keepId !== r.id && !!included?.has(r.id)} onChange={() => onToggle!(r.id)} /></td>}
-              <td className="py-1.5 font-bold">{nameOf(r)}</td>
+              <td className="py-1.5 font-bold">{nameOf(r)}{keepHint === r.id && <span className="ml-1.5 text-[9px] font-black text-green-700 bg-green-50 px-1.5 py-0.5 rounded">KEEP</span>}</td>
               <td>{r.patientNumber || '—'}</td>
               <td>{r.dob || '—'}</td>
               <td>{r.phone || '—'}</td>
