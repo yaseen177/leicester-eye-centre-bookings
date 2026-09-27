@@ -5,6 +5,7 @@ import { gbp, round2, sumBreakdowns, VAT_CATEGORY_LABELS, type VatCategory, type
 import { buildSaleReceiptPdf } from '../../lib/receipt';
 import { btnPrimary, btnGhost, btnDanger, input, card, label, ReceiptActions, Modal, useStaffPicker } from './shared';
 import { PatientPicker, patientToCustomer, ensurePatientForCustomer, formatUkPhone } from './PatientLink';
+import { isWalkInProduct } from '../../lib/till';
 
 interface CartLine {
   key: string;
@@ -16,16 +17,17 @@ interface CartLine {
 
 interface TenderDraft { id: string; method: TillPaymentMethod; amount: string; reference: string }
 
-export default function NewSale({ products, settings, staffEmail, initialPatient, onInitialPatientUsed }: {
+export default function NewSale({ products, settings, staffEmail, initialPatient, onInitialPatientUsed, onFindPatient, onOpenPatient }: {
   products: Product[]; settings: VatSettings; staffEmail: string;
   initialPatient?: any; onInitialPatientUsed?: () => void;
+  onFindPatient?: () => void;             // go to Patients to start a patient sale
+  onOpenPatient?: (patient: any) => void; // back to the patient's record after their sale
 }) {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('All');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [customer, setCustomer] = useState<Customer>(() => initialPatient ? patientToCustomer(initialPatient) : blankCustomer());
   const [pickedPatient, setPickedPatient] = useState<any>(initialPatient || null);
-  const [addToCrm, setAddToCrm] = useState(true);
   const [tenders, setTenders] = useState<TenderDraft[]>([]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -35,7 +37,10 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
   const searchRef = useRef<HTMLInputElement>(null);
   const { staffModal, askStaff } = useStaffPicker(settings.staffNames);
 
-  const active = products.filter(p => p.active);
+  // Patient sale (opened from a patient record) = full catalogue.
+  // Walk-in sale (Till from the main menu) = accessories only.
+  const patientMode = !!customer.patientId;
+  const active = products.filter(p => p.active && (patientMode || isWalkInProduct(p)));
   const categories = ['All', ...Array.from(new Set(active.map(p => p.category))).sort()];
   const shown = active.filter(p => {
     if (catFilter !== 'All' && p.category !== catFilter) return false;
@@ -68,7 +73,10 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
     if (!q) return;
     const exact = active.find(p => p.barcode === q || (p.sku || '').toLowerCase() === q.toLowerCase());
     const pick = exact || (shown.length === 1 ? shown[0] : null);
-    if (pick) { addProduct(pick); setSearch(''); }
+    if (pick) { addProduct(pick); setSearch(''); return; }
+    // Scanned something that exists but isn't allowed as a walk-in sale.
+    const blocked = !patientMode && products.find(p => p.active && (p.barcode === q || (p.sku || '').toLowerCase() === q.toLowerCase()));
+    if (blocked) { alert(`${blocked.name} can only be sold from the patient's record.`); setSearch(''); }
   };
 
   const updateLine = (key: string, patch: Partial<CartLine>) => setCart(prev => prev.map(c => c.key === key ? { ...c, ...patch } : c));
@@ -78,7 +86,7 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
     if (!misc.name.trim() || !(price > 0)) { alert('Enter a description and price.'); return; }
     setCart(prev => [...prev, {
       key: genId(),
-      product: { id: null, name: misc.name.trim(), category: 'Other', vatCategory: misc.vatCategory, dispenseKind: misc.dispenseKind, trackStock: false, stockQty: 0, allowPriceOverride: true },
+      product: { id: null, name: misc.name.trim(), category: patientMode ? 'Other' : 'Accessories', vatCategory: patientMode ? misc.vatCategory : 'standard', walkIn: !patientMode, dispenseKind: misc.dispenseKind, trackStock: false, stockQty: 0, allowPriceOverride: true },
       qty: 1, unitPrice: round2(price), discount: 0
     }]);
     setMisc({ name: '', price: '', vatCategory: 'standard', dispenseKind: 'spectacles' });
@@ -99,10 +107,24 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
     }
   }, [initialPatient]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const reset = () => { setCart([]); setTenders([]); setCustomer(blankCustomer()); setPickedPatient(null); setAddToCrm(true); setNotes(''); setSearch(''); };
+  const reset = () => { setCart([]); setTenders([]); setCustomer(blankCustomer()); setPickedPatient(null); setNotes(''); setSearch(''); setCatFilter('All'); };
+
+  // Leaving patient mode: drop anything that can't be sold as a walk-in.
+  const switchToWalkIn = () => {
+    const blocked = cart.filter(c => !isWalkInProduct(c.product as any));
+    if (blocked.length && !confirm(`Switch to a walk-in sale? These can only be sold to a patient and will be removed:\n\n${blocked.map(b => b.product.name).join('\n')}`)) return;
+    setCart(cart.filter(c => isWalkInProduct(c.product as any)));
+    setCustomer(blankCustomer());
+    setPickedPatient(null);
+    setCatFilter('All');
+  };
 
   const complete = async () => {
     if (!cart.length) { alert('Add at least one item.'); return; }
+    if (!patientMode) {
+      const blocked = cart.filter(c => !isWalkInProduct(c.product as any));
+      if (blocked.length) { alert(`Walk-in sales are accessories only. Sell these from the patient's record:\n\n${blocked.map(b => b.product.name).join('\n')}`); return; }
+    }
     if (remaining > 0.001) { alert(`There's still ${gbp(remaining)} to pay.`); return; }
     if (overpaidNonCash) { alert('Only cash can be over-tendered (to give change). Reduce the card/voucher amount.'); return; }
     for (const t of tenders) {
@@ -129,7 +151,7 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
     try {
       // Attribute to the CRM record (creating one if needed, as Orders does).
       let finalCustomer: Customer = { ...customer, name: customer.name.trim(), email: customer.email.trim().toLowerCase(), phone: formatUkPhone(customer.phone) };
-      if (finalCustomer.name && (finalCustomer.patientId || addToCrm)) {
+      if (finalCustomer.patientId) {
         const patientId = await ensurePatientForCustomer(finalCustomer, pickedPatient);
         finalCustomer = { ...finalCustomer, patientId };
       }
@@ -186,22 +208,23 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
       {/* ---------------- Basket + payment ---------------- */}
       <div className={`${card} xl:col-span-2 space-y-4`}>
         <div>
-          <span className={label}>Customer / patient (optional — links the sale to their CRM record)</span>
-          <PatientPicker
-            value={customer}
-            onPick={p => { setCustomer(patientToCustomer(p)); setPickedPatient(p); }}
-            onClear={() => { setCustomer(blankCustomer()); setPickedPatient(null); }}
-          />
-          {!customer.patientId && (
+          {patientMode ? (
             <>
-              <input className={`${input} mt-2`} placeholder="Name (new customer)" value={customer.name} onChange={e => setCustomer({ ...customer, name: e.target.value })} />
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <input className={input} placeholder="Email" value={customer.email} onChange={e => setCustomer({ ...customer, email: e.target.value })} />
-                <input className={input} placeholder="Phone" value={customer.phone} onChange={e => setCustomer({ ...customer, phone: e.target.value })} />
+              <span className={label}>Patient sale — full catalogue</span>
+              <PatientPicker value={customer} onPick={() => {}} onClear={switchToWalkIn} />
+            </>
+          ) : (
+            <>
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-bold">
+                Walk-in sale — accessories only.
+                <div className="font-medium mt-0.5">Glasses, contact lenses and clinical services must be sold from the patient's record.</div>
+                {onFindPatient && <button onClick={onFindPatient} className="mt-2 px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-800 font-black hover:bg-amber-100">Sell to a patient → find their record</button>}
               </div>
-              {customer.name.trim() && (
-                <label className="flex items-center gap-2 text-xs font-bold mt-2"><input type="checkbox" checked={addToCrm} onChange={e => setAddToCrm(e.target.checked)} /> Add to CRM as a new patient</label>
-              )}
+              <span className={`${label} mt-3`}>Receipt details (optional)</span>
+              <div className="grid grid-cols-2 gap-2">
+                <input className={input} placeholder="Name" value={customer.name} onChange={e => setCustomer({ ...customer, name: e.target.value })} />
+                <input className={input} placeholder="Email for receipt" value={customer.email} onChange={e => setCustomer({ ...customer, email: e.target.value })} />
+              </div>
             </>
           )}
           {customer.patientId && !customer.email && (
@@ -290,10 +313,14 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
           <div className="space-y-3">
             <input className={input} placeholder="Description" value={misc.name} onChange={e => setMisc({ ...misc, name: e.target.value })} />
             <input className={input} type="number" step="0.01" placeholder="Price inc VAT (£)" value={misc.price} onChange={e => setMisc({ ...misc, price: e.target.value })} />
-            <select className={input} value={misc.vatCategory} onChange={e => setMisc({ ...misc, vatCategory: e.target.value as VatCategory })}>
-              {(Object.keys(VAT_CATEGORY_LABELS) as VatCategory[]).map(k => <option key={k} value={k}>{VAT_CATEGORY_LABELS[k]}</option>)}
-            </select>
-            {misc.vatCategory === 'dispensed' && (
+            {patientMode ? (
+              <select className={input} value={misc.vatCategory} onChange={e => setMisc({ ...misc, vatCategory: e.target.value as VatCategory })}>
+                {(Object.keys(VAT_CATEGORY_LABELS) as VatCategory[]).map(k => <option key={k} value={k}>{VAT_CATEGORY_LABELS[k]}</option>)}
+              </select>
+            ) : (
+              <p className="text-xs text-slate-500">Walk-in misc items are accessories, charged at {settings.vatRate}% VAT. Anything clinical, glasses or contact lenses must be sold from the patient's record.</p>
+            )}
+            {patientMode && misc.vatCategory === 'dispensed' && (
               <select className={input} value={misc.dispenseKind} onChange={e => setMisc({ ...misc, dispenseKind: e.target.value as DispenseKind })}>
                 <option value="spectacles">Spectacles</option><option value="contactLenses">Contact lenses</option>
               </select>
@@ -317,7 +344,14 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
               name={completed.customer?.name}
               build={async () => ({ doc: await buildSaleReceiptPdf(completed, settings), receiptNumber: completed.receiptNumber })}
             />
-            <button className={`${btnPrimary} w-full justify-center`} onClick={() => { setCompleted(null); searchRef.current?.focus(); }}>New sale</button>
+            {completed.customer?.patientId && onOpenPatient ? (
+              <div className="flex gap-2">
+                <button className={`${btnPrimary} flex-1 justify-center`} onClick={() => { const pid = completed.customer.patientId; const c = completed.customer; setCompleted(null); onOpenPatient({ ...(pickedPatient || {}), id: pid, patientName: c.name, email: c.email, phone: c.phone, patientNumber: c.patientNumber }); }}>Back to patient record</button>
+                <button className={`${btnGhost} flex-1 justify-center`} onClick={() => { setCompleted(null); searchRef.current?.focus(); }}>New walk-in sale</button>
+              </div>
+            ) : (
+              <button className={`${btnPrimary} w-full justify-center`} onClick={() => { setCompleted(null); searchRef.current?.focus(); }}>New sale</button>
+            )}
           </div>
         </Modal>
       )}

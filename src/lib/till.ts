@@ -51,7 +51,16 @@ export interface Product {
   lowStockThreshold: number;
   active: boolean;
   allowPriceOverride: boolean;
+  walkIn?: boolean;           // can be sold from the Till without a patient (unset = default by category)
 }
+
+// Walk-in (no patient) sales are accessories only. Clinical services and
+// dispensed glasses/contact lenses must always be sold from the patient's record.
+export const WALK_IN_DEFAULT_CATEGORIES = ['Accessories', 'Cases & Cloths', 'Contact Lens Solutions'];
+export const isWalkInProduct = (p: Pick<Product, 'vatCategory' | 'category'> & { walkIn?: boolean }): boolean => {
+  if (p.vatCategory !== 'standard' && p.vatCategory !== 'zero') return false;
+  return p.walkIn ?? WALK_IN_DEFAULT_CATEGORIES.includes(p.category);
+};
 
 export const blankProduct = (): Omit<Product, 'id'> => ({
   name: '', category: 'Accessories', sku: '', barcode: '', price: 0, costPrice: 0,

@@ -6844,7 +6844,14 @@ export default function AdminDashboard() {
         {/* --- TILL / CASH-UP / VAT VIEW --- */}
         {view === 'patientRecords' && <PatientRecords />}
 
-        {view === 'till' && <TillDashboard dispenseOrders={dispenseOrders} salePatient={tillSalePatient} onSalePatientUsed={() => setTillSalePatient(null)} />}
+        {view === 'till' && <TillDashboard dispenseOrders={dispenseOrders} salePatient={tillSalePatient} onSalePatientUsed={() => setTillSalePatient(null)}
+          onFindPatient={() => { setCrmMode('patients'); setSelectedChatPatient(null); setView('messages'); }}
+          onOpenPatient={async (p) => {
+            // Re-read the full record so the dashboard has DOB, address etc.
+            let full = p;
+            try { const snap = await getDoc(doc(db, 'patients', p.id)); if (snap.exists()) full = { id: snap.id, ...snap.data() }; } catch { /* use what we have */ }
+            setCrmMode('patients'); setSelectedChatPatient(full); setView('messages');
+          }} />}
 
         {/* --- PRICING CONFIG VIEW --- */}
         {view === 'pricing' && !pricingData && (

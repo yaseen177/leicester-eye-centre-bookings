@@ -24,8 +24,9 @@ const TABS: { key: TillTab; label: string; icon: any }[] = [
 
 // `patients` is accepted for backwards compatibility but no longer needed —
 // the till searches the whole CRM directly.
-export default function TillDashboard({ dispenseOrders, salePatient, onSalePatientUsed }: {
+export default function TillDashboard({ dispenseOrders, salePatient, onSalePatientUsed, onFindPatient, onOpenPatient }: {
   dispenseOrders: any[]; patients?: any[]; salePatient?: any; onSalePatientUsed?: () => void;
+  onFindPatient?: () => void; onOpenPatient?: (p: any) => void;
 }) {
   const [tab, setTab] = useState<TillTab>('sale');
   const [settings, setSettings] = useState<VatSettings | null>(null);
@@ -72,7 +73,7 @@ export default function TillDashboard({ dispenseOrders, salePatient, onSalePatie
         </div>
       )}
 
-      {tab === 'sale' && <NewSale products={products} settings={settings} staffEmail={staffEmail} initialPatient={salePatient} onInitialPatientUsed={onSalePatientUsed} />}
+      {tab === 'sale' && <NewSale products={products} settings={settings} staffEmail={staffEmail} initialPatient={salePatient} onInitialPatientUsed={onSalePatientUsed} onFindPatient={onFindPatient} onOpenPatient={onOpenPatient} />}
       {tab === 'history' && <SalesHistory settings={settings} staffEmail={staffEmail} />}
       {tab === 'orders' && <OrdersTill orders={dispenseOrders} settings={settings} />}
       {tab === 'cashup' && <CashUp orders={dispenseOrders} settings={settings} staffEmail={staffEmail} />}

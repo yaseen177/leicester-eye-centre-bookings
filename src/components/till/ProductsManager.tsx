@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Edit3, PackagePlus, History, Loader2, Sparkles } from 'lucide-react';
 import { collection, doc, setDoc, addDoc, serverTimestamp, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { blankProduct, adjustStock, PRODUCT_CATEGORIES, ukDateTime, type Product } from '../../lib/till';
+import { blankProduct, adjustStock, PRODUCT_CATEGORIES, ukDateTime, isWalkInProduct, type Product } from '../../lib/till';
 import { gbp, round2, extractVat, VAT_CATEGORY_LABELS, type VatCategory, type VatSettings, type DispenseKind } from '../../lib/vat';
 import { btnGhost, btnPrimary, input, card, label, Modal, useStaffPicker } from './shared';
 
@@ -77,7 +77,7 @@ export default function ProductsManager({ products, settings }: { products: Prod
               return (
                 <tr key={p.id} className={`border-t border-slate-100 ${!p.active ? 'opacity-50' : ''}`}>
                   <td className="py-2 font-bold">{p.name}<div className="text-[10px] text-slate-400 font-normal">{[p.sku, p.barcode].filter(Boolean).join(' · ')}{!p.active ? ' · INACTIVE' : ''}</div></td>
-                  <td className="text-xs">{p.category}</td>
+                  <td className="text-xs">{p.category}<div className={`text-[10px] font-black ${isWalkInProduct(p) ? 'text-green-700' : 'text-slate-400'}`}>{isWalkInProduct(p) ? 'WALK-IN' : 'PATIENT ONLY'}</div></td>
                   <td className="text-xs">{p.vatCategory === 'dispensed' ? `Dispensed ${p.dispenseKind === 'contactLenses' ? 'CL' : 'specs'}` : p.vatCategory === 'standard' ? `${settings.vatRate}%` : p.vatCategory === 'zero' ? '0%' : 'Exempt'}</td>
                   <td className="text-right font-bold">{gbp(p.price)}</td>
                   <td className={`text-right font-black ${p.trackStock ? (p.stockQty <= 0 ? 'text-red-600' : low ? 'text-amber-600' : '') : 'text-slate-300'}`}>{p.trackStock ? p.stockQty : '—'}</td>
@@ -170,6 +170,9 @@ function ProductForm({ product, settings, onClose }: { product: Omit<Product, 'i
           <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={p.trackStock} onChange={e => set({ trackStock: e.target.checked })} /> Track stock</label>
           <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={p.allowPriceOverride} onChange={e => set({ allowPriceOverride: e.target.checked })} /> Allow price change at till</label>
           <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={p.active} onChange={e => set({ active: e.target.checked })} /> Active (shows on till)</label>
+          <label className={`flex items-center gap-2 text-sm font-bold ${p.vatCategory !== 'standard' && p.vatCategory !== 'zero' ? 'opacity-40' : ''}`} title="Walk-in = sold from the Till without a patient. Clinical services and dispensed items are always patient-only.">
+            <input type="checkbox" disabled={p.vatCategory !== 'standard' && p.vatCategory !== 'zero'} checked={isWalkInProduct(p)} onChange={e => set({ walkIn: e.target.checked })} /> Walk-in sale allowed
+          </label>
         </div>
         {p.trackStock && <>
           {isNew && <div><span className={label}>Opening stock qty</span><input className={input} type="number" value={p.stockQty} onChange={e => set({ stockQty: Number(e.target.value) || 0 })} /></div>}
