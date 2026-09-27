@@ -6,7 +6,8 @@ import { loadVatSettings, ukDateTime, type Customer } from '../../lib/till';
 import { gbp, round2, type VatSettings } from '../../lib/vat';
 import { buildSaleReceiptPdf } from '../../lib/receipt';
 import { btnPrimary, input, ReceiptActions } from './shared';
-import { loadPatientDirectory, groupPatients, searchGroups, findExistingPerson, addToDirectoryCache, type PersonGroup } from '../../lib/patientDirectory';
+import { getNumberingStatus, assignPatientNumber } from '../../lib/patientRecords';
+import { loadPatientDirectory, groupPatients, searchGroups, findExistingPerson, addToDirectoryCache, nameKey, type PersonGroup } from '../../lib/patientDirectory';
 
 // Same normalisation the rest of the portal uses for patient phone numbers.
 export const formatUkPhone = (raw: string): string => {
@@ -25,7 +26,8 @@ const patientAddress = (p: any) => p.address && typeof p.address === 'object'
   : (p.address || '');
 
 export const patientToCustomer = (p: any): Customer => ({
-  name: patientName(p), email: (p.email || '').toLowerCase(), phone: p.phone || '', address: patientAddress(p), patientId: p.id || null
+  name: patientName(p), email: (p.email || '').toLowerCase(), phone: p.phone || '', address: patientAddress(p), patientId: p.id || null,
+  ...(p.patientNumber ? { patientNumber: p.patientNumber } : {})
 });
 
 // Links a till customer to the CRM: returns the patientId, creating a new
@@ -43,12 +45,14 @@ export const ensurePatientForCustomer = async (c: Customer, existing?: any): Pro
   }
   // Before creating a new record, reuse an existing patient with the same
   // email or phone so the till doesn't add to the duplicates problem.
-  const match = findExistingPerson(groupPatients(await loadPatientDirectory()), email, phone);
+  const match = findExistingPerson(groupPatients(await loadPatientDirectory()), c.name, email, phone);
   if (match) return ensurePatientForCustomer({ ...c, patientId: match.primary.id }, match.primary);
 
   const data = { patientName: c.name.trim(), email, phone, source: 'Till' };
   const ref = await addDoc(collection(db, 'patients'), { ...data, createdAt: serverTimestamp() });
-  addToDirectoryCache({ id: ref.id, ...data });
+  let patientNumber: string | null = null;
+  try { if ((await getNumberingStatus()).backfilled) patientNumber = await assignPatientNumber(ref.id); } catch { /* numbered later */ }
+  addToDirectoryCache({ id: ref.id, ...data, ...(patientNumber ? { patientNumber } : {}) });
   return ref.id;
 };
 
@@ -76,7 +80,7 @@ export function PatientPicker({ value, onPick, onClear }: { value: Customer; onP
       <div className="flex items-center justify-between p-3 rounded-xl bg-[#3F9185]/10 border border-[#3F9185]/30">
         <div className="flex items-center gap-2 text-sm">
           <User size={16} className="text-[#3F9185]" />
-          <div><div className="font-black">{value.name}</div><div className="text-xs text-slate-500">{[value.email, value.phone].filter(Boolean).join(' · ') || 'CRM patient'}</div></div>
+          <div><div className="font-black">{value.name}{value.patientNumber && <span className="ml-2 text-[10px] font-black bg-white text-slate-600 px-1.5 py-0.5 rounded">{value.patientNumber}</span>}</div><div className="text-xs text-slate-500">{[value.email, value.phone].filter(Boolean).join(' · ') || 'CRM patient'}</div></div>
         </div>
         <button className="text-slate-400 hover:text-red-500" onClick={onClear} title="Unlink patient"><X size={16} /></button>
       </div>
@@ -86,7 +90,7 @@ export function PatientPicker({ value, onPick, onClear }: { value: Customer; onP
   return (
     <div className="relative">
       <Search size={16} className="absolute left-3 top-3 text-slate-400" />
-      <input className={`${input} pl-9 pr-9`} placeholder={groups ? 'Search CRM — any part of name, phone or email' : 'Loading patients…'} value={text}
+      <input className={`${input} pl-9 pr-9`} placeholder={groups ? 'Search CRM — name, phone, email or patient no.' : 'Loading patients…'} value={text}
         onChange={e => { setText(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} />
       <button className="absolute right-3 top-3 text-slate-400 hover:text-[#3F9185]" title="Refresh patient list" onClick={() => load(true)}>
         {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -104,6 +108,7 @@ export function PatientPicker({ value, onPick, onClear }: { value: Customer; onP
                 }}>
                 <div className="flex items-center gap-2">
                   <span className="font-bold">{patientName(p)}</span>
+                  {p.patientNumber && <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{p.patientNumber}</span>}
                   {p.dob && <span className="text-xs text-slate-400">{p.dob}</span>}
                   {g.records.length > 1 && <span className="text-[10px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">{g.records.length} records</span>}
                 </div>
@@ -137,7 +142,7 @@ export function PatientSales({ patient, onNewSale }: { patient: any; onNewSale?:
         // Include every duplicate CRM record for this person.
         const groups = groupPatients(await loadPatientDirectory());
         const g = groups.find(x => x.records.some(r => r.id === patient.id))
-          || findExistingPerson(groups, patient.email || '', patient.phone || '');
+          || findExistingPerson(groups, patient.patientName || '', patient.email || '', patient.phone || '');
         const ids = Array.from(new Set([...(g ? g.records.map(r => r.id) : []), patient.id].filter(id => id && !String(id).startsWith('unknown-')))).slice(0, 30);
         const emails = Array.from(new Set([...(g ? g.emails : []), String(patient.email || '').toLowerCase()].filter(Boolean))).slice(0, 30);
         const phones = Array.from(new Set([...(g ? g.phones : []), patient.phone].filter(Boolean))).slice(0, 30);
@@ -148,7 +153,14 @@ export function PatientSales({ patient, onNewSale }: { patient: any; onNewSale?:
           phones.length ? getDocs(query(collection(db, 'sales'), where('customer.phone', 'in', phones))) : null
         ]);
         const map = new Map<string, any>();
-        snaps.forEach(snap => snap?.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
+        // Email/phone matches only count for sales NOT linked to someone else
+        // AND in this patient's name — families share phones and emails.
+        const myName = nameKey(patient.patientName || '');
+        snaps.forEach(snap => snap?.docs.forEach(d => {
+          const sale: any = { id: d.id, ...d.data() };
+          const pid = sale.customer?.patientId;
+          if (pid ? ids.includes(pid) : (myName && nameKey(sale.customer?.name) === myName)) map.set(d.id, sale);
+        }));
         if (!cancelled) {
           setSettings(s);
           setSales(Array.from(map.values()).sort((a, b) => (b.createdAtIso || '').localeCompare(a.createdAtIso || '')));

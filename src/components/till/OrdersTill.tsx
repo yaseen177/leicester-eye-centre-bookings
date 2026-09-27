@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Wallet, RotateCcw, Loader2 } from 'lucide-react';
-import { doc, setDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { genId, ensureOrderReceiptNumber, ukDateTime, isVoucherMethod } from '../../lib/till';
 import { analyseDispenseOrder, gbp, round2, type VatSettings } from '../../lib/vat';
@@ -70,7 +70,8 @@ export default function OrdersTill({ orders, settings }: { orders: any[]; settin
                       <ReceiptActions compact email={o.email} patientId={o.patientId} name={o.patientName}
                         build={async () => {
                           const rn = await ensureOrderReceiptNumber(o.id);
-                          return { doc: await buildOrderReceiptPdf({ ...o, receiptNumber: rn }, rn, settings), receiptNumber: rn };
+                          const pSnap = o.patientId && !String(o.patientId).startsWith('unknown-') ? await getDoc(doc(db, 'patients', o.patientId)) : null;
+                          return { doc: await buildOrderReceiptPdf({ ...o, receiptNumber: rn, patientNumber: pSnap?.data()?.patientNumber }, rn, settings), receiptNumber: rn };
                         }} />
                     </div>
                   </td>

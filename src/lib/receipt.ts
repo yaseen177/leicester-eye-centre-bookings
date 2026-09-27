@@ -56,12 +56,12 @@ const header = async (doc: jsPDF, s: VatSettings, title: string, number: string,
 };
 
 // Returns the y position the items table should start at.
-const customerBlock = (doc: jsPDF, c: { name?: string; email?: string; phone?: string; address?: string }): number => {
+const customerBlock = (doc: jsPDF, c: { name?: string; email?: string; phone?: string; address?: string; patientNumber?: string }): number => {
   if (!c || !(c.name || c.email || c.address)) return 66;
   doc.setFontSize(9); doc.setTextColor(...GREY); doc.setFont('helvetica', 'bold');
   doc.text('Customer', 196, 44, { align: 'right' });
   doc.setFont('helvetica', 'normal'); doc.setTextColor(...DARK);
-  const lines = [c.name, ...(c.address ? String(c.address).split(/\n|,\s*/) : []), c.email].filter(Boolean) as string[];
+  const lines = [c.name, c.patientNumber ? `Patient no. ${c.patientNumber}` : '', ...(c.address ? String(c.address).split(/\n|,\s*/) : []), c.email].filter(Boolean) as string[];
   const shown = lines.slice(0, 6);
   shown.forEach((l, i) => doc.text(l, 196, 49 + i * 4.2, { align: 'right' }));
   return Math.max(66, 49 + shown.length * 4.2 + 3);
@@ -176,7 +176,7 @@ export const buildOrderReceiptPdf = async (order: any, receiptNumber: string, s:
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const createdIso = order.createdAt?.toDate ? order.createdAt.toDate().toISOString() : new Date().toISOString();
   await header(doc, s, 'VAT RECEIPT — SPECTACLE ORDER', receiptNumber, createdIso, 'Order date');
-  const startY = customerBlock(doc, { name: order.patientName, email: order.email });
+  const startY = customerBlock(doc, { name: order.patientName, email: order.email, patientNumber: order.patientNumber });
 
   const analysis = analyseDispenseOrder(order, s);
   const rows: any[][] = [];

@@ -87,6 +87,7 @@ export interface Customer {
   phone: string;
   address: string;
   patientId: string | null;
+  patientNumber?: string;
 }
 
 export const blankCustomer = (): Customer => ({ name: '', email: '', phone: '', address: '', patientId: null });

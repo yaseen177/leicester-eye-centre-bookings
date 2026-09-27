@@ -13,6 +13,8 @@ import { jsPDF } from 'jspdf';
 import ReportsDashboard from './ReportsDashboard';
 import TillDashboard from './TillDashboard';
 import { PatientSales } from '../components/till/PatientLink';
+import PatientRecords from './PatientRecords';
+import { autoNumberNewPatients } from '../lib/patientRecords';
 
 interface ClinicScheduleConfig {
   times: Record<string, number>;
@@ -430,7 +432,7 @@ function SlotActionsMenu({ actions }: { actions: SlotAction[] }) {
 }
 
 export default function AdminDashboard() {
-  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits' | 'till'>('diary');
+  const [view, setView] = useState<'diary' | 'messages' | 'logs' | 'calls' | 'settings' | 'reports' | 'dispensing' | 'guide' | 'pricing' | 'recalls' | 'clDirectDebits' | 'till' | 'patientRecords'>('diary');
   const [tillSalePatient, setTillSalePatient] = useState<any>(null);
   const [pricingData, setPricingData] = useState<any>(null);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
@@ -761,7 +763,10 @@ export default function AdminDashboard() {
     const seq = ++cloudSearchSeq.current;
     try {
       let q;
-      if (queryText.startsWith('0') || queryText.startsWith('+')) {
+      const pnMatch = queryText.trim().match(/^ec[\s-]?0*(\d+)$/i);
+      if (pnMatch) {
+        q = query(collection(db, "patients"), where("patientNumber", "==", `EC-${pnMatch[1].padStart(6, '0')}`), limit(5));
+      } else if (queryText.startsWith('0') || queryText.startsWith('+')) {
         let phone = queryText.replace(/[\s\-\(\)]/g, '');
         if (phone.startsWith('0')) phone = `+44${phone.substring(1)}`;
         q = query(collection(db, "patients"), where("phone", ">=", phone), where("phone", "<=", phone + '\uf8ff'), limit(15));
@@ -773,7 +778,7 @@ export default function AdminDashboard() {
         q = query(collection(db, "patients"), where("patientName", ">=", nameTitleCase), where("patientName", "<=", nameTitleCase + '\uf8ff'), limit(15));
       }
       const snap = await getDocs(q as any);
-      const cloudMatches: any[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as Record<string, any>) }));
+      const cloudMatches: any[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as Record<string, any>) })).filter((p: any) => !p.mergedInto);
 
       const queryLower = queryText.toLowerCase();
       
@@ -842,7 +847,9 @@ export default function AdminDashboard() {
 
     const qPatients = query(collection(db, "patients"), orderBy("createdAt", "desc"), limit(150));
     const unsubPatients = onSnapshot(qPatients, (snap) => {
-      setCrmPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(p => !p.mergedInto);
+      setCrmPatients(list);
+      autoNumberNewPatients(list).catch(e => console.error('Auto-numbering failed', e));
     });
 
     const qLogs = query(collection(db, "logs"), orderBy("timestamp", "desc"), limit(200));
@@ -4615,6 +4622,9 @@ export default function AdminDashboard() {
             <button onClick={() => setView('till')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'till' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <Wallet size={18} /> Till
             </button>
+            <button onClick={() => setView('patientRecords')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'patientRecords' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <UserCog size={18} /> Patient Records
+            </button>
             <button onClick={() => setView('clDirectDebits')} className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${view === 'clDirectDebits' ? 'bg-[#3F9185] text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
               <RefreshCw size={18} /> CL Direct Debits
             </button>
@@ -5307,7 +5317,7 @@ export default function AdminDashboard() {
                           <User size={24} />
                         </div>
                         <div>
-                          <h3 className="text-2xl font-black text-slate-800 tracking-tight">{selectedChatPatient.patientName}</h3>
+                          <h3 className="text-2xl font-black text-slate-800 tracking-tight">{selectedChatPatient.patientName}{selectedChatPatient.patientNumber && <span className="ml-3 align-middle text-xs font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-md border border-slate-200">{selectedChatPatient.patientNumber}</span>}</h3>
                           <div className="flex items-center gap-3 mt-1">
                             <span className="text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 flex items-center gap-1.5"><MessageSquare size={12}/> {selectedChatPatient.phone || 'No phone'}</span>
                             <span className="text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 flex items-center gap-1.5"><Mail size={12}/> {selectedChatPatient.email || 'No email'}</span>
@@ -6592,6 +6602,8 @@ export default function AdminDashboard() {
 
         {/* --- REPORTS VIEW --- */}
         {view === 'reports' && <ReportsDashboard appointments={appointments} orders={dispenseOrders} />}
+
+        {view === 'patientRecords' && <PatientRecords />}
 
         {view === 'till' && <TillDashboard dispenseOrders={dispenseOrders} salePatient={tillSalePatient} onSalePatientUsed={() => setTillSalePatient(null)} />}
 
