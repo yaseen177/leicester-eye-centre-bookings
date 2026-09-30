@@ -29,6 +29,7 @@ interface ClinicScheduleConfig {
   openDates: string[];
   dailyOverrides: Record<string, { start: string; end: string }>;
   closedDates: string[];
+  maxAdvanceDays?: number; // Eye Care only: how far ahead patients can book ONLINE
 }
 
 interface OptometristConfig {
@@ -554,7 +555,8 @@ export default function AdminDashboard() {
       times: { eyeCheck: 30, contactLens: 20 },
       hours: defaultEyeCareHours,
       lunch: { start: "13:00", end: "14:00", enabled: true },
-      weeklyOff: [0], openDates: [], dailyOverrides: {}, closedDates: []
+      weeklyOff: [0], openDates: [], dailyOverrides: {}, closedDates: [],
+      maxAdvanceDays: 14
     },
     dispensing: {
       // weeklyOff: [] — open every day by default, including Sundays, per your Dispensing hours
@@ -934,7 +936,12 @@ export default function AdminDashboard() {
         weeklyOff: cloudData?.weeklyOff || prev.weeklyOff,
         openDates: cloudData?.openDates || prev.openDates,
         dailyOverrides: cloudData?.dailyOverrides || prev.dailyOverrides,
-        closedDates: cloudData?.closedDates || []
+        closedDates: cloudData?.closedDates || [],
+        // Kept through load/save -- saveConfig overwrites the whole doc, so
+        // dropping it here would silently reset the booking window.
+        ...(cloudData?.maxAdvanceDays || prev.maxAdvanceDays
+          ? { maxAdvanceDays: Number(cloudData?.maxAdvanceDays) || prev.maxAdvanceDays }
+          : {})
       };
     };
 
@@ -6320,6 +6327,11 @@ export default function AdminDashboard() {
                       <div>
                         <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Contact Lens Check</label>
                         <input type="number" value={config.eyeCare.times.contactLens} onChange={e => setConfig({...config, eyeCare: {...config.eyeCare, times: {...config.eyeCare.times, contactLens: +e.target.value}}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Online Booking Window (days ahead)</label>
+                        <input type="number" min={1} max={90} value={config.eyeCare.maxAdvanceDays ?? 14} onChange={e => setConfig({...config, eyeCare: {...config.eyeCare, maxAdvanceDays: Math.max(1, +e.target.value || 14)}})} className="w-full p-4 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-[#3F9185]" />
+                        <p className="text-[10px] text-slate-400 mt-1 ml-1">Patients booking online (or rescheduling via their link) can't pick a date further out. Staff bookings here aren't limited.</p>
                       </div>
                     </>
                   ) : (

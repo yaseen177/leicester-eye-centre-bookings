@@ -5,6 +5,15 @@ import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
 import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone, CheckCircle2 } from 'lucide-react';
 
+// Online patients can only book this many days ahead (set in Admin > Settings).
+// Longer lead times FTA far more, so anything further out goes via the phone.
+const DEFAULT_MAX_ADVANCE_DAYS = 14;
+const getMaxDateStr = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString('en-CA');
+};
+
 const toMins = (t: string) => { 
   const [h, m] = t.split(':').map(Number); 
   return h * 60 + m; 
@@ -38,7 +47,8 @@ export default function ManageBooking() {
     eyeCheck: 30, contactLens: 20, buffer: 0,
     closedDates: [] as string[], openDates: [] as string[], weeklyOff: [] as number[],
     lunch: { start: "13:00", end: "14:00", enabled: true },
-    dailyOverrides: {} as Record<string, { start: string; end: string }>
+    dailyOverrides: {} as Record<string, { start: string; end: string }>,
+    maxAdvanceDays: DEFAULT_MAX_ADVANCE_DAYS
   });
   
   const [rescheduleDate, setRescheduleDate] = useState(new Date().toISOString().split('T')[0]);
@@ -80,7 +90,8 @@ export default function ManageBooking() {
             buffer: Number(data.buffer) || 0,
             closedDates: data.closedDates || [], openDates: data.openDates || [], weeklyOff: data.weeklyOff || [],
             lunch: data.lunch || { start: "13:00", end: "14:00", enabled: true },
-            dailyOverrides: data.dailyOverrides || {}
+            dailyOverrides: data.dailyOverrides || {},
+            maxAdvanceDays: Number(data.maxAdvanceDays) || DEFAULT_MAX_ADVANCE_DAYS
           };
         });
       }
@@ -98,6 +109,7 @@ export default function ManageBooking() {
     const { closedDates, openDates, weeklyOff, dailyOverrides } = settings;
   
     if (targetDate < new Date().toLocaleDateString('en-CA')) return [];
+    if (targetDate > getMaxDateStr(settings.maxAdvanceDays)) return [];
     if (closedDates.includes(targetDate)) return [];
     if (weeklyOff.includes(dayOfWeek) && !openDates.includes(targetDate)) return [];
   
@@ -466,13 +478,22 @@ export default function ManageBooking() {
                 <h2 className="text-xl font-bold text-slate-800">Pick a new time</h2>
              </div>
              <div>
-               <input type="date" min={new Date().toLocaleDateString('en-CA')} value={rescheduleDate} className="w-full p-4 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none" onChange={e => { setRescheduleDate(e.target.value); setRescheduleTime(''); }} />
+               <input type="date" min={new Date().toLocaleDateString('en-CA')} max={getMaxDateStr(settings.maxAdvanceDays)} value={rescheduleDate} className="w-full p-4 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none" onChange={e => { setRescheduleDate(e.target.value); setRescheduleTime(''); }} />
              </div>
              
              {(() => {
                 const slots = calculateSlotsForDate(rescheduleDate);
                 const morning = slots.filter(t => parseInt(t.split(':')[0]) < 12);
                 const afternoon = slots.filter(t => parseInt(t.split(':')[0]) >= 12);
+
+                if (rescheduleDate > getMaxDateStr(settings.maxAdvanceDays)) {
+                   return (
+                     <div className="py-8 px-4 text-center bg-teal-50 rounded-2xl space-y-2">
+                       <p className="font-bold text-slate-700">Online booking is open up to {settings.maxAdvanceDays} days ahead.</p>
+                       <p className="text-sm text-slate-500">Need a later date? Call us on <a href="tel:01162532788" className="underline font-black text-[#3F9185]">0116 253 2788</a> and we'll sort it for you.</p>
+                     </div>
+                   );
+                }
 
                 if (slots.length === 0) return <div className="py-10 text-center text-slate-400 font-bold italic">No slots available for this date.</div>;
 

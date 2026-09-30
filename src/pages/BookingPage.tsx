@@ -22,6 +22,15 @@ const fromMins = (m: number) => {
 // Today as YYYY-MM-DD in the visitor's local time (toISOString is UTC and can be a day behind)
 const getTodayStr = () => new Date().toLocaleDateString('en-CA');
 
+// Online patients can only book this many days ahead (set in Admin > Settings).
+// Longer lead times FTA far more, so anything further out goes via the phone.
+const DEFAULT_MAX_ADVANCE_DAYS = 14;
+const getMaxDateStr = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString('en-CA');
+};
+
 export default function BookingPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -42,7 +51,8 @@ export default function BookingPage() {
     openDates: [] as string[],
     weeklyOff: [] as number[],
     lunch: { start: "13:00", end: "14:00" },
-    dailyOverrides: {} as Record<string, { start: string; end: string }>
+    dailyOverrides: {} as Record<string, { start: string; end: string }>,
+    maxAdvanceDays: DEFAULT_MAX_ADVANCE_DAYS
   });
   
   const [booking, setBooking] = useState({
@@ -108,7 +118,8 @@ export default function BookingPage() {
             openDates: data.openDates || [],
             weeklyOff: data.weeklyOff || [],
             lunch: data.lunch || { start: "13:00", end: "14:00" },
-            dailyOverrides: data.dailyOverrides || {}
+            dailyOverrides: data.dailyOverrides || {},
+            maxAdvanceDays: Number(data.maxAdvanceDays) || DEFAULT_MAX_ADVANCE_DAYS
           };
         });
       }
@@ -137,6 +148,7 @@ export default function BookingPage() {
     const { closedDates, openDates, weeklyOff, dailyOverrides } = settings;
   
     if (targetDate < getTodayStr()) return [];
+    if (targetDate > getMaxDateStr(settings.maxAdvanceDays)) return [];
     if (closedDates.includes(targetDate)) return [];
 
     const isStandardDayOff = weeklyOff.includes(dayOfWeek);
@@ -193,8 +205,8 @@ export default function BookingPage() {
 
   const findFirstAvailableDate = () => {
     let checkDate = new Date();
-    for (let i = 0; i < 30; i++) {
-      const dateStr = checkDate.toISOString().split('T')[0];
+    for (let i = 0; i <= settings.maxAdvanceDays; i++) {
+      const dateStr = checkDate.toLocaleDateString('en-CA');
       if (calculateSlotsForDate(dateStr).length > 0) return dateStr;
       checkDate.setDate(checkDate.getDate() + 1);
     }
@@ -503,7 +515,8 @@ export default function BookingPage() {
              </div>
              <div>
                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
-               <input type="date" min={getTodayStr()} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value, time: ''})} />
+               <input type="date" min={getTodayStr()} max={getMaxDateStr(settings.maxAdvanceDays)} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value, time: ''})} />
+               <p className="text-[11px] text-slate-400 mt-2 ml-1">Online booking is open up to {settings.maxAdvanceDays} days ahead. For a later date, call <a href="tel:01162532788" className="underline font-bold text-[#3F9185]">0116 253 2788</a>.</p>
              </div>
              
              {(() => {
@@ -511,8 +524,22 @@ export default function BookingPage() {
                 const morning = slots.filter(t => parseInt(t.split(':')[0]) < 12);
                 const afternoon = slots.filter(t => parseInt(t.split(':')[0]) >= 12);
 
+                if (booking.date > getMaxDateStr(settings.maxAdvanceDays)) {
+                   return (
+                     <div className="py-8 px-4 text-center bg-teal-50 rounded-2xl space-y-2">
+                       <p className="font-bold text-slate-700">Online booking is open up to {settings.maxAdvanceDays} days ahead.</p>
+                       <p className="text-sm text-slate-500">Need a later date? Call us on <a href="tel:01162532788" className="underline font-black text-[#3F9185]">0116 253 2788</a> and we'll book you in.</p>
+                     </div>
+                   );
+                }
+
                 if (slots.length === 0) {
-                   return <div className="py-10 text-center text-slate-400 font-bold italic">{booking.date < getTodayStr() ? 'Please choose today or a future date.' : 'No slots available for this date.'}</div>;
+                   return (
+                     <div className="py-10 text-center space-y-2">
+                       <p className="text-slate-400 font-bold italic">{booking.date < getTodayStr() ? 'Please choose today or a future date.' : 'No slots available for this date.'}</p>
+                       <p className="text-xs text-slate-400">Can't find a time? Call us on <a href="tel:01162532788" className="underline font-black text-[#3F9185]">0116 253 2788</a>.</p>
+                     </div>
+                   );
                 }
 
                 return (
