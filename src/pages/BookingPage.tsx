@@ -516,7 +516,7 @@ export default function BookingPage() {
              <div>
                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Appointment Date</label>
                <input type="date" min={getTodayStr()} max={getMaxDateStr(settings.maxAdvanceDays)} value={booking.date} className="w-full p-4 mt-1 rounded-xl bg-slate-50 font-bold text-[#3F9185] border-none focus:ring-2 focus:ring-[#3F9185] outline-none transition-all" onChange={e => setBooking({...booking, date: e.target.value, time: ''})} />
-               <p className="text-[11px] text-slate-400 mt-2 ml-1">Online booking is open up to {settings.maxAdvanceDays} days ahead. For a later date, call <a href="tel:01162532788" className="underline font-bold text-[#3F9185]">0116 253 2788</a>.</p>
+               <p className="text-[11px] text-slate-400 mt-2 ml-1">Online booking is open up to {settings.maxAdvanceDays} days ahead. For a later date, call <a href="tel:01162532788" className="underline font-bold text-[#3F9185]">0116 253 2788</a> and press 3.</p>
              </div>
              
              {(() => {
@@ -528,7 +528,7 @@ export default function BookingPage() {
                    return (
                      <div className="py-8 px-4 text-center bg-teal-50 rounded-2xl space-y-2">
                        <p className="font-bold text-slate-700">Online booking is open up to {settings.maxAdvanceDays} days ahead.</p>
-                       <p className="text-sm text-slate-500">Need a later date? Call us on <a href="tel:01162532788" className="underline font-black text-[#3F9185]">0116 253 2788</a> and we'll book you in.</p>
+                       <p className="text-sm text-slate-500">Need a later date? Call us on <a href="tel:01162532788" className="underline font-black text-[#3F9185]">0116 253 2788</a>, press 3, and we'll book you in.</p>
                      </div>
                    );
                 }

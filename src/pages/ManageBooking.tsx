@@ -500,7 +500,7 @@ export default function ManageBooking() {
                    return (
                      <div className="py-8 px-4 text-center bg-teal-50 rounded-2xl space-y-2">
                        <p className="font-bold text-slate-700">Online booking is open up to {settings.maxAdvanceDays} days ahead.</p>
-                       <p className="text-sm text-slate-500">Need a later date? Call us on <a href="tel:01162532788" className="underline font-black text-[#3F9185]">0116 253 2788</a> and we'll sort it for you.</p>
+                       <p className="text-sm text-slate-500">Need a later date? Call us on <a href="tel:01162532788" className="underline font-black text-[#3F9185]">0116 253 2788</a>, press 3, and we'll sort it for you.</p>
                      </div>
                    );
                 }
