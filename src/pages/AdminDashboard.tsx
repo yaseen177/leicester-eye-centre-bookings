@@ -3647,6 +3647,11 @@ export default function AdminDashboard() {
 
       if (appData) {
         if (newStatus === 'FTA' && appData.status !== 'FTA') {
+          // Stamp the missed slot so it still counts as an FTA in Reports even
+          // if the patient later reschedules via their link.
+          updatePayload.ftaDate = appData.appointmentDate;
+          updatePayload.ftaTime = appData.appointmentTime;
+          updatePayload.ftaAt = serverTimestamp();
           await fetch("https://twilio.yaseen-hussain18.workers.dev/schedule-fta", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import FtaLeadTimeReport from '../components/FtaLeadTimeReport';
 import { FileText, Calendar, AlertTriangle, RefreshCcw, TrendingDown, PieChart, Activity, BarChart3, Clock, ShoppingBag, Wallet, CreditCard, TrendingUp } from 'lucide-react';
 
 // Shared date parser — handles both yyyy-mm-dd and dd/mm/yyyy style appointmentDate strings.
@@ -462,6 +463,9 @@ export default function ReportsDashboard({ appointments, orders = [] }: { appoin
         </button>
       </div>
       
+      {/* FTA vs LEAD TIME -- used to tune the online booking window */}
+      <FtaLeadTimeReport appointments={appointments} />
+
       {/* ROW 1: DIGITAL MARKETING HEATMAP (META STYLE) */}
       <div>
         <h2 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2"><BarChart3 size={18}/> Digital Marketing Heatmap (Online Bookings)</h2>

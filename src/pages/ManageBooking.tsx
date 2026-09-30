@@ -315,7 +315,17 @@ export default function ManageBooking() {
     setActionLoading(true);
     try {
       const docRef = doc(db, 'appointments', id!);
-      await setDoc(docRef, { appointmentDate: rescheduleDate, appointmentTime: rescheduleTime }, { merge: true });
+      await setDoc(docRef, {
+        appointmentDate: rescheduleDate,
+        appointmentTime: rescheduleTime,
+        // An FTA'd patient rebooking via their link: the new slot starts fresh.
+        // The missed one is kept in ftaDate/ftaTime (for Reports).
+        ...(appointment.status === 'FTA' ? {
+          status: 'Booked',
+          ftaDate: appointment.ftaDate || appointment.appointmentDate,
+          ftaTime: appointment.ftaTime || appointment.appointmentTime,
+        } : {})
+      }, { merge: true });
 
       if (appointment.email) {
         await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
