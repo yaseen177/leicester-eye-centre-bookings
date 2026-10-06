@@ -32,7 +32,8 @@ let inflight: Promise<any[]> | null = null;
 
 // All non-merged patients.
 export const loadPatientDirectory = async (force = false): Promise<any[]> => {
-  if (!force && cache && Date.now() - cache.at < CACHE_MS) return cache.list;
+  // Copy, so React sees a new array when the cache has been updated in place.
+  if (!force && cache && Date.now() - cache.at < CACHE_MS) return [...cache.list];
   if (inflight) return inflight;
   inflight = getDocs(collection(db, 'patients'))
     .then(snap => {
@@ -46,8 +47,18 @@ export const loadPatientDirectory = async (force = false): Promise<any[]> => {
 
 export const invalidateDirectory = () => { cache = null; };
 
-// Keep the cache in step with records created from the till.
-export const addToDirectoryCache = (p: any) => { if (cache) cache.list.push(p); };
+// Keep the cache in step with records created or edited in this tab. Without
+// this, an edit saved to Firestore kept showing the OLD details in patient
+// search for up to 10 minutes (it looked like the edit had "reverted").
+// Upsert by id so a record is never listed twice; merged-away records drop out.
+export const upsertDirectoryCache = (p: any) => {
+  if (!cache || !p?.id || String(p.id).startsWith('unknown-')) return;
+  const i = cache.list.findIndex(x => x.id === p.id);
+  if (p.mergedInto) { if (i >= 0) cache.list.splice(i, 1); return; }
+  if (i >= 0) cache.list[i] = { ...cache.list[i], ...p };
+  else cache.list.push(p);
+};
+export const addToDirectoryCache = upsertDirectoryCache;
 
 export const nameOf = (p: any): string => (p.patientName || `${p.firstName || ''} ${p.lastName || ''}`).trim();
 

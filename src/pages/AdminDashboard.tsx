@@ -20,6 +20,7 @@ import VatReportPage from '../components/till/VatReportPage';
 import { classifySender, domainOf, EMPTY_RULES, type SenderRules } from '../lib/senderClassifier';
 import PatientRecords from './PatientRecords';
 import { autoNumberNewPatients, resolveOrCreatePatient, findExistingPatient } from '../lib/patientRecords';
+import { upsertDirectoryCache, nameKey, loadPatientDirectory, invalidateDirectory, groupPatients, findExistingPerson, dobKey } from '../lib/patientDirectory';
 
 interface ClinicScheduleConfig {
   times: Record<string, number>;
@@ -816,19 +817,23 @@ export default function AdminDashboard() {
 
       const mergedMap = new Map();
       
+      // Every CRM record is its own patient — key by id so family members who
+      // share a phone/email each show up (they used to overwrite each other).
+      const crmContacts = new Set<string>();
       cloudMatches.forEach(p => {
-         const key = p.phone || p.email || p.id;
-         mergedMap.set(key, p);
+         mergedMap.set(`id:${p.id}`, p);
+         if (p.phone) crmContacts.add(p.phone);
+         if (p.email) crmContacts.add(p.email);
       });
 
       apptMatches.forEach(p => {
          const key = p.phone || p.email;
-         if (key && !mergedMap.has(key)) mergedMap.set(key, p);
+         if (key && !crmContacts.has(key) && !mergedMap.has(key)) mergedMap.set(key, p);
       });
 
       msgMatches.forEach(p => {
          const key = p.phone || p.email;
-         if (key && !mergedMap.has(key)) mergedMap.set(key, p);
+         if (key && !crmContacts.has(key) && !mergedMap.has(key)) mergedMap.set(key, p);
       });
 
       if (seq !== cloudSearchSeq.current) return; // a newer search has started
@@ -1007,19 +1012,51 @@ export default function AdminDashboard() {
     })();
   }, [callLogs]);
 
+  // Keep the open patient in sync with their Firestore record. Patients are
+  // opened from search results (a cache up to 10 minutes old), from the 150
+  // most-recent list, or from a stub built off a recall/sale — so without a
+  // live read the screen could show stale details, and after leaving and
+  // coming back an edit looked like it had "reverted".
+  const selectedPatientId = selectedChatPatient?.id ? String(selectedChatPatient.id) : '';
   useEffect(() => {
-    if (selectedChatPatient) {
-      setEditProfileData({
-        patientName: selectedChatPatient.patientName || '',
-        email: selectedChatPatient.email || '',
-        phone: selectedChatPatient.phone || '',
-        dob: selectedChatPatient.dob || '',
-        address: selectedChatPatient.address?.verified ? selectedChatPatient.address : blankAddress()
-      });
-      setCrmTab(crmMode === 'inbox' ? 'chat' : String(selectedChatPatient.id || '').startsWith('unknown-new-') ? 'profile' : 'overview');
-      setReplyingToMessage(null); 
-    }
-  }, [selectedChatPatient]);
+    if (!selectedPatientId || selectedPatientId.startsWith('unknown-')) return;
+    const unsub = onSnapshot(doc(db, "patients", selectedPatientId), snap => {
+      if (!snap.exists()) return;
+      const data: any = { id: snap.id, ...snap.data() };
+      upsertDirectoryCache(data);
+      if (data.mergedInto) {
+        // This record was merged into another — follow it to the surviving record.
+        setSelectedChatPatient((prev: any) => (prev?.id === snap.id ? { id: data.mergedInto } : prev));
+        return;
+      }
+      setSelectedChatPatient((prev: any) => (prev?.id === snap.id ? { ...prev, ...data } : prev));
+    }, err => console.error('Patient live sync failed', err));
+    return unsub;
+  }, [selectedPatientId]);
+
+  // Reset the tab only when a DIFFERENT patient is opened (not on every live update).
+  useEffect(() => {
+    if (!selectedPatientId) return;
+    setCrmTab(crmMode === 'inbox' ? 'chat' : selectedPatientId.startsWith('unknown-new-') ? 'profile' : 'overview');
+    setReplyingToMessage(null);
+  }, [selectedPatientId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refill the edit form whenever the saved details change (opening a patient,
+  // a save, or an edit made elsewhere) — but not on unrelated live updates,
+  // so a half-typed edit isn't wiped.
+  const selectedProfileSig = selectedChatPatient
+    ? JSON.stringify([selectedChatPatient.id, selectedChatPatient.patientName, selectedChatPatient.email, selectedChatPatient.phone, selectedChatPatient.dob, selectedChatPatient.address])
+    : '';
+  useEffect(() => {
+    if (!selectedChatPatient) return;
+    setEditProfileData({
+      patientName: selectedChatPatient.patientName || '',
+      email: selectedChatPatient.email || '',
+      phone: selectedChatPatient.phone || '',
+      dob: selectedChatPatient.dob || '',
+      address: selectedChatPatient.address?.verified ? selectedChatPatient.address : blankAddress()
+    });
+  }, [selectedProfileSig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selectedChatPatient && view === 'messages' && crmTab === 'chat' && commsType === 'SMS') {
@@ -1135,9 +1172,14 @@ export default function AdminDashboard() {
     return clean;
   };
 
-  const analyzeCsvData = () => {
+  const analyzeCsvData = async () => {
     setIsAnalyzing(true);
-    setTimeout(() => {
+    try {
+      // Match against the WHOLE CRM (not just the 150 newest) using the same
+      // rule as everywhere else: name must match AND share a phone/email, and
+      // a different DOB means a different person. Matching on phone/email
+      // alone used to fold a child's row into a parent's record.
+      const groups = groupPatients(await loadPatientDirectory(true));
       const newPts: any[] = [];
       const dupPts: any[] = [];
 
@@ -1158,20 +1200,23 @@ export default function AdminDashboard() {
         const formattedDob = standardizeDate(rawDob);
         const formattedEmail = rawEmail.toLowerCase();
 
-        const existing = crmPatients.find(p => 
-          (formattedPhone && p.phone === formattedPhone) || 
-          (formattedEmail && p.email === formattedEmail)
-        );
+        const g = name ? findExistingPerson(groups, name, formattedEmail, formattedPhone) : null;
+        const dobClash = !!g && !!dobKey(formattedDob) && !!dobKey(g.primary.dob) && dobKey(formattedDob) !== dobKey(g.primary.dob);
+        const existing = g && !dobClash ? g.primary : null;
 
         if (existing) {
+           // Top up blanks only — never overwrite what's already on the record.
            dupPts.push({
               existingId: existing.id,
-              name: name || existing.patientName,
-              phone: formattedPhone || existing.phone,
-              email: formattedEmail || existing.email,
-              dob: formattedDob || existing.dob
+              name: existing.patientName || name,
+              phone: existing.phone ? '' : formattedPhone,
+              email: existing.email ? '' : formattedEmail,
+              dob: existing.dob ? '' : formattedDob
            });
         } else {
+           // Same person twice in the CSV → import them once.
+           const repeat = newPts.some(n => nameKey(n.name) === nameKey(name) && ((formattedPhone && n.phone === formattedPhone) || (formattedEmail && n.email === formattedEmail)));
+           if (repeat) continue;
            newPts.push({
               name,
               phone: formattedPhone,
@@ -1182,8 +1227,11 @@ export default function AdminDashboard() {
       }
 
       setImportAnalysis({ new: newPts, duplicates: dupPts });
+    } catch (e: any) {
+      alert(`Couldn't check the CSV against the CRM: ${e?.message || e}`);
+    } finally {
       setIsAnalyzing(false);
-    }, 500); 
+    }
   };
 
   const processBatchedImport = async () => {
@@ -1220,7 +1268,6 @@ export default function AdminDashboard() {
            } else {
               const existRef = doc(db, "patients", op.data.existingId);
               batch.set(existRef, {
-                 ...(op.data.name && { patientName: op.data.name }),
                  ...(op.data.phone && { phone: op.data.phone }),
                  ...(op.data.email && { email: op.data.email }),
                  ...(op.data.dob && { dob: op.data.dob }),
@@ -1230,6 +1277,7 @@ export default function AdminDashboard() {
         }
         await batch.commit();
       }
+      invalidateDirectory();
 
       alert(`Success! Imported ${importAnalysis.new.length} new patients and safely merged ${importAnalysis.duplicates.length} duplicate records.`);
       setIsCsvModalOpen(false);
@@ -1248,83 +1296,92 @@ export default function AdminDashboard() {
 
   const handleUpdateMasterProfile = async () => {
     if (!selectedChatPatient) return;
-    
-    const patientAppts = appointments.filter(a => 
-      (a.patientId && a.patientId === selectedChatPatient.id) ||
-      (a.phone && a.phone === selectedChatPatient.phone) || 
-      (a.email && a.email === selectedChatPatient.email)
+    if (!editProfileData.patientName.trim()) { alert("Patient name is required."); return; }
+
+    const oldId = String(selectedChatPatient.id || '');
+    const isKnownCrmId = !!oldId && !oldId.startsWith('unknown-');
+
+    // Normalise contact details the same way bookings do, so the saved record
+    // still matches this patient's appointments and messages.
+    const rawPhone = (editProfileData.phone || '').replace(/[\s\-()]/g, '');
+    const phone = rawPhone ? (rawPhone.startsWith('0') ? `+44${rawPhone.substring(1)}` : rawPhone) : '';
+    const email = (editProfileData.email || '').trim().toLowerCase();
+    const patientName = editProfileData.patientName.trim();
+    const addr: any = editProfileData.address;
+    const hasAddress = !!(addr && (addr.line1 || addr.postcode));
+
+    // The edit form can only show verified (lookup) addresses, so an older
+    // free-text address shows as blank. Only write the address if one was
+    // actually entered — otherwise saving a phone change wiped the address.
+    const profile: Record<string, any> = { patientName, email, phone, dob: editProfileData.dob || '' };
+    if (hasAddress) profile.address = addr;
+
+    // Which appointments belong to THIS patient. Linked ones by id; unlinked
+    // ones only if the contact details AND the name match — families share
+    // phones/emails, and a parent's bookings must never be relabelled with a
+    // child's name (or vice versa).
+    const nameKeys = new Set([nameKey(selectedChatPatient.patientName), nameKey(patientName)].filter(Boolean));
+    const contactMatch = (a: any) =>
+      (!!selectedChatPatient.phone && a.phone === selectedChatPatient.phone) ||
+      (!!selectedChatPatient.email && !!a.email && String(a.email).toLowerCase() === String(selectedChatPatient.email).toLowerCase());
+    const isUnlinked = (a: any) => !a.patientId || String(a.patientId).startsWith('unknown-');
+    const patientAppts = appointments.filter(a =>
+      (isKnownCrmId && a.patientId === oldId) ||
+      (isUnlinked(a) && contactMatch(a) && nameKeys.has(nameKey(a.patientName)))
     );
 
-    // Prescriptions only ever match by patientId, unlike appointments which
-    // also fall back to phone/email — so if this patient's CRM entry is
-    // still a synthetic "unknown-..." id about to get promoted to a real
-    // patients doc with a brand-new id below, any prescriptions already
-    // saved against the OLD id need to move with it, same as appointments
-    // already do, or they'd silently vanish even though the documents
-    // still exist in Firestore.
-    const patientRxs = prescriptions.filter(rx => rx.patientId === selectedChatPatient.id);
+    // Prescriptions only ever match by patientId — when an "unknown-..." entry
+    // is promoted to a real record, any saved against the old id move with it.
+    const patientRxs = prescriptions.filter(rx => rx.patientId === oldId);
 
     try {
-      const isKnownCrmId = selectedChatPatient.id && !selectedChatPatient.id.startsWith('unknown-');
-      let currentMasterId = selectedChatPatient.id;
+      let currentMasterId = oldId;
 
       // Before creating a record, check the CRM already has this person.
       const existingMatch = !isKnownCrmId
-        ? await findExistingPatient({ name: editProfileData.patientName, email: editProfileData.email, phone: editProfileData.phone, dob: editProfileData.dob })
+        ? await findExistingPatient({ name: patientName, email, phone, dob: editProfileData.dob })
         : null;
       const useExisting = !!existingMatch && confirm(`${existingMatch.patientName}${existingMatch.patientNumber ? ` (${existingMatch.patientNumber})` : ''} is already in the CRM with the same contact details.\n\nOK = update that record (recommended)\nCancel = create a separate new record`);
 
       if (useExisting) {
         currentMasterId = existingMatch.id;
-        await setDoc(doc(db, "patients", currentMasterId), {
-          patientName: editProfileData.patientName,
-          email: editProfileData.email,
-          phone: editProfileData.phone,
-          dob: editProfileData.dob,
-          address: editProfileData.address
-        }, { merge: true });
+        await setDoc(doc(db, "patients", currentMasterId), profile, { merge: true });
       } else if (!isKnownCrmId) {
-        const newPatientRef = await addDoc(collection(db, "patients"), {
-          patientName: editProfileData.patientName,
-          email: editProfileData.email,
-          phone: editProfileData.phone,
-          dob: editProfileData.dob,
-          address: editProfileData.address,
-          createdAt: serverTimestamp()
-        });
+        // resolve is skipped here (the user just chose "separate record"), so
+        // create directly — numbering is picked up by autoNumberNewPatients.
+        const newPatientRef = await addDoc(collection(db, "patients"), { ...profile, createdAt: serverTimestamp() });
         currentMasterId = newPatientRef.id;
       } else {
-        await setDoc(doc(db, "patients", currentMasterId), {
-          patientName: editProfileData.patientName,
-          email: editProfileData.email,
-          phone: editProfileData.phone,
-          dob: editProfileData.dob,
-          address: editProfileData.address
-        }, { merge: true });
+        await setDoc(doc(db, "patients", currentMasterId), profile, { merge: true });
+      }
+      upsertDirectoryCache({ id: currentMasterId, ...profile });
+
+      // Copy the new details onto linked records in batches (one round trip
+      // per 400 writes instead of one per document).
+      const writes: { ref: any; data: any }[] = [];
+      for (const app of patientAppts) writes.push({ ref: doc(db, "appointments", app.id), data: { ...profile, patientId: currentMasterId } });
+      for (const rx of patientRxs) writes.push({ ref: doc(db, "prescriptions", rx.id), data: { patientId: currentMasterId, patientName } });
+
+      // Recalls and glasses orders hold their own copy of the phone/email and
+      // that copy is what reminders and "ready to collect" messages use — keep
+      // them in step, or texts keep going to the old number.
+      if (isKnownCrmId || useExisting) {
+        for (const col of ['recalls', 'dispenseOrders']) {
+          const snap = await getDocs(query(collection(db, col), where('patientId', '==', currentMasterId)));
+          snap.docs.forEach(d => writes.push({ ref: d.ref, data: { patientName, email, phone } }));
+        }
+      }
+      for (let i = 0; i < writes.length; i += 400) {
+        const batch = writeBatch(db);
+        writes.slice(i, i + 400).forEach(w => batch.set(w.ref, w.data, { merge: true }));
+        await batch.commit();
       }
 
-      for (const app of patientAppts) {
-        await setDoc(doc(db, "appointments", app.id), {
-          patientName: editProfileData.patientName,
-          email: editProfileData.email,
-          phone: editProfileData.phone,
-          dob: editProfileData.dob,
-          address: editProfileData.address,
-          patientId: currentMasterId
-        }, { merge: true });
-      }
-
-      for (const rx of patientRxs) {
-        await setDoc(doc(db, "prescriptions", rx.id), {
-          patientId: currentMasterId,
-          patientName: editProfileData.patientName
-        }, { merge: true });
-      }
-
-      setSelectedChatPatient({ ...selectedChatPatient, ...editProfileData, id: currentMasterId });
+      setSelectedChatPatient((prev: any) => ({ ...(prev || {}), ...profile, id: currentMasterId }));
       alert("Master patient record and all associated appointments have been successfully synchronised!");
-    } catch (err) {
-      alert("Failed to update master patient record.");
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to update master patient record: ${err?.message || err}`);
     }
   };
 
@@ -1345,11 +1402,9 @@ export default function AdminDashboard() {
 
       if (addQuoteToCrm) {
         if (selectedCrmPatientForQuote && !selectedCrmPatientForQuote.id.startsWith('unknown-')) {
-           await setDoc(doc(db, "patients", selectedCrmPatientForQuote.id), {
-              patientName: newQuote.patientName,
-              email: newQuote.email.toLowerCase(),
-              phone: formattedPhone
-           }, { merge: true });
+           const quotePatch = { patientName: newQuote.patientName, email: newQuote.email.toLowerCase(), phone: formattedPhone };
+           await setDoc(doc(db, "patients", selectedCrmPatientForQuote.id), quotePatch, { merge: true });
+           upsertDirectoryCache({ id: selectedCrmPatientForQuote.id, ...quotePatch });
         } else {
            // Reuses an existing CRM record for this person if there is one.
            const res = await resolveOrCreatePatient({
@@ -1498,9 +1553,15 @@ export default function AdminDashboard() {
         phone: fromAppointment.phone || '',
         dob: fromAppointment.dob || ''
       }));
-      if (fromAppointment.patientId) {
-        const match = crmPatients.find((p: any) => p.id === fromAppointment.patientId);
+      if (fromAppointment.patientId && !String(fromAppointment.patientId).startsWith('unknown-')) {
+        // crmPatients only holds the 150 newest patients — for anyone older,
+        // load the record directly so the order is still linked to them.
+        const pid = fromAppointment.patientId;
+        const match = crmPatients.find((p: any) => p.id === pid);
         if (match) setSelectedCrmPatientForOrder(match);
+        else getDoc(doc(db, "patients", pid))
+          .then(snap => { if (snap.exists() && !snap.data().mergedInto) setSelectedCrmPatientForOrder({ id: snap.id, ...snap.data() }); })
+          .catch(e => console.error('Order patient lookup failed', e));
       }
     }
     setIsNewOrderModalOpen(true);
@@ -1523,9 +1584,9 @@ export default function AdminDashboard() {
 
       if (addOrderToCrm) {
         if (selectedCrmPatientForOrder && !String(selectedCrmPatientForOrder.id).startsWith('unknown-')) {
-          await setDoc(doc(db, "patients", selectedCrmPatientForOrder.id), {
-            patientName: newOrder.patientName, email: newOrder.email.toLowerCase(), phone: formattedPhone, dob: newOrder.dob
-          }, { merge: true });
+          const orderPatch = { patientName: newOrder.patientName, email: newOrder.email.toLowerCase(), phone: formattedPhone, dob: newOrder.dob };
+          await setDoc(doc(db, "patients", selectedCrmPatientForOrder.id), orderPatch, { merge: true });
+          upsertDirectoryCache({ id: selectedCrmPatientForOrder.id, ...orderPatch });
         } else {
           // Reuses an existing CRM record for this person if there is one.
           const res = await resolveOrCreatePatient({
@@ -3441,9 +3502,35 @@ export default function AdminDashboard() {
         newBooking.isDiabetic ? "Diabetic" : "",
         newBooking.familyGlaucoma ? "Family history of Glaucoma" : ""
       ].filter(Boolean).join(", ");
-  
+
+      // Every diary booking belongs to a CRM patient with their own id. If staff
+      // didn't link one (or picked an "unknown-…" result built from old
+      // appointments/messages, which isn't a real record), find the existing
+      // patient or create a new master record — previously the booking was
+      // saved with no patient at all, so it never showed in patient search.
+      const fullName = `${newBooking.firstName} ${newBooking.lastName}`.trim();
+      const linkedCrm = selectedCrmPatientForBooking && !String(selectedCrmPatientForBooking.id || '').startsWith('unknown-')
+        ? selectedCrmPatientForBooking : null;
+      const bookingAddress = (newBooking.address as any)?.line1 || (newBooking.address as any)?.postcode ? newBooking.address : null;
+      let bookingPatientId: string | null = linkedCrm ? linkedCrm.id : null;
+      if (!bookingPatientId && fullName) {
+        try {
+          const res = await resolveOrCreatePatient({
+            patientName: fullName,
+            email: (newBooking.email || '').trim().toLowerCase(),
+            phone: formattedPhone,
+            dob: newBooking.dob,
+            ...(bookingAddress ? { address: bookingAddress } : {}),
+            source: 'Diary'
+          });
+          bookingPatientId = res.id;
+        } catch (e) {
+          console.error('Could not create CRM record for booking', e); // never block the booking itself
+        }
+      }
+
       const docRef = await addDoc(collection(db, "appointments"), {
-        patientName: `${newBooking.firstName} ${newBooking.lastName}`,
+        patientName: fullName,
         email: newBooking.email,
         phone: formattedPhone,
         dob: newBooking.dob,
@@ -3452,7 +3539,7 @@ export default function AdminDashboard() {
         appointmentDate: selectedDate,
         appointmentTime: newBooking.time,
         source: 'Admin',
-        patientId: selectedCrmPatientForBooking ? selectedCrmPatientForBooking.id : null,
+        patientId: bookingPatientId,
         isDiabetic: newBooking.isDiabetic,
         onBenefits: newBooking.onBenefits,
         familyGlaucoma: newBooking.familyGlaucoma,
@@ -3461,14 +3548,16 @@ export default function AdminDashboard() {
         createdAt: serverTimestamp()
       });
 
-      if (selectedCrmPatientForBooking && updateCrmOnBook) {
-         await setDoc(doc(db, "patients", selectedCrmPatientForBooking.id), {
-            patientName: `${newBooking.firstName} ${newBooking.lastName}`,
-            email: newBooking.email,
+      if (linkedCrm && updateCrmOnBook) {
+         const crmPatch: Record<string, any> = {
+            patientName: fullName,
+            email: (newBooking.email || '').trim().toLowerCase(),
             phone: formattedPhone,
             dob: newBooking.dob,
-            address: newBooking.address
-         }, { merge: true });
+            ...(bookingAddress ? { address: bookingAddress } : {})
+         };
+         await setDoc(doc(db, "patients", linkedCrm.id), crmPatch, { merge: true });
+         upsertDirectoryCache({ id: linkedCrm.id, ...crmPatch });
       }
 
       const manageLink = `${window.location.origin}/manage/${docRef.id}`;
@@ -3822,13 +3911,15 @@ export default function AdminDashboard() {
   // itself, falling back to the matched/linked CRM patient's record — a
   // walk-in with no CRM link yet can still have entered one directly on
   // the appointment (e.g. via the admin New Booking form).
+  // Linked patient first (by id); contact-detail matching only for an
+  // unlinked appointment, since family members share phones/emails.
+  const gatePatientFor = (appt: any) => appt?.patientId
+    ? crmPatients.find((p: any) => p.id === appt.patientId)
+    : crmPatients.find((p: any) => (appt?.phone && p.phone === appt.phone) || (appt?.email && p.email === appt.email));
+
   const getGateAddressValue = (appt: any): AddressValue | null => {
     if (appt?.address?.verified) return appt.address;
-    const patient = crmPatients.find((p: any) =>
-      (appt?.patientId && p.id === appt.patientId) ||
-      (appt?.phone && p.phone === appt.phone) ||
-      (appt?.email && p.email === appt.email)
-    );
+    const patient = gatePatientFor(appt);
     return patient?.address?.verified ? patient.address : null;
   };
 
@@ -3839,13 +3930,13 @@ export default function AdminDashboard() {
     if (!completionGateAppt) return;
     try {
       await setDoc(doc(db, "appointments", completionGateAppt.id), { address: addr }, { merge: true });
-      const patient = crmPatients.find((p: any) =>
-        (completionGateAppt.patientId && p.id === completionGateAppt.patientId) ||
-        (completionGateAppt.phone && p.phone === completionGateAppt.phone) ||
-        (completionGateAppt.email && p.email === completionGateAppt.email)
-      );
-      if (patient) {
-        await setDoc(doc(db, "patients", patient.id), { address: addr }, { merge: true });
+      // Write straight to the linked patient even if they're not in the
+      // 150-newest list (previously older patients never got the address).
+      const linkedId = completionGateAppt.patientId && !String(completionGateAppt.patientId).startsWith('unknown-')
+        ? completionGateAppt.patientId : gatePatientFor(completionGateAppt)?.id;
+      if (linkedId) {
+        await setDoc(doc(db, "patients", linkedId), { address: addr }, { merge: true });
+        upsertDirectoryCache({ id: linkedId, address: addr });
       }
       setCompletionGateAppt({ ...completionGateAppt, address: addr });
     } catch (e) {

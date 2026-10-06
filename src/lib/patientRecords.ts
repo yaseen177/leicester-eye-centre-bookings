@@ -6,7 +6,7 @@ import {
   collection, doc, getDoc, getDocs, query, where, runTransaction, writeBatch, serverTimestamp, arrayUnion, addDoc, setDoc
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { createdSecs, emailKey, phoneKey, dobKey, invalidateDirectory, loadPatientDirectory, groupPatients, findExistingPerson, addToDirectoryCache } from './patientDirectory';
+import { createdSecs, emailKey, phoneKey, dobKey, invalidateDirectory, loadPatientDirectory, groupPatients, findExistingPerson, addToDirectoryCache, upsertDirectoryCache } from './patientDirectory';
 
 // ----------------------------------------------------------------------------
 // Patient numbers
@@ -229,14 +229,22 @@ export const resolveOrCreatePatient = async (data: Record<string, any>): Promise
   if (existing) {
     const patch: Record<string, any> = {};
     for (const [k, v] of Object.entries(data)) {
-      if (v === undefined || v === null || v === '' || k === 'createdAt') continue;
-      if (existing[k] === undefined || existing[k] === null || existing[k] === '') patch[k] = v;
+      // isEmpty also treats a blank address object as empty, so an unfilled
+      // address field never lands on (or overwrites) a record.
+      if (isEmpty(v) || k === 'createdAt') continue;
+      if (isEmpty(existing[k])) patch[k] = v;
     }
-    if (Object.keys(patch).length) await setDoc(doc(db, 'patients', existing.id), patch, { merge: true });
-    return { id: existing.id, existed: true, patient: existing };
+    if (Object.keys(patch).length) {
+      await setDoc(doc(db, 'patients', existing.id), patch, { merge: true });
+      upsertDirectoryCache({ id: existing.id, ...patch });
+    }
+    return { id: existing.id, existed: true, patient: { ...existing, ...patch } };
   }
-  const ref = await addDoc(collection(db, 'patients'), { ...data, createdAt: serverTimestamp() });
-  addToDirectoryCache({ id: ref.id, ...data });
-  try { if ((await getNumberingStatus()).backfilled) await assignPatientNumber(ref.id); } catch { /* auto-numbered later */ }
+  const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => !isEmpty(v)));
+  const ref = await addDoc(collection(db, 'patients'), { ...clean, createdAt: serverTimestamp() });
+  let patientNumber: string | null = null;
+  try { if ((await getNumberingStatus()).backfilled) patientNumber = await assignPatientNumber(ref.id); } catch { /* auto-numbered later */ }
+  // createdAt as a plain {seconds} so the cached copy sorts like the real doc.
+  addToDirectoryCache({ id: ref.id, ...clean, createdAt: { seconds: Math.floor(Date.now() / 1000) }, ...(patientNumber ? { patientNumber } : {}) });
   return { id: ref.id, existed: false };
 };
