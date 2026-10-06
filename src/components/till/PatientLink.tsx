@@ -7,7 +7,7 @@ import { gbp, round2, type VatSettings } from '../../lib/vat';
 import { buildSaleReceiptPdf } from '../../lib/receipt';
 import { btnPrimary, input, ReceiptActions } from './shared';
 import { getNumberingStatus, assignPatientNumber } from '../../lib/patientRecords';
-import { loadPatientDirectory, groupPatients, searchGroups, findExistingPerson, addToDirectoryCache, nameKey, type PersonGroup } from '../../lib/patientDirectory';
+import { loadPatientDirectory, groupPatients, searchGroups, findExistingPerson, addToDirectoryCache, upsertDirectoryCache, nameKey, type PersonGroup } from '../../lib/patientDirectory';
 
 // Same normalisation the rest of the portal uses for patient phone numbers.
 export const formatUkPhone = (raw: string): string => {
@@ -40,7 +40,7 @@ export const ensurePatientForCustomer = async (c: Customer, existing?: any): Pro
     const patch: Record<string, any> = {};
     if (email && !existing?.email) patch.email = email;
     if (phone && !existing?.phone) patch.phone = phone;
-    if (Object.keys(patch).length) await setDoc(doc(db, 'patients', c.patientId), patch, { merge: true });
+    if (Object.keys(patch).length) { await setDoc(doc(db, 'patients', c.patientId), patch, { merge: true }); upsertDirectoryCache({ id: c.patientId, ...patch }); }
     return c.patientId;
   }
   // Before creating a new record, reuse an existing patient with the same
