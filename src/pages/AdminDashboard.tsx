@@ -90,7 +90,24 @@ const DEFAULT_FRAME_MAKES = ['RayBan', 'Oakley', 'Mulberry', 'Prada', 'Vanity'];
 // actually on the price list before relying on this in production.
 const SINGLE_VISION_INDICES = ['1.5', '1.6 Spherical', '1.6 Aspheric', '1.67', '1.74'];
 const VARIFOCAL_INDICES = ['1.5', '1.6', '1.67', '1.74'];
-const VARIFOCAL_TIERS: Record<string, string> = { 'Varifocal Basic': 'basic', 'Varifocal Elite': 'elite', 'Varifocal Individual': 'individual' };
+const VARIFOCAL_TIERS: Record<string, string> = { 'Varifocal Basic': 'basic', 'Varifocal Advanced': 'advanced', 'Varifocal Elite': 'elite', 'Varifocal Individual': 'individual' };
+// Order shown in the Prices editor. Keys must match settings/pricing.varifocal and the price-list site.
+const VARIFOCAL_TIER_KEYS = ['basic', 'advanced', 'elite', 'individual'];
+// Fallback pricing — used if settings/pricing is missing, and to fill any varifocal tier the doc doesn't have yet (e.g. 'advanced').
+const DEFAULT_PRICING = {
+  singleVision: {
+    new: { "1.5": 0, "1.6 Spherical": 45, "1.6 Aspheric": 65, "1.67": 100, "1.74": 149 },
+    own: { "1.5": 59, "1.6 Spherical": 104, "1.6 Aspheric": 124, "1.67": 159, "1.74": 208 }
+  },
+  varifocal: {
+    basic:      { new: [100, 165, 195, 245], own: [120, 185, 215, 265] },
+    advanced:   { new: [179, 274, 304, 354], own: [199, 294, 324, 374] },
+    elite:      { new: [229, 324, 354, 404], own: [249, 344, 374, 424] },
+    individual: { new: [259, 354, 374, 434], own: [279, 374, 394, 454] }
+  },
+  coatings: { marBase: 35, blueBase: 45, blueVarifocal: 20 },
+  extras: { transitions: 49, transitionsVarifocal: 69, xtractive: 65, tint: 35 }
+};
 
 type FrameStatus = 'In Stock' | 'Requested from Supplier' | 'Received';
 type LensStatus = 'Requested' | 'Received/Glazed';
@@ -102,7 +119,7 @@ const genId = () => `${Date.now().toString(36)}-${Math.random().toString(36).sli
 
 interface LensSpecDraft {
   mode: 'priceList' | 'manual';
-  lensType: '' | 'Single Vision' | 'Varifocal Basic' | 'Varifocal Elite' | 'Varifocal Individual';
+  lensType: '' | 'Single Vision' | 'Varifocal Basic' | 'Varifocal Advanced' | 'Varifocal Elite' | 'Varifocal Individual';
   index: string;
   coatings: { mar: boolean; blue: boolean; tint: boolean; transitions: boolean; xtractive: boolean };
   description: string;
@@ -462,21 +479,11 @@ export default function AdminDashboard() {
         const docRef = doc(db, 'settings', 'pricing');
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setPricingData(docSnap.data());
+          const data: any = docSnap.data();
+          // Fill in any varifocal tier the doc doesn't have yet (e.g. 'advanced') so the editor doesn't crash
+          setPricingData({ ...data, varifocal: { ...DEFAULT_PRICING.varifocal, ...(data.varifocal || {}) } });
         } else {
-          setPricingData({
-            singleVision: {
-              new: { "1.5": 0, "1.6 Spherical": 45, "1.6 Aspheric": 65, "1.67": 100, "1.74": 149 },
-              own: { "1.5": 59, "1.6 Spherical": 104, "1.6 Aspheric": 124, "1.67": 159, "1.74": 208 }
-            },
-            varifocal: {
-              basic: { new: [159, 224, 254, 304], own: [179, 244, 274, 324] },
-              elite: { new: [179, 274, 304, 354], own: [199, 294, 324, 374] },
-              individual: { new: [239, 334, 354, 414], own: [259, 354, 374, 434] }
-            },
-            coatings: { marBase: 35, blueBase: 45, blueVarifocal: 20 },
-            extras: { transitions: 49, transitionsVarifocal: 69, xtractive: 65, tint: 35 }
-          });
+          setPricingData(DEFAULT_PRICING);
         }
       } catch (error) {
         console.error("Error fetching pricing:", error);
@@ -2291,6 +2298,7 @@ export default function AdminDashboard() {
               <option value="">Select lens type…</option>
               <option value="Single Vision">Single Vision</option>
               <option value="Varifocal Basic">Varifocal Basic</option>
+              <option value="Varifocal Advanced">Varifocal Advanced</option>
               <option value="Varifocal Elite">Varifocal Elite</option>
               <option value="Varifocal Individual">Varifocal Individual</option>
             </select>
@@ -7025,8 +7033,8 @@ export default function AdminDashboard() {
               {/* Varifocals */}
               <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100">
                 <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-widest flex items-center gap-2">📋 Varifocals</h3>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {['basic', 'elite', 'individual'].map((tier) => (
+                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-6">
+                  {VARIFOCAL_TIER_KEYS.map((tier) => (
                     <div key={tier} className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
                       <h4 className="font-black text-slate-800 capitalize mb-6 text-xl">{tier} Tier</h4>
                       <div className="space-y-4">
@@ -7038,20 +7046,18 @@ export default function AdminDashboard() {
                                 <span className="text-[10px] font-black text-slate-400 uppercase mb-1">New (£)</span>
                                 <input type="number" value={pricingData.varifocal[tier].new[i]} onChange={(e) => {
                                   const val = parseInt(e.target.value) || 0;
-                                  const next = {...pricingData};
-                                  next.varifocal[tier].new = [...next.varifocal[tier].new];
-                                  next.varifocal[tier].new[i] = val;
-                                  setPricingData(next);
+                                  const arr = [...pricingData.varifocal[tier].new];
+                                  arr[i] = val;
+                                  setPricingData({...pricingData, varifocal: {...pricingData.varifocal, [tier]: {...pricingData.varifocal[tier], new: arr}}});
                                 }} className="w-20 p-2.5 bg-white border-2 border-slate-200 rounded-xl text-center focus:border-[#3F9185] outline-none font-bold text-slate-700 transition-all" />
                               </div>
                               <div className="flex flex-col">
                                 <span className="text-[10px] font-black text-slate-400 uppercase mb-1">Own (£)</span>
                                 <input type="number" value={pricingData.varifocal[tier].own[i]} onChange={(e) => {
                                   const val = parseInt(e.target.value) || 0;
-                                  const next = {...pricingData};
-                                  next.varifocal[tier].own = [...next.varifocal[tier].own];
-                                  next.varifocal[tier].own[i] = val;
-                                  setPricingData(next);
+                                  const arr = [...pricingData.varifocal[tier].own];
+                                  arr[i] = val;
+                                  setPricingData({...pricingData, varifocal: {...pricingData.varifocal, [tier]: {...pricingData.varifocal[tier], own: arr}}});
                                 }} className="w-20 p-2.5 bg-white border-2 border-slate-200 rounded-xl text-center focus:border-[#3F9185] outline-none font-bold text-slate-700 transition-all" />
                               </div>
                             </div>
