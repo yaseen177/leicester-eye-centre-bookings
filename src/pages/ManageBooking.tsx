@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder, SMS_ADDRESS } from '../lib/reminders';
-import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, deleteDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone, CheckCircle2 } from 'lucide-react';
 
 // Online patients can only book this many days ahead (set in Admin > Settings).
@@ -66,9 +66,20 @@ export default function ManageBooking() {
       setLoading(false);
     };
 
-    const unsubBookings = onSnapshot(collection(db, "appointments"), (snap) => {
-      setExistingBookings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    // Busy slots (date/time/type only, this booking excluded) from the patient-sync Worker,
+    // so the public page never loads other patients' details.
+    let alive = true;
+    const loadBusy = async () => {
+      try {
+        const res = await fetch(`https://patient-sync.yaseen-hussain18.workers.dev/slots?exclude=${encodeURIComponent(id || '')}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (alive && Array.isArray(data.slots)) setExistingBookings(data.slots);
+      } catch { /* keep the last list */ }
+    };
+    loadBusy();
+    const busyTimer = setInterval(loadBusy, 30000);
+    const unsubBookings = () => { alive = false; clearInterval(busyTimer); };
     
     const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {

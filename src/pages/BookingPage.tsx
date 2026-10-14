@@ -92,10 +92,28 @@ export default function BookingPage() {
   });
   const [formErrors, setFormErrors] = useState({ email: '', phone: '' });
 
+  // Busy slots come from the patient-sync Worker: date, time and appointment type only —
+  // no patient details ever reach the public booking page.
+  const fetchBusySlots = async (): Promise<any[] | null> => {
+    try {
+      const res = await fetch("https://patient-sync.yaseen-hussain18.workers.dev/slots", { cache: "no-store" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Array.isArray(data.slots) ? data.slots : null;
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
-    const unsubBookings = onSnapshot(collection(db, "appointments"), (snap) => {
-      setExistingBookings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    let alive = true;
+    const loadBusy = async () => {
+      const slots = await fetchBusySlots();
+      if (alive && slots) setExistingBookings(slots);
+    };
+    loadBusy();
+    const busyTimer = setInterval(loadBusy, 30000);
+    const unsubBookings = () => { alive = false; clearInterval(busyTimer); };
     
     const unsubSettings = onSnapshot(doc(db, "settings", "clinicConfig"), (d) => {
       if (d.exists()) {
@@ -362,6 +380,26 @@ export default function BookingPage() {
 
   const handleFinalSubmit = async () => {
     if (booking.date < getTodayStr()) { alert('Please choose today or a future date.'); setStep(2); return; }
+
+    // Last-moment check that nobody has taken this slot since the page loaded.
+    const latest = await fetchBusySlots();
+    if (latest) {
+      setExistingBookings(latest);
+      const start = toMins(booking.time);
+      const len = booking.service === 'Eye Check' ? settings.eyeCheck : settings.contactLens;
+      const taken = latest.some(b => {
+        if (b.appointmentDate !== booking.date) return false;
+        const bStart = toMins(b.appointmentTime);
+        const bLen = String(b.appointmentType || '').includes('Contact') ? settings.contactLens : settings.eyeCheck;
+        return start < bStart + bLen && start + len > bStart;
+      });
+      if (taken) {
+        alert('Sorry, that time has just been booked by someone else. Please choose another time.');
+        setBooking(prev => ({ ...prev, time: '' }));
+        setStep(2);
+        return;
+      }
+    }
     setLoading(true);
     try {
       const cleanPhone = booking.phone.trim();
