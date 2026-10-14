@@ -2,6 +2,9 @@ import { setDoc, type DocumentReference } from 'firebase/firestore';
 
 const WORKER_URL = "https://twilio.yaseen-hussain18.workers.dev/";
 
+// Practice address appended to every appointment confirmation/reminder SMS (not cancellations).
+export const SMS_ADDRESS = "The Eye Centre, High Street, Leicester, LE1 5YN";
+
 // Interprets dateStr ("YYYY-MM-DD") + timeStr ("HH:MM") as UK LOCAL time
 // (handling BST/GMT automatically) and returns the correct UTC instant.
 // `new Date(\`${dateStr}T${timeStr}\`)` (no "Z"/offset) is ambiguous -- it's
@@ -62,7 +65,7 @@ export async function scheduleAllReminders({ docRef, phone, firstName, service, 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: phone,
-          body: `Reminder: ${firstName}, your ${service} is tomorrow @ ${timeStr}.\nPlease confirm your attendance or reschedule here: ${manageLink}\nThe Eye Centre, Leicester`,
+          body: `Reminder: ${firstName}, your ${service} is tomorrow @ ${timeStr}.\nPlease confirm your attendance or reschedule here: ${manageLink}\n${SMS_ADDRESS}`,
           reminderTime: reminder24hDate.toISOString()
         })
       });
@@ -85,7 +88,7 @@ export async function scheduleAllReminders({ docRef, phone, firstName, service, 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: phone,
-            body: `Reminder: ${firstName}, your ${service} is TODAY @ ${timeStr}.\nThe Eye Centre, 56 High Street, Leicester. Call 0116 253 2788 if you need to reschedule.`,
+            body: `Reminder: ${firstName}, your ${service} is TODAY @ ${timeStr}.\n${SMS_ADDRESS}\nCall 0116 253 2788 if you need to reschedule.`,
             reminderTime: nineAmDate.toISOString()
           })
         });

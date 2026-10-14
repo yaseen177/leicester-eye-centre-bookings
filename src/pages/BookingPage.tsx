@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle2, Loader2, ChevronRight, ArrowLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { scheduleAllReminders } from '../lib/reminders';
+import { scheduleAllReminders, SMS_ADDRESS } from '../lib/reminders';
 import { collection, addDoc, serverTimestamp, onSnapshot, doc} from 'firebase/firestore';
 import AddressFinder, { blankAddress } from '../components/AddressFinder';
 import DobInput from '../components/DobInput';
@@ -430,7 +430,7 @@ export default function BookingPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               to: formattedPhone,
-              body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} @ ${booking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\nThe Eye Centre, Leicester`
+              body: `Confirmation: ${booking.firstName}, your ${booking.service} is scheduled for ${new Date(booking.date).toLocaleDateString('en-GB')} @ ${booking.time}.\nOur expert team look forward to providing you with exceptional care.\n\nFor any enquiries, please call 0116 253 2788.\n${SMS_ADDRESS}`
             })
           });
 

@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import AddressFinder, { blankAddress, type AddressValue } from '../components/AddressFinder';
 import DobInput from '../components/DobInput';
 import { db } from '../lib/firebase';
-import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
+import { scheduleAllReminders, cancelReminder, SMS_ADDRESS } from '../lib/reminders';
 import { collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, addDoc, serverTimestamp, query, orderBy, writeBatch, limit, getDocs, where, arrayUnion } from 'firebase/firestore';
 // @ts-ignore
 import * as pdfjsLib from 'pdfjs-dist';
@@ -3588,10 +3588,10 @@ export default function AdminDashboard() {
       }
   
       if (formattedPhone && formattedPhone.length > 5) {
-        let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nPlease confirm your attendance here: ${receiptLink}\nFor any enquiries, please call 0116 253 2788.`;
+        let smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is scheduled for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\nPlease confirm your attendance here: ${receiptLink}\nFor any enquiries, please call 0116 253 2788.\n${SMS_ADDRESS}`;
 
         if (!newBooking.email) {
-          smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\n\nPlease tap here to confirm your attendance and securely add your email address: ${receiptLink}`;
+          smsMessage = `Confirmation: ${newBooking.firstName}, your ${newBooking.service} is booked for ${new Date(selectedDate).toLocaleDateString('en-GB')} @ ${newBooking.time}.\n\nPlease tap here to confirm your attendance and securely add your email address: ${receiptLink}\n${SMS_ADDRESS}`;
         }
 
         try {

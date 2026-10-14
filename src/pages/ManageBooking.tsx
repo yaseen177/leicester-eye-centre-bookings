@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/firebase';
-import { scheduleAllReminders, cancelReminder } from '../lib/reminders';
+import { scheduleAllReminders, cancelReminder, SMS_ADDRESS } from '../lib/reminders';
 import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone, CheckCircle2 } from 'lucide-react';
 
@@ -161,7 +161,7 @@ export default function ManageBooking() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: appointment.phone,
-          body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${id}`
+          body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is on ${new Date(appointment.appointmentDate).toLocaleDateString('en-GB')} @ ${appointment.appointmentTime} at ${SMS_ADDRESS}. Manage here: ${window.location.origin}/manage/${id}`
         })
       });
       alert("SMS Sent Successfully!");
@@ -236,7 +236,7 @@ export default function ManageBooking() {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: appointment.phone,
-            body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${appointment.appointmentTime} at The Eye Centre. Manage here: ${window.location.origin}/manage/${id}`,
+            body: `Reminder: ${appointment.patientName.split(' ')[0]}, your appointment is tomorrow @ ${appointment.appointmentTime} at ${SMS_ADDRESS}. Manage here: ${window.location.origin}/manage/${id}`,
             reminderTime: reminderDate.toISOString()
           })
         });
@@ -352,7 +352,7 @@ export default function ManageBooking() {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: appointment.phone,
-            body: `Update: ${appointment.patientName.split(' ')[0]}, your appointment is rescheduled to ${new Date(rescheduleDate).toLocaleDateString('en-GB')} @ ${rescheduleTime}. The Eye Centre.`,
+            body: `Update: ${appointment.patientName.split(' ')[0]}, your appointment is rescheduled to ${new Date(rescheduleDate).toLocaleDateString('en-GB')} @ ${rescheduleTime}.\n${SMS_ADDRESS}`,
             cancelSid: appointment.reminderSid 
           })
         });
