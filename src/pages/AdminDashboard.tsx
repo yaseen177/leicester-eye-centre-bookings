@@ -505,6 +505,9 @@ export default function AdminDashboard() {
     }
   };
   const [appointments, setAppointments] = useState<any[]>([]);
+  // Cancelled appointments are removed from "appointments" (so the slot frees up) but a copy
+  // is archived in "cancelledAppointments" so they still show in the patient's history.
+  const [cancelledAppts, setCancelledAppts] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [logsLastUpdated, setLogsLastUpdated] = useState<Date | null>(null);
   const [callLogs, setCallLogs] = useState<any[]>([]);
@@ -908,6 +911,9 @@ export default function AdminDashboard() {
     const unsubAppts = onSnapshot(collection(db, "appointments"), (snap) => {
       setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    const unsubCancelled = onSnapshot(collection(db, "cancelledAppointments"), (snap) => {
+      setCancelledAppts(snap.docs.map(d => ({ id: d.id, ...d.data(), status: 'Cancelled', _cancelled: true })));
+    }, (e) => console.error('Could not load cancelled appointments', e));
 
     const qPatients = query(collection(db, "patients"), orderBy("createdAt", "desc"), limit(150));
     const unsubPatients = onSnapshot(qPatients, (snap) => {
@@ -1009,7 +1015,7 @@ export default function AdminDashboard() {
       }
     };
     loadSettings();
-    return () => { unsubAppts(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); unsubDispenseOrders(); unsubClSubscriptions(); unsubPrescriptions(); };
+    return () => { unsubAppts(); unsubCancelled(); unsubPatients(); unsubLogs(); unsubCallLogs(); unsubMessages(); unsubQuotes(); unsubRecalls(); unsubRecallEvents(); unsubDispenseOrders(); unsubClSubscriptions(); unsubPrescriptions(); };
   }, []);
 
   // Look up the CRM (patients collection) for each unique caller number
@@ -3742,6 +3748,19 @@ export default function AdminDashboard() {
           await cancelReminder(bookingData.phone, bookingData.reminderSid9am);
         }
 
+        // Keep a copy for the patient's history before freeing the slot (never blocks the cancel).
+        try {
+          const { id: _apptId, ...archived } = bookingData;
+          await setDoc(doc(db, "cancelledAppointments", bookingData.id), {
+            ...archived,
+            status: 'Cancelled',
+            statusBeforeCancel: bookingData.status || 'Booked',
+            cancelledAt: serverTimestamp(),
+            cancelledBy: 'Practice'
+          });
+        } catch (e) {
+          console.error('Could not archive cancelled appointment', e);
+        }
         await deleteDoc(doc(db, "appointments", bookingData.id));
       } catch (err) {
         alert("Failed to delete appointment.");
@@ -4236,6 +4255,7 @@ export default function AdminDashboard() {
       case 'In Progress': return 'bg-purple-100 text-purple-700 border-purple-200';
       case 'Visit Complete': return 'bg-green-100 text-green-700 border-green-200';
       case 'FTA': return 'bg-red-100 text-red-700 border-red-200';
+      case 'Cancelled': return 'bg-white text-red-500 border-red-200 line-through decoration-red-300';
       case 'Confirmed': return 'bg-emerald-500 text-white border-emerald-600';
       default: return 'bg-slate-100 text-slate-600 border-slate-200';
     }
@@ -4660,7 +4680,7 @@ export default function AdminDashboard() {
   };
 
   const activePatientLedger = selectedChatPatient 
-    ? appointments
+    ? [...appointments, ...cancelledAppts]
         .filter(a => 
           (a.patientId && a.patientId === selectedChatPatient.id) ||
           (a.phone && a.phone === selectedChatPatient.phone) || 
@@ -6072,7 +6092,7 @@ export default function AdminDashboard() {
                               </thead>
                               <tbody className="divide-y divide-slate-50">
                                 {activePatientLedger.map((app) => (
-                                  <tr key={app.id} className="hover:bg-slate-50/50 transition-colors">
+                                  <tr key={app.id} className={`hover:bg-slate-50/50 transition-colors ${app._cancelled ? 'opacity-70' : ''}`}>
                                     <td className="p-4">
                                       <p className="font-bold text-slate-800 text-sm">{new Date(app.appointmentDate).toLocaleDateString('en-GB')}</p>
                                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">@ {app.appointmentTime}</p>
@@ -6087,6 +6107,11 @@ export default function AdminDashboard() {
                                        <span className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-wider border ${getStatusColor(app.status || 'Booked')}`}>
                                          {app.status || 'Booked'}
                                        </span>
+                                       {app._cancelled && (
+                                         <p className="text-[10px] text-slate-400 font-bold mt-1.5">
+                                           by {app.cancelledBy || 'Unknown'}{app.cancelledAt?.seconds ? ` · ${new Date(app.cancelledAt.seconds * 1000).toLocaleDateString('en-GB')}` : ''}
+                                         </p>
+                                       )}
                                     </td>
                                   </tr>
                                 ))}

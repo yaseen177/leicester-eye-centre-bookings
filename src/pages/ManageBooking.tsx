@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/firebase';
 import { scheduleAllReminders, cancelReminder, SMS_ADDRESS } from '../lib/reminders';
-import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDoc, deleteDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { Calendar, Clock, AlertTriangle, Send, XCircle, Loader2, ArrowLeft, Phone, CheckCircle2 } from 'lucide-react';
 
 // Online patients can only book this many days ahead (set in Admin > Settings).
@@ -260,6 +260,20 @@ export default function ManageBooking() {
   const handleCancel = async () => {
     setActionLoading(true);
     try {
+      // 0. Keep a copy for the patient's history in the admin (never blocks the cancel).
+      try {
+        const { id: _apptId, ...archived } = appointment as any;
+        await setDoc(doc(db, 'cancelledAppointments', id!), {
+          ...archived,
+          status: 'Cancelled',
+          statusBeforeCancel: (appointment as any)?.status || 'Booked',
+          cancelledAt: serverTimestamp(),
+          cancelledBy: 'Patient (online)'
+        });
+      } catch (e) {
+        console.error('Could not archive cancelled appointment', e);
+      }
+
       // 1. Delete from database FIRST to prevent 'ghost' appointments if the patient closes the tab early.
       await deleteDoc(doc(db, 'appointments', id!));
 
