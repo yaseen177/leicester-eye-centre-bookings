@@ -96,27 +96,30 @@ export default function ProductsManager({ products, settings }: { products: Prod
         </table>
       </div>
 
-      {editing && <ProductForm product={editing} settings={settings} onClose={() => setEditing(null)} />}
+      {editing && <ProductForm product={editing} settings={settings} categories={categories.filter(c => c !== 'All')} onClose={() => setEditing(null)} />}
       {adjusting && <StockAdjust product={adjusting} staffNames={settings.staffNames} onClose={() => setAdjusting(null)} />}
       {historyFor && <StockHistory product={historyFor} onClose={() => setHistoryFor(null)} />}
     </div>
   );
 }
 
-function ProductForm({ product, settings, onClose }: { product: Omit<Product, 'id'> & { id?: string }; settings: VatSettings; onClose: () => void }) {
+function ProductForm({ product, settings, categories, onClose }: { product: Omit<Product, 'id'> & { id?: string }; settings: VatSettings; categories: string[]; onClose: () => void }) {
   const [p, setP] = useState(product);
+  const [newCat, setNewCat] = useState(false);
+  const catOptions = Array.from(new Set([...categories, ...(p.category ? [p.category] : [])])).sort((a, b) => a.localeCompare(b));
   const [saving, setSaving] = useState(false);
   const isNew = !product.id;
   const set = (patch: Partial<Product>) => setP({ ...p, ...patch });
 
   const save = async () => {
     if (!p.name.trim()) { alert('Name is required.'); return; }
+    if (!p.category.trim()) { alert('Category is required.'); return; }
     if (p.active && !(p.price > 0) && !confirm('Price is £0 — save as active anyway?')) return;
     setSaving(true);
     try {
       const { id, ...data } = p as any;
       const clean = {
-        ...data, name: p.name.trim(), sku: (p.sku || '').trim(), barcode: (p.barcode || '').trim(),
+        ...data, name: p.name.trim(), category: p.category.trim(), sku: (p.sku || '').trim(), barcode: (p.barcode || '').trim(),
         price: round2(p.price), costPrice: round2(p.costPrice || 0),
         stockQty: Math.floor(Number(p.stockQty) || 0), lowStockThreshold: Math.floor(Number(p.lowStockThreshold) || 0),
         updatedAt: serverTimestamp()
@@ -141,8 +144,20 @@ function ProductForm({ product, settings, onClose }: { product: Omit<Product, 'i
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="md:col-span-2"><span className={label}>Name</span><input className={input} value={p.name} onChange={e => set({ name: e.target.value })} /></div>
         <div><span className={label}>Category</span>
-          <input className={input} list="prod-cats" value={p.category} onChange={e => set({ category: e.target.value })} />
-          <datalist id="prod-cats">{PRODUCT_CATEGORIES.map(c => <option key={c} value={c} />)}</datalist>
+          {newCat ? (
+            <div className="flex gap-2">
+              <input className={input} autoFocus placeholder="New category name" value={p.category} onChange={e => set({ category: e.target.value })} />
+              <button type="button" className={btnGhost} onClick={() => { setNewCat(false); set({ category: product.category || 'Accessories' }); }}>Cancel</button>
+            </div>
+          ) : (
+            <select className={input} value={p.category} onChange={e => {
+              if (e.target.value === '__new__') { setNewCat(true); set({ category: '' }); }
+              else set({ category: e.target.value });
+            }}>
+              {catOptions.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="__new__">+ New category…</option>
+            </select>
+          )}
         </div>
         <div><span className={label}>Price inc VAT (£)</span><input className={input} type="number" step="0.01" value={p.price} onChange={e => set({ price: Number(e.target.value) || 0 })} /></div>
         <div className="md:col-span-2"><span className={label}>VAT treatment</span>
