@@ -49,6 +49,7 @@ export interface Product {
   trackStock: boolean;
   stockQty: number;
   lowStockThreshold: number;
+  lowStockAlert?: boolean;    // flag as low stock at/below threshold (unset = on, for older products)
   active: boolean;
   allowPriceOverride: boolean;
   walkIn?: boolean;           // can be sold from the Till without a patient (unset = default by category)
@@ -62,10 +63,14 @@ export const isWalkInProduct = (p: Pick<Product, 'vatCategory' | 'category'> & {
   return p.walkIn ?? WALK_IN_DEFAULT_CATEGORIES.includes(p.category);
 };
 
+// Single source of truth for the low-stock flag (Till badge, product list, sale tiles).
+export const isLowStock = (p: Pick<Product, 'trackStock' | 'stockQty' | 'lowStockThreshold'> & { lowStockAlert?: boolean }): boolean =>
+  p.trackStock && p.lowStockAlert !== false && p.stockQty <= p.lowStockThreshold;
+
 export const blankProduct = (): Omit<Product, 'id'> => ({
   name: '', category: 'Accessories', sku: '', barcode: '', price: 0, costPrice: 0,
   vatCategory: 'standard', dispenseKind: 'spectacles', trackStock: false, stockQty: 0,
-  lowStockThreshold: 0, active: true, allowPriceOverride: true
+  lowStockThreshold: 0, lowStockAlert: true, active: true, allowPriceOverride: true
 });
 
 export interface SaleLine {

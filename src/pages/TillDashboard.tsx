@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ShoppingCart, Receipt, Glasses, Calculator, Package, Settings, Loader2, AlertTriangle } from 'lucide-react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { loadVatSettings, type Product } from '../lib/till';
+import { loadVatSettings, isLowStock, type Product } from '../lib/till';
 import { DEFAULT_VAT_SETTINGS, isSplitConfigured, type VatSettings } from '../lib/vat';
 import NewSale from '../components/till/NewSale';
 import SalesHistory from '../components/till/SalesHistory';
@@ -47,7 +47,7 @@ export default function TillDashboard({ dispenseOrders, salePatient, onSalePatie
 
   if (!settings) return <div className="p-10 flex justify-center text-slate-400"><Loader2 className="animate-spin" /></div>;
 
-  const lowStock = products.filter(p => p.active && p.trackStock && p.stockQty <= p.lowStockThreshold).length;
+  const lowStock = products.filter(p => p.active && isLowStock(p)).length;
 
   return (
     <div className="space-y-4">

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Edit3, PackagePlus, History, Loader2, Sparkles } from 'lucide-react';
 import { collection, doc, setDoc, addDoc, serverTimestamp, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { blankProduct, adjustStock, PRODUCT_CATEGORIES, ukDateTime, isWalkInProduct, type Product } from '../../lib/till';
+import { blankProduct, adjustStock, PRODUCT_CATEGORIES, ukDateTime, isWalkInProduct, isLowStock, type Product } from '../../lib/till';
 import { gbp, round2, extractVat, VAT_CATEGORY_LABELS, type VatCategory, type VatSettings, type DispenseKind } from '../../lib/vat';
 import { btnGhost, btnPrimary, input, card, label, Modal, useStaffPicker } from './shared';
 
@@ -36,10 +36,10 @@ export default function ProductsManager({ products, settings }: { products: Prod
   const shown = products.filter(p => {
     if (!showInactive && !p.active) return false;
     if (cat !== 'All' && p.category !== cat) return false;
-    if (onlyLow && !(p.trackStock && p.stockQty <= p.lowStockThreshold)) return false;
+    if (onlyLow && !isLowStock(p)) return false;
     return !q || p.name.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.barcode || '').includes(q);
   });
-  const lowCount = products.filter(p => p.active && p.trackStock && p.stockQty <= p.lowStockThreshold).length;
+  const lowCount = products.filter(p => p.active && isLowStock(p)).length;
   const stockValue = round2(products.filter(p => p.trackStock && p.stockQty > 0).reduce((t, p) => t + p.stockQty * (p.costPrice || 0), 0));
 
   const seed = async () => {
@@ -73,7 +73,7 @@ export default function ProductsManager({ products, settings }: { products: Prod
           </thead>
           <tbody>
             {shown.map(p => {
-              const low = p.trackStock && p.stockQty <= p.lowStockThreshold;
+              const low = isLowStock(p);
               return (
                 <tr key={p.id} className={`border-t border-slate-100 ${!p.active ? 'opacity-50' : ''}`}>
                   <td className="py-2 font-bold">{p.name}<div className="text-[10px] text-slate-400 font-normal">{[p.sku, p.barcode].filter(Boolean).join(' · ')}{!p.active ? ' · INACTIVE' : ''}</div></td>
@@ -191,7 +191,10 @@ function ProductForm({ product, settings, categories, onClose }: { product: Omit
         </div>
         {p.trackStock && <>
           {isNew && <div><span className={label}>Opening stock qty</span><input className={input} type="number" value={p.stockQty} onChange={e => set({ stockQty: Number(e.target.value) || 0 })} /></div>}
-          <div><span className={label}>Low stock alert at</span><input className={input} type="number" value={p.lowStockThreshold} onChange={e => set({ lowStockThreshold: Number(e.target.value) || 0 })} /></div>
+          <div>
+            <label className="flex items-center gap-2 text-sm font-bold mb-1"><input type="checkbox" checked={p.lowStockAlert !== false} onChange={e => set({ lowStockAlert: e.target.checked })} /> Low stock alert</label>
+            {p.lowStockAlert !== false && <><span className={label}>Alert when stock at or below</span><input className={input} type="number" value={p.lowStockThreshold} onChange={e => set({ lowStockThreshold: Number(e.target.value) || 0 })} /></>}
+          </div>
         </>}
       </div>
       <div className="flex gap-2 mt-5">

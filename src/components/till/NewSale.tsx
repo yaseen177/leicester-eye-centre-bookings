@@ -5,7 +5,7 @@ import { gbp, round2, sumBreakdowns, VAT_CATEGORY_LABELS, type VatCategory, type
 import { buildSaleReceiptPdf } from '../../lib/receipt';
 import { btnPrimary, btnGhost, btnDanger, input, card, label, ReceiptActions, Modal, useStaffPicker } from './shared';
 import { PatientPicker, patientToCustomer, ensurePatientForCustomer, formatUkPhone } from './PatientLink';
-import { isWalkInProduct } from '../../lib/till';
+import { isWalkInProduct, isLowStock } from '../../lib/till';
 
 interface CartLine {
   key: string;
@@ -189,7 +189,7 @@ export default function NewSale({ products, settings, staffEmail, initialPatient
         {active.length === 0 && <p className="text-sm text-slate-400 py-8 text-center">No products yet — add them in the Products & Stock tab.</p>}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-[60vh] overflow-y-auto">
           {shown.map(p => {
-            const low = p.trackStock && p.stockQty <= p.lowStockThreshold;
+            const low = isLowStock(p);
             return (
               <button key={p.id} onClick={() => addProduct(p)}
                 className="text-left p-3 rounded-xl border border-slate-100 bg-slate-50 hover:border-[#3F9185] hover:bg-white transition-all">
