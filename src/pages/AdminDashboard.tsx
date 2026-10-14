@@ -548,7 +548,7 @@ export default function AdminDashboard() {
   
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [newBooking, setNewBooking] = useState({
-    firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(), service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+    firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(), service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false, marketingOptOut: false
   });
 
   const defaultEyeCareHours = { 
@@ -3552,9 +3552,26 @@ export default function AdminDashboard() {
         onBenefits: newBooking.onBenefits,
         familyGlaucoma: newBooking.familyGlaucoma,
         inFullTimeEducation: newBooking.inFullTimeEducation,
+        marketingOptOut: newBooking.marketingOptOut,
         notes: generatedNotes,
         createdAt: serverTimestamp()
       });
+
+      // Marketing preference on the patient record. An opt-out is always saved; an
+      // existing opt-out is only cleared when staff opened a linked patient who had
+      // opted out and deliberately unticked it (patient changed their mind).
+      if (bookingPatientId && (newBooking.marketingOptOut || (linkedCrm && linkedCrm.marketingOptOut === true))) {
+        try {
+          await setDoc(doc(db, "patients", bookingPatientId), {
+            marketingOptOut: newBooking.marketingOptOut,
+            marketingPrefUpdatedAt: serverTimestamp(),
+            marketingPrefSource: 'Diary'
+          }, { merge: true });
+          upsertDirectoryCache({ id: bookingPatientId, marketingOptOut: newBooking.marketingOptOut });
+        } catch (e) {
+          console.error('Could not save marketing preference', e); // never block the booking itself
+        }
+      }
 
       if (linkedCrm && updateCrmOnBook) {
          const crmPatch: Record<string, any> = {
@@ -3626,7 +3643,7 @@ export default function AdminDashboard() {
       setBookingSearchQuery('');
       setUpdateCrmOnBook(false);
       setNewBooking({
-        firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(), service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+        firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(), service: 'Eye Check', time: '', inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false, marketingOptOut: false
       });
       alert("Appointment successfully booked and linked!");
     } catch (err) {
@@ -4428,7 +4445,7 @@ export default function AdminDashboard() {
                       setNewBooking({
                         firstName: '', lastName: '', email: '', phone: '', dob: '', address: blankAddress(),
                         service: activeClinic === 'dispensing' ? 'Dispensing' : 'Eye Check', time: timeStr, 
-                        inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+                        inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false, marketingOptOut: false
                       });
                       setIsBookingModalOpen(true);
                     }
@@ -4666,7 +4683,8 @@ export default function AdminDashboard() {
       firstName: names[0] || '', lastName: names.slice(1).join(' '), email: p.email || '', phone: p.phone || '', dob: p.dob || '',
       address: p.address?.verified ? p.address : blankAddress(),
       service: activeClinic === 'dispensing' ? 'Dispensing' : 'Eye Check', time: '',
-      inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false
+      inFullTimeEducation: false, onBenefits: false, isDiabetic: false, familyGlaucoma: false,
+      marketingOptOut: p.marketingOptOut === true
     });
     // Start from today if the diary is sitting on a past date.
     const today = new Date().toISOString().split('T')[0];
@@ -7941,6 +7959,15 @@ export default function AdminDashboard() {
               </div>
               
               <input placeholder="Phone (Optional if Email provided)" className="w-full p-4 bg-slate-50 rounded-xl outline-none" value={newBooking.phone} onChange={e => setNewBooking({...newBooking, phone: e.target.value})} />
+
+              {/* Marketing notice + opt-out (read the line to the patient over the phone) */}
+              <label className="flex items-start gap-3 p-4 bg-slate-50 rounded-xl cursor-pointer">
+                <input type="checkbox" className="accent-[#3F9185] w-5 h-5 mt-0.5" checked={newBooking.marketingOptOut} onChange={e => setNewBooking({...newBooking, marketingOptOut: e.target.checked})} />
+                <span className="text-sm text-slate-600">
+                  <span className="font-bold">Opted out of marketing</span>
+                  <span className="block text-xs text-slate-400 mt-0.5">Tell the patient: "We may send you special offers." Tick if they'd rather not.</span>
+                </span>
+              </label>
               
               <div>
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth *</label>

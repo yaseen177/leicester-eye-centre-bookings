@@ -68,7 +68,8 @@ export default function BookingPage() {
     inFullTimeEducation: false,
     onBenefits: false,
     isDiabetic: false,
-    familyGlaucoma: false
+    familyGlaucoma: false,
+    marketingOptOut: false
   });
 
   const [hearingForm, setHearingForm] = useState({
@@ -86,7 +87,8 @@ export default function BookingPage() {
       Friday: { am: false, pm: false, all: false },
       Saturday: { am: false, pm: false, all: false },
     } as Record<string, { am: boolean, pm: boolean, all: boolean }>,
-    notes: ''
+    notes: '',
+    marketingOptOut: false
   });
   const [formErrors, setFormErrors] = useState({ email: '', phone: '' });
 
@@ -322,7 +324,7 @@ export default function BookingPage() {
             phone: hearingForm.phone,
             hearing_status: hearingStatusHtml,
             preferences: prefsHtml,
-            notes: hearingForm.notes || 'None'
+            notes: (hearingForm.notes || 'None') + (hearingForm.marketingOptOut ? ' — OPTED OUT of marketing' : '')
           }
         })
       });
@@ -376,6 +378,7 @@ export default function BookingPage() {
         appointmentDate: booking.date,
         appointmentTime: booking.time,
         notes: generatedNotes,
+        marketingOptOut: booking.marketingOptOut,
         createdAt: serverTimestamp(),
         source: 'Online',
       });
@@ -397,7 +400,8 @@ export default function BookingPage() {
           phone: formattedPhone,
           dob: booking.dob,
           address: booking.address,
-          appointmentId: docRef.id
+          appointmentId: docRef.id,
+          marketingOptOut: booking.marketingOptOut
         })
       }).catch(e => console.error("Patient sync failed:", e));
 
@@ -592,6 +596,15 @@ export default function BookingPage() {
               <input type="tel" placeholder="Mobile Number" className="w-full p-4 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-medium" onChange={e => setBooking({...booking, phone: e.target.value})} />
             </div>
 
+            {/* Marketing notice + opt-out (PECR soft opt-in: opt-out offered when contact details are collected) */}
+            <div className="flex flex-col gap-2 px-1">
+              <p className="text-xs text-slate-500">We may send you special offers.</p>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" className="accent-[#3F9185] w-4 h-4" checked={booking.marketingOptOut} onChange={e => setBooking({...booking, marketingOptOut: e.target.checked})} />
+                <span className="text-xs font-medium text-slate-600">No thanks, don't send me offers by email or text</span>
+              </label>
+            </div>
+
             <div>
               <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Date of Birth *</label>
               <DobInput value={booking.dob} onChange={dob => setBooking({...booking, dob})} className="w-full p-4 mt-1 rounded-xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-[#3F9185] font-bold text-slate-600" />
@@ -680,6 +693,15 @@ export default function BookingPage() {
                 <input required type="tel" placeholder="Phone Number" className={`w-full p-4 rounded-xl bg-slate-50 border outline-none focus:ring-2 focus:ring-[#3F9185] font-medium ${formErrors.phone ? 'border-red-300' : 'border-transparent'}`} value={hearingForm.phone} onChange={e => {setHearingForm({...hearingForm, phone: e.target.value}); setFormErrors({...formErrors, phone: ''});}} />
                 {formErrors.phone && <p className="text-xs text-red-500 font-bold mt-1 px-1">{formErrors.phone}</p>}
               </div>
+            </div>
+
+            {/* Marketing notice + opt-out */}
+            <div className="flex flex-col gap-2 px-1">
+              <p className="text-xs text-slate-500">We may send you special offers.</p>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" className="accent-[#3F9185] w-4 h-4" checked={hearingForm.marketingOptOut} onChange={e => setHearingForm({...hearingForm, marketingOptOut: e.target.checked})} />
+                <span className="text-xs font-medium text-slate-600">No thanks, don't send me offers by email or text</span>
+              </label>
             </div>
 
             {/* NEW: Hearing Status Questions */}
