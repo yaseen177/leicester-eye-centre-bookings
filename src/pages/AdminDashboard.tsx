@@ -591,6 +591,38 @@ export default function AdminDashboard() {
   const [crmPatients, setCrmPatients] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatPatient, setSelectedChatPatient] = useState<any>(null);
+
+  // Marketing consent on the patient profile (Overview → Patient details).
+  // Writes the patient record; an opt-out is also pushed to the master list (Brevo blocklist).
+  const setPatientMarketing = async (optOut: boolean) => {
+    const pt = selectedChatPatient;
+    if (!pt?.id || String(pt.id).startsWith('unknown-')) {
+      alert("Save this patient's record first (Profile → Save), then set their marketing preference.");
+      return;
+    }
+    try {
+      await setDoc(doc(db, "patients", pt.id), {
+        marketingOptOut: optOut,
+        marketingPrefUpdatedAt: serverTimestamp(),
+        marketingPrefSource: 'Admin (patient profile)'
+      }, { merge: true });
+      upsertDirectoryCache({ id: pt.id, marketingOptOut: optOut });
+      setSelectedChatPatient({ ...pt, marketingOptOut: optOut, marketingPrefUpdatedAt: { seconds: Math.floor(Date.now() / 1000) }, marketingPrefSource: 'Admin (patient profile)' });
+      if (optOut && pt.email) {
+        fetch("https://ec-basket-reminders.yaseen-hussain18.workers.dev/opt-out", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: String(pt.email).trim().toLowerCase(), source: "Admin (patient profile)" })
+        }).catch(e => console.error("Opt-out sync failed:", e));
+      }
+      if (!optOut && pt.email) {
+        alert("Saved. If this patient was on the Brevo blocklist, remove them there too (Brevo → Contacts → search their email → Unblock) so they receive emails again.");
+      }
+    } catch (e) {
+      console.error('Could not save marketing preference', e);
+      alert('Could not save the marketing preference. Please try again.');
+    }
+  };
   // Till sales for the open patient (Overview + Purchases tabs).
   const { sales: activePatientSales, settings: tillVatSettings } = usePatientSales(selectedChatPatient);
   const [crmTab, setCrmTab] = useState<'overview' | 'chat' | 'ledger' | 'orders' | 'sales' | 'purchases' | 'prescriptions' | 'profile' | 'recalls'>('overview');
@@ -3572,6 +3604,14 @@ export default function AdminDashboard() {
           console.error('Could not save marketing preference', e); // never block the booking itself
         }
       }
+      // Master marketing opt-out list (Brevo blocklist, shared with the shop). Best-effort.
+      if (newBooking.marketingOptOut && newBooking.email) {
+        fetch("https://ec-basket-reminders.yaseen-hussain18.workers.dev/opt-out", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: newBooking.email.trim().toLowerCase(), source: "Diary booking" })
+        }).catch(e => console.error("Opt-out sync failed:", e));
+      }
 
       if (linkedCrm && updateCrmOnBook) {
          const crmPatch: Record<string, any> = {
@@ -5676,6 +5716,7 @@ export default function AdminDashboard() {
                       onNewSale={() => { setTillSalePatient(selectedChatPatient); setView('till'); }}
                       onMessage={() => setCrmTab('chat')}
                       onBook={() => openBookingForPatient(selectedChatPatient)}
+                      onSetMarketing={setPatientMarketing}
                     />
                   )}
 

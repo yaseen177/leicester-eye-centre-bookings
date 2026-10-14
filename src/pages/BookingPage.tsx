@@ -309,6 +309,14 @@ export default function BookingPage() {
         if (prefsHtml === '') prefsHtml = '<tr><td colspan="2" style="padding: 12px 10px; text-align: center; color: #64748b; border-bottom: 1px solid #e2e8f0;">No specific preference selected</td></tr>';
       }
 
+      if (hearingForm.marketingOptOut && hearingForm.email) {
+        fetch("https://ec-basket-reminders.yaseen-hussain18.workers.dev/opt-out", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: hearingForm.email.toLowerCase(), source: "Hearingcare enquiry" })
+        }).catch(e => console.error("Opt-out sync failed:", e));
+      }
+
       // Send to Clinic
       await fetch("https://twilio.yaseen-hussain18.workers.dev/", {
         method: "POST",
@@ -384,6 +392,15 @@ export default function BookingPage() {
       });
       setBookingId(docRef.id);
       trackBookingConversion(docRef.id, booking.service);
+
+      // Master marketing opt-out list (Brevo blocklist, shared with the shop). Best-effort.
+      if (booking.marketingOptOut && booking.email) {
+        fetch("https://ec-basket-reminders.yaseen-hussain18.workers.dev/opt-out", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: booking.email.toLowerCase(), source: "Online booking" })
+        }).catch(e => console.error("Opt-out sync failed:", e));
+      }
 
       // The booking form can't write to the patients collection directly
       // (it's unauthenticated, and that collection correctly requires

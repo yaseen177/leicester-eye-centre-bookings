@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Calendar, Clock, Bell, FileText, ShoppingBag, Wallet, MessageSquare, Mail, Phone, MapPin, Hash, Cake,
-  ChevronRight, AlertTriangle, CheckCircle2, Loader2, Contact, Activity
+  ChevronRight, AlertTriangle, CheckCircle2, Loader2, Contact, Activity, Megaphone
 } from 'lucide-react';
 import { gbp, round2 } from '../../lib/vat';
 
@@ -64,11 +64,30 @@ export interface OverviewProps {
   onNewSale?: () => void;
   onMessage?: () => void;
   onBook?: () => void;
+  onSetMarketing?: (optOut: boolean) => Promise<void>;
 }
 
 export default function PatientOverview(p: OverviewProps) {
   const { patient } = p;
   const now = Date.now();
+  const [mktSaving, setMktSaving] = useState(false);
+
+  // Marketing consent: the patient record is the source of truth. An opt-out ticked on an
+  // online booking (before the record was flagged) also counts, unless staff have since
+  // recorded that the patient wants offers again (marketingOptOut === false).
+  const apptOptOut = p.appointments.find(a => a.marketingOptOut === true);
+  const optedOut = patient.marketingOptOut === true || (patient.marketingOptOut !== false && !!apptOptOut);
+  const mktSince = patient.marketingOptOut === true ? patient.marketingPrefUpdatedAt : apptOptOut?.createdAt;
+  const mktSource = patient.marketingOptOut === true ? patient.marketingPrefSource : (apptOptOut ? (apptOptOut.source === 'Admin' ? 'Diary booking' : 'Online booking') : '');
+  const changeMarketing = async (optOut: boolean) => {
+    if (!p.onSetMarketing) return;
+    const msg = optOut
+      ? 'Record that this patient does NOT want marketing (offers by email or text)?'
+      : 'Record that this patient now wants to receive offers again?\n\nOnly do this if the patient has asked you to.';
+    if (!confirm(msg)) return;
+    setMktSaving(true);
+    try { await p.onSetMarketing(optOut); } finally { setMktSaving(false); }
+  };
 
   const d = useMemo(() => {
     const appts = p.appointments.map(a => ({ ...a, _dt: apptDateTime(a) })).filter(a => a._dt);
@@ -161,6 +180,28 @@ export default function PatientOverview(p: OverviewProps) {
               <div className="flex items-center gap-2.5"><Phone size={14} className="text-slate-400 shrink-0" /><span className="font-bold">{patient.phone || <span className="text-slate-400">No phone</span>}</span></div>
               <div className="flex items-center gap-2.5 min-w-0"><Mail size={14} className="text-slate-400 shrink-0" /><span className="font-bold truncate">{patient.email || <span className="text-slate-400">No email</span>}</span></div>
               <div className="flex items-start gap-2.5"><MapPin size={14} className="text-slate-400 shrink-0 mt-0.5" /><span className="font-bold">{addressOf(patient.address) || <button onClick={p.onEdit} className="text-amber-600 hover:underline">Add address</button>}</span></div>
+              <div className="flex items-start gap-2.5 pt-2.5 border-t border-slate-100">
+                <Megaphone size={14} className={`shrink-0 mt-0.5 ${optedOut ? 'text-red-500' : 'text-emerald-600'}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className={`text-[11px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${optedOut ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+                      {optedOut ? 'Opted out of marketing' : 'Can receive offers'}
+                    </span>
+                    {p.onSetMarketing && (
+                      <button onClick={() => changeMarketing(!optedOut)} disabled={mktSaving} className="text-[11px] font-black text-slate-500 hover:text-slate-800 underline disabled:opacity-50">
+                        {mktSaving ? 'Saving…' : optedOut ? 'Patient wants offers' : 'Record opt-out'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-bold mt-1">
+                    {optedOut
+                      ? <>Since {fmtDate(mktSince)}{mktSource ? ` · ${mktSource}` : ''}</>
+                      : patient.marketingOptOut === false && patient.marketingPrefUpdatedAt
+                        ? <>Re-subscribed {fmtDate(patient.marketingPrefUpdatedAt)}{patient.marketingPrefSource ? ` · ${patient.marketingPrefSource}` : ''}</>
+                        : 'No opt-out recorded'}
+                  </div>
+                </div>
+              </div>
               {((patient.otherPhones || []).length > 0 || (patient.otherEmails || []).length > 0) && (
                 <div className="text-[11px] text-slate-500 pt-1 border-t border-slate-100">Also: {[...(patient.otherPhones || []), ...(patient.otherEmails || [])].join(', ')}</div>
               )}
